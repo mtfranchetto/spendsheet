@@ -103,7 +103,12 @@ class FakeRange {
     return out;
   }
 
-  getValue() { return this.sheet._get(this.row, this.col); }
+  getValue() {
+    const formula = this.sheet.formulas.get(`${this.row},${this.col}`);
+    const results = this.sheet.book && this.sheet.book.formulaResults;
+    if (formula && results && results.has(formula)) return results.get(formula);
+    return this.sheet._get(this.row, this.col);
+  }
 
   setValues(values) {
     values.forEach((line, r) =>
@@ -170,8 +175,9 @@ class FakeProtection {
 }
 
 class FakeSheet {
-  constructor(name) {
+  constructor(name, book) {
     this.name = name;
+    this.book = book;
     this.cells = new Map();
     this.formulas = new Map();
     this.protections = [];
@@ -259,14 +265,26 @@ class FakeSheet {
 }
 
 class FakeSpreadsheet {
-  constructor() { this.sheets = [new FakeSheet('Sheet1')]; this.toasts = []; this.active = this.sheets[0]; }
+  /**
+   * `locale` decides what the argument-separator probe returns, which is the
+   * only formula this fake evaluates. 'comma' models en-US and friends;
+   * 'semicolon' models it-IT, de-DE, fr-FR — where `=SUM(1,1)` reads as the
+   * single number 1.1 rather than as two arguments.
+   */
+  constructor(locale = 'comma') {
+    this.locale = locale;
+    this.formulaResults = new Map([['=SUM(1,1)', locale === 'semicolon' ? 1.1 : 2]]);
+    this.sheets = [new FakeSheet('Sheet1', this)];
+    this.toasts = [];
+    this.active = this.sheets[0];
+  }
 
   getSheetByName(name) { return this.sheets.find((s) => s.name === name) || null; }
   getSheets() { return this.sheets.slice(); }
 
   insertSheet(name) {
     if (this.getSheetByName(name)) throw new Error(`sheet exists: ${name}`);
-    const sh = new FakeSheet(name);
+    const sh = new FakeSheet(name, this);
     this.sheets.push(sh);
     return sh;
   }
@@ -293,7 +311,7 @@ class FakeSpreadsheet {
 // ---------------------------------------------------------------------------
 
 export function createGoogleStubs(options = {}) {
-  const spreadsheet = options.spreadsheet || new FakeSpreadsheet();
+  const spreadsheet = options.spreadsheet || new FakeSpreadsheet(options.locale);
   const properties = new Map(Object.entries(options.properties || {}));
   const sent = [];
   const fetches = [];

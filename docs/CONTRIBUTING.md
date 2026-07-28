@@ -45,6 +45,16 @@ This is not architectural purity for its own sake. The expensive bugs in this pr
 
 Tests are written **in the same phase as the code they cover**, never batched into a final pass.
 
+## Writing formulas
+
+**Author every formula with commas, and write it through `setFormula_()`.**
+
+Sheets in a decimal-comma locale — Italian, German, French, Spanish and others — separates formula arguments with `;`, and `setFormula()` does **not** convert. A comma-separated formula lands in an Italian sheet as `#ERROR!`, a parse failure, with no hint as to why.
+
+`setFormula_()` translates once at the write boundary via `localizeFormula()`, which is quote-aware so a comma inside a string literal survives. The separator itself is detected by asking the spreadsheet rather than by keeping a list of locales: `=SUM(1,1)` evaluates to `2` where the comma separates arguments and `1.1` where it's a decimal point.
+
+The consequence for you: never call `range.setFormula()` directly, and never hand-write semicolons. Both work locally and break for half the world.
+
 ## What can't be tested here
 
 JWT signing against a real key, actual Sheet reads and writes, and the live API client need the Google runtime. Those get a `runSmokeTests()` menu item that writes pass/fail to the `_tests` tab. They are not unit tests, they do not run in CI, and the README says so rather than implying coverage that doesn't exist.

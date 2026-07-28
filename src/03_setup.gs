@@ -39,7 +39,7 @@ function setup() {
   getOrCreate_(ss, TABS.IMPORT_STAGED, report);   // formula-mapped, you paste from it
   getOrCreate_(ss, TABS.DASHBOARD, report);
 
-  applyFormulas_(ss);
+  applyFormulas_(ss, detectArgSeparator_(ss));
   applyFormats_(ss);
   applyValidation_(ss);
   applyProtection_(ss);
@@ -96,12 +96,12 @@ function buildTable_(ss, name, headers, report, seed) {
 // Formulas
 // ---------------------------------------------------------------------------
 
-function applyFormulas_(ss) {
+function applyFormulas_(ss, sep) {
   var tx = ss.getSheetByName(TABS.TRANSACTIONS);
-  setFormula_(tx, colOf(TX_COLUMNS, 'amount_eur'), amountEurFormula());
-  setFormula_(tx, colOf(TX_COLUMNS, 'category'), categoryFormula());
-  setFormula_(tx, colOf(TX_COLUMNS, 'subcategory'), subcategoryFormula());
-  setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula());
+  setFormula_(tx, colOf(TX_COLUMNS, 'amount_eur'), amountEurFormula(), sep);
+  setFormula_(tx, colOf(TX_COLUMNS, 'category'), categoryFormula(), sep);
+  setFormula_(tx, colOf(TX_COLUMNS, 'subcategory'), subcategoryFormula(), sep);
+  setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula(), sep);
 
   // category_auto / subcategory_auto / category_source are written by the
   // categorisation cascade in 07_categorize.gs (phase 7), not by a formula:
@@ -109,12 +109,69 @@ function applyFormulas_(ss) {
   // substring matching, neither of which is expressible in ARRAYFORMULA.
 
   var acc = ss.getSheetByName(TABS.ACCOUNTS);
-  setFormula_(acc, colOf(ACCOUNT_COLUMNS, 'balance'), accountBalanceFormula());
+  setFormula_(acc, colOf(ACCOUNT_COLUMNS, 'balance'), accountBalanceFormula(), sep);
 }
 
 /** Write a single array formula into row 2 of a column. Idempotent. */
-function setFormula_(sheet, letter, formula) {
-  sheet.getRange(letter + '2').setFormula(formula);
+function setFormula_(sheet, letter, formula, sep) {
+  sheet.getRange(letter + '2').setFormula(localizeFormula(formula, sep));
+}
+
+/**
+ * Rewrite argument separators for the spreadsheet's locale.
+ *
+ * Locales that use a decimal comma — Italian, German, French, Spanish and
+ * others — separate formula arguments with `;`, and setFormula() does NOT
+ * convert: a comma-separated formula lands as a #ERROR! parse failure.
+ *
+ * So every formula in this project is authored in canonical comma form and
+ * translated exactly once, here, on the way into the sheet. Threading a
+ * separator through each builder's string concatenation would work too, but
+ * it would need remembering for every formula ever added — this cannot be
+ * forgotten.
+ *
+ * Quote-aware, because a comma inside a string literal is data, not syntax.
+ */
+function localizeFormula(formula, sep) {
+  if (!sep || sep === ',') return formula;
+
+  var out = '';
+  var inString = false;
+  for (var i = 0; i < formula.length; i++) {
+    var ch = formula.charAt(i);
+    if (ch === '"') inString = !inString;
+    out += (ch === ',' && !inString) ? sep : ch;
+  }
+  return out;
+}
+
+/**
+ * Which argument separator this spreadsheet wants, determined by asking it
+ * rather than by keeping a list of locales.
+ *
+ * `=SUM(1,1)` is 2 where the comma separates arguments, and 1.1 where the
+ * comma is a decimal point and the whole thing is a single number. One probe,
+ * unambiguous, and correct for locales nobody thought to enumerate.
+ *
+ * Falls back to comma if the probe returns something unexpected: that is the
+ * canonical form, so the worst case is the behaviour we had before.
+ */
+function detectArgSeparator_(ss) {
+  var name = '__spendsheet_locale_probe';
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) sheet = ss.insertSheet(name);
+
+  try {
+    var cell = sheet.getRange('A1');
+    cell.setFormula('=SUM(1,1)');
+    SpreadsheetApp.flush();
+    var value = cell.getValue();
+    if (value === 2) return ',';
+    if (value === 1.1) return ';';
+    return ',';
+  } finally {
+    ss.deleteSheet(sheet);
+  }
 }
 
 /**
@@ -204,7 +261,11 @@ function accountBalanceFormula() {
     'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.BANK + '",$' + api + '$2:$' + api + ',' +
     'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.ASSET + '",$' + man + '$2:$' + man + ',' +
     'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.CASH + '",' +
-    'N($' + open + '$2:$' + open + ')+SUMIF(' + txAccount + ',' + idRange + ',' + txAmount + '),' +
+    // IF(blank,0,x) rather than N(x): N does not vectorise reliably inside
+    // ARRAYFORMULA, and an empty opening_balance would otherwise poison the
+    // addition with #VALUE!.
+    'IF($' + open + '$2:$' + open + '="",0,$' + open + '$2:$' + open + ')' +
+    '+SUMIF(' + txAccount + ',' + idRange + ',' + txAmount + '),' +
     '"")))))';
 }
 
