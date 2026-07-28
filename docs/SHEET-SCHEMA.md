@@ -18,6 +18,41 @@ Two further rules that cost nothing and remove entire categories of failure:
 - **`transactions` is never sorted.** Sorting a *subset* of it, or inserting a column mid-sheet, breaks row identity and every formula reference simultaneously and silently. No amount of careful scripting prevents this, because it isn't the script doing it. Sort and filter through filter views or `QUERY()` on another tab instead. This is also why the dashboard is formula-driven off `transactions` rather than being a rearrangement of it.
 - **Every report reads `amount_eur`, never `amount`.**
 
+## Customising it, and what `setup()` does on a re-run
+
+`setup()` is meant to be re-run — after an upgrade, or any time you think something's out of shape. It creates what's missing and reasserts what code owns. It is not a reset.
+
+**Safe. Survives every re-run:**
+
+| | |
+|---|---|
+| Extra columns **appended to the right** of the last schema column | untouched |
+| Whole tabs you create yourself | untouched — not reordered ahead of yours, not deleted |
+| Rows you add, edit or delete in `rules`, `categories`, `_config`, `_import_map` | kept as-is |
+| Anything in a column marked *yours* — `category_override`, `notes`, `excluded`, `balance_manual` | never written by code |
+| Column widths, conditional formatting, filter views, charts, notes | not touched at all |
+| Unhiding a `_` tab | respected — tabs are hidden only on the run that creates them |
+
+**Reasserted. Your change is reverted:**
+
+| | Why |
+|---|---|
+| Header row text | code addresses columns by position and reads row 1 to confirm the contract. A renamed header makes the sheet lie about itself |
+| The formulas in `amount_eur`, `category`, `subcategory`, `type`, `balance` | these are the contract, not decoration |
+| Number formats on date and amount columns; bold header styling | cosmetic, rewritten each time |
+| Data validation on the dropdown ranges | |
+| Tab order of the nine main tabs | your own tabs keep their relative position after them |
+
+**Seed data has a deliberate middle behaviour.** `rules`, `categories`, `_config` and `_import_map` are seeded **only when the tab has no data rows**. So editing or deleting individual rules is permanent — but empty the tab completely and re-run, and you get the defaults back. That's the intended way to reset a tab you've made a mess of.
+
+### The one thing that will hurt you
+
+**Never insert a column in the middle of a schema tab.** Appending to the right is fine and supported; inserting shifts every column after it, so code writing to "column G" writes to what is now the wrong field, and `setup()` will relabel row 1 to match positions that no longer hold what the labels say. Nothing errors. The data just quietly becomes wrong.
+
+The same applies to sorting `transactions` — see below.
+
+If you want a different column order for reading, build it on another tab with `QUERY()`. That's what the dashboard does, and it's why the dashboard is formula-driven rather than a rearrangement of the source.
+
 ---
 
 ## `transactions` — the record of truth

@@ -43,7 +43,7 @@ function setup() {
   applyFormats_(ss);
   applyValidation_(ss);
   applyProtection_(ss);
-  hidePrivateTabs_(ss);
+  hidePrivateTabs_(ss, report);
   removeDefaultSheet_(ss);
   orderTabs_(ss);
 
@@ -78,9 +78,15 @@ function getOrCreate_(ss, name, report) {
  */
 function buildTable_(ss, name, headers, report, seed) {
   var sh = getOrCreate_(ss, name, report);
+  var isNew = report && report.created.indexOf(name) !== -1;
 
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
-  if (sh.getMaxColumns() > headers.length) {
+
+  // Trim the blank columns a new sheet is born with — but ONLY on a new
+  // sheet. Doing this every run would delete any column you appended to the
+  // right of the schema, which is a legitimate thing to do and silent data
+  // loss if we punish it.
+  if (isNew && sh.getMaxColumns() > headers.length) {
     sh.deleteColumns(headers.length + 1, sh.getMaxColumns() - headers.length);
   }
   sh.setFrozenRows(1);
@@ -390,10 +396,17 @@ function protectRange_(sheet, a1, description) {
   sheet.getRange(a1).protect().setDescription(description).setWarningOnly(true);
 }
 
-/** `_`-prefixed tabs are machinery. Hidden, not deleted — you may need to read them. */
-function hidePrivateTabs_(ss) {
+/**
+ * `_`-prefixed tabs are machinery, so they start hidden — but only on the
+ * run that creates them. If you unhide `_config` to look at it, re-running
+ * setup() leaves it alone. Visibility is your call once the tab exists.
+ */
+function hidePrivateTabs_(ss, report) {
   ss.getSheets().forEach(function (sh) {
-    if (sh.getName().charAt(0) === '_') sh.hideSheet();
+    var name = sh.getName();
+    if (name.charAt(0) !== '_') return;
+    if (report && report.created.indexOf(name) === -1) return;
+    sh.hideSheet();
   });
 }
 
