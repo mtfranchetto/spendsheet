@@ -1,0 +1,38 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      # The .gs files are pasted into Apps Script verbatim, so a stray
+      # import/export statement would break at runtime for every user
+      # while passing locally. Cheaper to catch here.
+      - name: No ES module syntax in src/
+        run: |
+          if grep -nE '^\s*(import|export)\s' src/*.gs; then
+            echo "::error::src/*.gs must be plain Apps Script — no import/export."
+            exit 1
+          fi
+
+      - name: No private keys committed
+        run: |
+          if git ls-files | grep -E '\.(pem|key)$'; then
+            echo "::error::A key file is tracked in git."
+            exit 1
+          fi

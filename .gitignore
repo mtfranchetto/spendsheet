@@ -1,0 +1,18 @@
+# Secrets — an Enable Banking private key opens your bank data.
+# Once a .pem is in git history, removing it means rewriting history.
+*.pem
+*.key
+.clasp.json
+.clasprc.json
+
+# Data — never commit a transaction history to a public repo.
+*.csv
+*.xlsx
+snapshots/
+exports/
+
+# Tooling
+node_modules/
+coverage/
+.DS_Store
+*.log

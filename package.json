@@ -1,0 +1,31 @@
+{
+  "name": "spendsheet",
+  "version": "0.1.0",
+  "description": "Sync bank transactions into Google Sheets via open banking (PSD2). Free, no server, no subscription.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "open-banking",
+    "psd2",
+    "google-sheets",
+    "google-apps-script",
+    "personal-finance",
+    "enable-banking"
+  ],
+  "author": "Mattia Franchetto",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mtfranchetto/spendsheet.git"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

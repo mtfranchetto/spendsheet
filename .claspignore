@@ -1,0 +1,5 @@
+# Everything that should NOT be pushed to Apps Script.
+# clasp matches from the project root; `**/**` is the documented catch-all.
+**/**
+!appsscript.json
+!src/**.gs
