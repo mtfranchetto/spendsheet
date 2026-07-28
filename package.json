@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "push": "clasp push",
+    "push:watch": "clasp push --watch",
+    "pull": "clasp pull",
+    "status": "clasp status"
   },
   "keywords": [
     "open-banking",
@@ -23,6 +27,7 @@
     "url": "git+https://github.com/mtfranchetto/spendsheet.git"
   },
   "devDependencies": {
+    "@google/clasp": "^3.3.0",
     "vitest": "^3.2.4"
   },
   "engines": {

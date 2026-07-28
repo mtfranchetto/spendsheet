@@ -57,13 +57,44 @@ JWT signing against a real key, actual Sheet reads and writes, and the live API 
 
 ## Optional: clasp
 
-`clasp` pushes `src/` to an Apps Script project instead of pasting by hand. It's the developer path, not the user path — the README stays copy-paste so nobody needs Node to use this.
+The Apps Script editor has no bulk import — you create each file and paste into it, and drag-and-drop does nothing. That's fine for the three files a user needs, but `src/` grows to eleven, so `clasp` pushes the whole folder in one command.
+
+It's the developer path, not the user path: the README stays copy-paste so nobody needs Node to *use* this.
+
+`clasp` is already a devDependency, so there's nothing to install globally.
+
+**One-time setup:**
 
 ```bash
-npm install -g @google/clasp
-clasp login
-clasp clone <script-id>
-clasp push
+# 1. Enable the Apps Script API for your Google account (once, ever):
+#    https://script.google.com/home/usersettings  →  Google Apps Script API: ON
+#    Without this, push fails with a 403 that doesn't explain itself.
+
+npx clasp login          # opens a browser
+
+# 2. Point at your script. Apps Script → Project Settings → Script ID.
+cat > .clasp.json <<'JSON'
+{ "scriptId": "PASTE_YOUR_SCRIPT_ID", "rootDir": "src" }
+JSON
+
+npm run status           # lists what would be pushed — check before the first push
+npm run push             # --force the first time, to overwrite the remote manifest
 ```
 
-`.clasp.json` and `*.pem` are gitignored. Keep it that way.
+**Day to day:**
+
+```bash
+npm run push          # sync src/ → Apps Script
+npm run push:watch    # push on every save
+npm run pull          # pull remote edits back down
+```
+
+### Why `rootDir` is `src`
+
+`clasp` requires `appsscript.json` to sit in `rootDir`, which is why the manifest lives in `src/` rather than at the repo root. The payoff is that files arrive in the editor named `00_config`, `03_setup`, `10_menu` — exactly what the README tells copy-paste users to call them. With `rootDir: "."` they'd arrive as `src/00_config`, and the two setup paths would produce different projects.
+
+### Watch out
+
+- **`.clasp.json` and `.clasprc.json` are gitignored.** The first holds your script ID, the second your OAuth credentials. Keep it that way.
+- **`clasp pull` overwrites local files.** It's for recovering edits made in the web editor, not a merge.
+- **Pushing does not deploy.** The web app URL that banks redirect to comes from a *deployment*; `clasp push` only updates the code behind it. Use `clasp deploy` or the editor's Deploy button.

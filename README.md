@@ -49,7 +49,9 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 ### Part 1 — sandbox (~5 minutes, no paperwork)
 
 1. Create a blank Google Sheet. **File → Settings → set the locale to Italy** (or your own — this is what makes dates and decimal commas parse correctly).
-2. **Extensions → Apps Script**. Create one file per file in [`src/`](src/) and paste the contents. Keep the names and the number prefixes — Apps Script has no modules and loads files in order.
+2. **Extensions → Apps Script**. Create one file per `.gs` file in [`src/`](src/) and paste the contents. Keep the names and the number prefixes — Apps Script has no modules and loads files in name order. Also paste [`src/appsscript.json`](src/appsscript.json), which you'll first need to reveal via **Project Settings → Show "appsscript.json" manifest file**.
+
+   *(There's no bulk import in the Apps Script editor. If you'd rather not paste by hand, [`clasp`](docs/CONTRIBUTING.md#optional-clasp) pushes the whole folder in one command — but it needs Node, which is why it isn't the default path.)*
 3. **Deploy → New deployment → Web app**, execute as *me*, access *Anyone*. Copy the `/exec` URL. This is what your bank redirects back to after login, and it's how this works without a server.
 4. Register a **sandbox** app at [enablebanking.com](https://enablebanking.com) — it asks only for a name and that redirect URL. Download the `.pem` private key.
 5. Run `installCredentials()` from the Apps Script editor and paste what it asks for.

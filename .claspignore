@@ -1,5 +1,6 @@
-# Everything that should NOT be pushed to Apps Script.
-# clasp matches from the project root; `**/**` is the documented catch-all.
+# Paths are relative to rootDir (src/), so only the manifest and the .gs
+# files are pushed. Anything else that ever lands in src/ is excluded by
+# default rather than by being listed — safer as the project grows.
 **/**
 !appsscript.json
-!src/**.gs
+!*.gs
