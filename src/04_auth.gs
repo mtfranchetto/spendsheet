@@ -91,9 +91,18 @@ function beginAuthorization(aspspName, country, psuType) {
     // the *active deployment* — which is a /dev URL when the script is run
     // in test mode, and a /exec URL only once deployed. Showing it turns a
     // guessing game into a comparison.
+    var isPinned = Boolean(
+      PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL));
+
     err.message += '\n\nredirect_url sent: ' + redirectUrl +
-      '\nThis must be registered verbatim for the ' + ebEnvironment() +
-      ' application in the Enable Banking control panel.';
+      '\n\nThis must match a redirect URL registered for the ' + ebEnvironment() +
+      ' application, and must be the URL of your ACTIVE deployment ' +
+      '(Deploy → Manage deployments → Web app → URL).' +
+      (isPinned
+        ? '\n\nThis URL is pinned. If it is wrong, re-pin it via Install credentials.'
+        : '\n\nNothing is pinned, so this value was guessed by the runtime — which returns ' +
+          'an archived deployment often enough to be worth not trusting. Pin the right one ' +
+          'via Spendsheet → Install credentials.');
     throw err;
   }
 

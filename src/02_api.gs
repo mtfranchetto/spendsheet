@@ -158,7 +158,8 @@ function installCredentials() {
 
 function credentialsFormHtml_() {
   var current = ebEnvironment();
-  var redirect = webAppUrl();
+  var pinned = PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL) || '';
+  var detected = detectedWebAppUrl();
   return [
     '<style>',
     ' body{font:13px/1.5 -apple-system,BlinkMacSystemFont,Roboto,sans-serif;margin:0;padding:16px;color:#202124}',
@@ -179,11 +180,18 @@ function credentialsFormHtml_() {
     '</select>',
     '<div class="hint">Each environment is a separate registration with its own ID and key. Saving one does not overwrite the other.</div>',
     '<label for="redirect">Redirect URL</label>',
-    '<input id="redirect" value="' + redirect + '" placeholder="https://script.google.com/macros/s/…/exec">',
-    '<div class="hint">Must match a redirect URL registered for the application <i>exactly</i>. ' +
-    'Take it from <b>Deploy &rarr; Manage deployments</b> — the runtime\'s guess can point at a ' +
-    'deployment that no longer exists, which fails as a Google Drive error rather than anything useful. ' +
-    '<a href="#" onclick="saveRedirect();return false">Pin this URL</a></div>',
+    '<input id="redirect" value="' + pinned + '" placeholder="https://script.google.com/macros/s/…/exec">',
+    // Deliberately NOT pre-filled with the detected value: it can name a
+    // deployment that has been archived, and a wrong value sitting next to a
+    // "pin" button is an invitation to pin it.
+    '<div class="hint">Copy this from <b>Deploy &rarr; Manage deployments &rarr; Web app &rarr; URL</b>, ' +
+    'and register the same string with Enable Banking. ' +
+    '<a href="#" onclick="saveRedirect();return false"><b>Pin this URL</b></a>' +
+    (pinned ? '' : ' &nbsp;<span style="color:#c5221f">Nothing pinned yet.</span>') + '</div>',
+    detected
+      ? '<div class="hint">The runtime reports <code>' + detected + '</code> — treat that as a guess. ' +
+        'It is the right value only if it matches the <b>active</b> deployment; archived ones linger here.</div>'
+      : '',
     '<label for="appId">Application ID</label>',
     '<input id="appId" placeholder="from the Enable Banking control panel" autocomplete="off">',
     '<label for="key">Private key (.pem)</label>',
