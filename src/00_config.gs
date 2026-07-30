@@ -143,8 +143,13 @@ var ANOMALY_KIND = {
   AMOUNT_CHANGED: 'amount_changed',
   UNMAPPED_COLUMN: 'unmapped_column',
   NON_EUR: 'non_eur',                  // no rate yet, so amount_eur is blank not wrong
-  MISSING_BALANCE: 'missing_balance'
+  MISSING_BALANCE: 'missing_balance',
+  NO_ACCOUNTS: 'no_accounts',          // a session we cannot read accounts out of
+  RAW_DUMP: 'raw_dump'                 // deliberate capture, for working out a shape
 };
+
+/** A cell holds 50,000 characters; leave headroom rather than losing the row. */
+var MAX_CELL_CHARS = 45000;
 
 /**
  * Balance preference order.

@@ -297,10 +297,64 @@ function recordConnection(session, fallbackProvider) {
   var accounts = extractAccounts(session);
   var provider = (session.aspsp && session.aspsp.name) || fallbackProvider || 'unknown';
 
+  // A session with no readable accounts means our idea of the response shape
+  // is wrong. Keeping the raw response is the difference between a fixable
+  // bug and a mystery — this is what _anomalies is for.
+  if (!accounts.length) {
+    logAnomaly_(ANOMALY_KIND.NO_ACCOUNTS, '',
+      'Session created, but no accounts could be read from the response. ' +
+      'Keys present: ' + Object.keys(session || {}).join(', '),
+      session);
+  }
+
   upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date()));
   var added = upsertAccounts_(accounts, provider);
 
   return { provider: provider, accountCount: accounts.length, accountsAdded: added };
+}
+
+/**
+ * Record something we could not interpret, rather than dropping it.
+ *
+ * Never throws: a failure to log an anomaly must not become the thing that
+ * breaks the run it was reporting on.
+ */
+function logAnomaly_(kind, accountId, detail, raw) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ANOMALIES);
+    if (!sheet) return;
+
+    var json = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    if (json && json.length > MAX_CELL_CHARS) json = json.slice(0, MAX_CELL_CHARS) + '…[truncated]';
+
+    sheet.appendRow([new Date(), accountId || '', kind, detail || '', json || '']);
+  } catch (e) {
+    Logger.log('logAnomaly_ failed: ' + e.message);
+  }
+}
+
+/**
+ * Dump the current session's raw JSON into _anomalies.
+ *
+ * A diagnostic for working out what a provider actually returns, since the
+ * response shape varies by bank and is the thing the phase 3b probe exists
+ * to settle. Run it from the editor when accounts don't appear.
+ */
+function inspectSession() {
+  var status = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.STATUS);
+  if (!status || status.getLastRow() < 2) throw new Error('No connection in _status yet.');
+
+  var sessionId = status.getRange(2, colIndex_(STATUS_COLUMNS, 'session_id')).getValue();
+  if (!sessionId) throw new Error('No session_id in the first _status row.');
+
+  var session = ebGetSession(sessionId);
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '',
+    'GET /sessions/' + sessionId + ' — top-level keys: ' + Object.keys(session || {}).join(', '),
+    session);
+
+  SpreadsheetApp.getActiveSpreadsheet()
+    .toast('Written to _anomalies. Unhide that tab to read it.', 'Session inspected', 10);
+  return session;
 }
 
 /**
