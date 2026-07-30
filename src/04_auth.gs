@@ -308,9 +308,14 @@ function recordConnection(session, fallbackProvider) {
   }
 
   upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date()));
-  var added = upsertAccounts_(accounts, provider);
+  var result = upsertAccounts_(accounts, provider);
 
-  return { provider: provider, accountCount: accounts.length, accountsAdded: added };
+  return {
+    provider: provider,
+    accountCount: accounts.length,
+    accountsAdded: result.added,
+    written: result.written
+  };
 }
 
 /**
@@ -351,15 +356,20 @@ function refreshAccounts() {
 
   var total = 0;
   var failures = [];
+  var trace = [];
 
   ids.forEach(function (sessionId) {
     try {
       var summary = recordConnection(ebGetSession(sessionId));
       total += summary.accountCount;
+      trace.push({ sessionId: sessionId, summary: summary });
     } catch (e) {
       failures.push(String(sessionId).slice(0, 8) + '…: ' + e.message);
+      trace.push({ sessionId: sessionId, error: e.message, stack: e.stack });
     }
   });
+
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'refreshAccounts trace', trace);
 
   var message = total + ' account' + (total === 1 ? '' : 's') + ' across ' + ids.length + ' connection' +
     (ids.length === 1 ? '' : 's') + (failures.length ? '. Failed: ' + failures.join(' | ') : '');
@@ -529,6 +539,9 @@ function upsertAccounts_(accounts, provider) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ACCOUNTS);
   var idColumn = colIndex_(ACCOUNT_COLUMNS, 'account_id');
   var added = 0;
+  // Each write records where it went and what came back, so "reported
+  // success but the sheet is empty" is answerable rather than arguable.
+  var written = [];
 
   accounts.forEach(function (account) {
     var existing = findRowByValue_(sheet, idColumn, account.uid);
@@ -546,9 +559,16 @@ function upsertAccounts_(accounts, provider) {
     writeCell_(sheet, row, ACCOUNT_COLUMNS, 'provider', provider);
     writeCell_(sheet, row, ACCOUNT_COLUMNS, 'iban_masked', maskIban(account.iban));
     if (account.currency) writeCell_(sheet, row, ACCOUNT_COLUMNS, 'currency', account.currency);
+
+    written.push({
+      uid: account.uid,
+      row: row,
+      existed: Boolean(existing),
+      readBack: sheet.getRange(row, idColumn).getValue()
+    });
   });
 
-  return added;
+  return { added: added, written: written };
 }
 
 function colIndex_(headers, name) {
