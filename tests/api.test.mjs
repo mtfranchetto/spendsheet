@@ -103,6 +103,59 @@ describe('classifyEbError', () => {
   });
 });
 
+describe('extractErrorDetail', () => {
+  it('surfaces the API message, which knows more than our generic text does', () => {
+    expect(ctx.extractErrorDetail(JSON.stringify({ message: 'redirect_url is not registered' })))
+      .toBe('redirect_url is not registered');
+    expect(ctx.extractErrorDetail(JSON.stringify({ detail: 'valid_until exceeds maximum' })))
+      .toBe('valid_until exceeds maximum');
+    expect(ctx.extractErrorDetail(JSON.stringify({ error_description: 'bad psu_type' })))
+      .toBe('bad psu_type');
+  });
+
+  it('flattens a field-by-field validation list', () => {
+    const body = JSON.stringify({
+      detail: [
+        { loc: ['body', 'access', 'valid_until'], msg: 'too far in the future' },
+        { loc: ['body', 'psu_type'], msg: 'unexpected value' }
+      ]
+    });
+    expect(ctx.extractErrorDetail(body))
+      .toBe('body.access.valid_until: too far in the future; body.psu_type: unexpected value');
+  });
+
+  it('falls back to the whole body rather than losing it', () => {
+    expect(ctx.extractErrorDetail(JSON.stringify({ weird: 'shape' }))).toBe('{"weird":"shape"}');
+  });
+
+  it('passes through short plain text, and drops a whole HTML page', () => {
+    expect(ctx.extractErrorDetail('gateway timeout')).toBe('gateway timeout');
+    expect(ctx.extractErrorDetail('<html>' + 'x'.repeat(500) + '</html>')).toBe('');
+  });
+
+  it('truncates rather than pasting an essay into a dialog', () => {
+    const detail = ctx.extractErrorDetail(JSON.stringify({ message: 'y'.repeat(500) }));
+    expect(detail).toHaveLength(301);
+    expect(detail.endsWith('…')).toBe(true);
+  });
+
+  it('handles an empty body', () => {
+    expect(ctx.extractErrorDetail('')).toBe('');
+    expect(ctx.extractErrorDetail(null)).toBe('');
+  });
+});
+
+describe('thrown errors carry the API explanation', () => {
+  it('includes what the server said about a 400', () => {
+    const c = withApi(() => ({
+      code: 400,
+      body: JSON.stringify({ message: 'redirect_url not registered for this application' })
+    }));
+
+    expect(() => c.ebListAspsps()).toThrow(/redirect_url not registered/);
+  });
+});
+
 describe('error objects', () => {
   it('marks server errors retryable but never the rate limit', () => {
     // A 429 carries a multi-hour penalty; retrying in-loop burns the window

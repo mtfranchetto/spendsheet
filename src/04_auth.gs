@@ -82,7 +82,21 @@ function beginAuthorization(aspspName, country, psuType) {
     createdAt: Date.now()
   }));
 
-  var response = ebStartAuthorization(payload);
+  var response;
+  try {
+    response = ebStartAuthorization(payload);
+  } catch (err) {
+    // The redirect URL is the usual culprit on a 400: it must match one
+    // registered for the application exactly, and the value here comes from
+    // the *active deployment* — which is a /dev URL when the script is run
+    // in test mode, and a /exec URL only once deployed. Showing it turns a
+    // guessing game into a comparison.
+    err.message += '\n\nredirect_url sent: ' + redirectUrl +
+      '\nThis must be registered verbatim for the ' + ebEnvironment() +
+      ' application in the Enable Banking control panel.';
+    throw err;
+  }
+
   if (!response.url) throw new Error('Enable Banking did not return an authorisation URL.');
 
   return { url: response.url, aspsp: aspspName };
@@ -365,7 +379,7 @@ function bankPickerHtml_() {
     ' li .c{color:#80868b;font-size:11px}',
     ' .env{background:#e8f0fe;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:12px}',
     ' .count{color:#5f6368;font-size:11px;margin-top:8px}',
-    ' .msg{margin-top:14px;font-size:12px}.err{color:#c5221f}',
+    ' .msg{margin-top:14px;font-size:12px;white-space:pre-wrap}.err{color:#c5221f}',
     ' a.go{display:inline-block;margin-top:14px;padding:10px 18px;background:#1a73e8;color:#fff;',
     '   text-decoration:none;border-radius:4px;font-size:13px}',
     '</style>',

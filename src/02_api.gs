@@ -353,7 +353,46 @@ function ebFetch_(method, path, options) {
   if (status >= 200 && status < 300) return safeJsonParse(text) || {};
 
   var code = classifyEbError(status, text);
-  throw ebError(code, describeEbError(code) + ' (HTTP ' + status + ' on ' + path + ')', status, text);
+  var detail = extractErrorDetail(text);
+
+  throw ebError(
+    code,
+    describeEbError(code) + ' (HTTP ' + status + ' on ' + path + ')' + (detail ? ' — ' + detail : ''),
+    status, text);
+}
+
+/**
+ * Pull the API's own explanation out of an error body.
+ *
+ * Worth surfacing rather than replacing with our generic text: on a 400 the
+ * server knows exactly which parameter it disliked, and our guess at what
+ * "invalid request" means is strictly less useful than what it actually
+ * said. Truncated because some errors carry a whole validation tree.
+ */
+function extractErrorDetail(bodyText) {
+  var body = safeJsonParse(bodyText);
+
+  if (!body) {
+    var plain = String(bodyText || '').trim();
+    return plain && plain.length < 300 ? plain : '';
+  }
+
+  var detail = body.message || body.error_description || body.description;
+
+  // Validation errors often arrive as a list of per-field objects. Checked
+  // before the plain-string fields, since an array is truthy and would
+  // otherwise stringify to "[object Object]".
+  if (!detail && Array.isArray(body.detail)) {
+    detail = body.detail.map(function (item) {
+      return (item.loc ? item.loc.join('.') + ': ' : '') + (item.msg || JSON.stringify(item));
+    }).join('; ');
+  }
+  if (!detail && typeof body.detail === 'string') detail = body.detail;
+  if (!detail && typeof body.error === 'string') detail = body.error;
+  if (!detail) detail = JSON.stringify(body);
+
+  detail = String(detail);
+  return detail.length > 300 ? detail.slice(0, 300) + '…' : detail;
 }
 
 // ---------------------------------------------------------------------------
