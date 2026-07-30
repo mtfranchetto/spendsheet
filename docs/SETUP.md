@@ -42,7 +42,13 @@ Copy the `/exec` URL. This is what makes the whole thing serverless: your bank n
 
 "Anyone" is required — the bank's redirect arrives unauthenticated. The endpoint is protected instead by a `state` nonce that `startAuth()` generates and the callback verifies, so a stray request to the URL can't do anything.
 
-> **Keep this URL stable.** Each **New deployment** mints a *different* `/exec` URL, and the one Enable Banking has registered stops matching — authorisation then fails with `Redirect URI not allowed`. To ship code changes, use **Manage deployments → edit the existing deployment → Version: New version**. That updates the code behind the same URL. `clasp push` alone doesn't change it either.
+> **Two things about deployments, and they pull in opposite directions.**
+>
+> **A deployment serves a frozen version, not your current code.** Editing files or running `clasp push` updates the project, but the `/exec` URL keeps serving the version the deployment was cut from. If `doGet` didn't exist when you deployed, the callback lands on Google Drive's *"Sorry, unable to open the file at present"* — the URL resolves, but the code behind it has no `doGet` to answer with.
+>
+> **But each *New deployment* mints a different URL**, which stops matching the one Enable Banking has registered, and authorisation then fails with `Redirect URI not allowed`.
+>
+> So the move that satisfies both is **Manage deployments → edit (pencil) → Version: New version → Deploy**. Same URL, current code. Reach for *New deployment* only the first time.
 >
 > If you're ever unsure which URL is live, open **Spendsheet → Install credentials** — it shows the current one, ready to copy.
 
