@@ -350,6 +350,66 @@ describe('extractAccounts', () => {
   });
 });
 
+describe('mergeAccountDetails', () => {
+  const bare = { uid: 'acc-1', name: '', currency: '', iban: '' };
+
+  it('fills in what the session did not carry', () => {
+    expect(ctx.mergeAccountDetails(bare, {
+      name: 'Fineco mock', currency: 'EUR', account_id: { iban: 'IT60X0542811101000000123456' }
+    })).toEqual({
+      uid: 'acc-1', name: 'Fineco mock', currency: 'EUR', iban: 'IT60X0542811101000000123456'
+    });
+  });
+
+  it('never overwrites something the session already told us', () => {
+    const known = { uid: 'acc-1', name: 'Current', currency: 'EUR', iban: 'FI21' };
+    expect(ctx.mergeAccountDetails(known, { name: 'Other', currency: 'GBP' })).toEqual(known);
+  });
+
+  it('falls back through the fields a provider might use for a name', () => {
+    expect(ctx.mergeAccountDetails(bare, { product: 'Conto Corrente' }).name).toBe('Conto Corrente');
+    expect(ctx.mergeAccountDetails(bare, { display_name: 'Joint' }).name).toBe('Joint');
+  });
+
+  it('survives an absent or unhelpful response', () => {
+    expect(ctx.mergeAccountDetails(bare, null)).toEqual(bare);
+    expect(ctx.mergeAccountDetails(bare, {})).toEqual(bare);
+  });
+});
+
+describe('enrichAccounts_', () => {
+  it('names an account the session left bare', () => {
+    const c = connected(() => ({ code: 200, body: JSON.stringify({ name: 'Fineco mock', currency: 'EUR' }) }));
+    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('B2').getValue()).toBe('Fineco mock');
+    expect(accounts.getRange('F2').getValue()).toBe('EUR');
+  });
+
+  it('does not spend a call when the session already told us everything', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const before = c.__fetches.length;
+    c.recordConnection({
+      ...SESSION,
+      accounts_data: [{ uid: 'acc-1', name: 'Current', currency: 'EUR', account_id: { iban: 'FI21' } }],
+      accounts: ['acc-1']
+    }, 'Mock ASPSP');
+
+    expect(c.__fetches).toHaveLength(before);
+  });
+
+  it('keeps the connection when the provider has no details endpoint', () => {
+    // A 404 here means "no name available", not "connection failed".
+    const c = connected(() => ({ code: 404, body: '{}' }));
+    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('A2').getValue()).toBe('a8160088-28a0-45f2-ba4d-3c7959863f92');
+    expect(accounts.getRange('B2').getValue()).toBe('Mock ASPSP account');
+  });
+});
+
 describe('append position', () => {
   it('uses row 2 even though a formula already occupies it', () => {
     // accounts and _status both carry an ARRAYFORMULA in row 2, so

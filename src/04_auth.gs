@@ -308,13 +308,62 @@ function recordConnection(session, fallbackProvider) {
   }
 
   upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date()));
-  var result = upsertAccounts_(accounts, provider);
+  var result = upsertAccounts_(enrichAccounts_(accounts), provider);
 
   return {
     provider: provider,
     accountCount: accounts.length,
     accountsAdded: result.added,
     written: result.written
+  };
+}
+
+/**
+ * Fill in names and currencies the session didn't carry.
+ *
+ * Best-effort by design: this costs one API call per unnamed account, runs
+ * only at connection or an explicit refresh, and a provider that doesn't
+ * expose details must not turn a working connection into a failure. An
+ * account with no name is still an account, and you can type your own —
+ * which reconnecting preserves.
+ */
+function enrichAccounts_(accounts) {
+  return accounts.map(function (account) {
+    if (account.name && account.currency && account.iban) return account;
+
+    var details;
+    try {
+      details = ebGetAccountDetails(account.uid);
+    } catch (e) {
+      return account;
+    }
+
+    var merged = mergeAccountDetails(account, details);
+
+    // Details came back but told us nothing we could read — that means the
+    // shape isn't what we expect, which is worth capturing rather than
+    // shrugging at.
+    if (!merged.name && !merged.currency && !merged.iban) {
+      logAnomaly_(ANOMALY_KIND.UNMAPPED_COLUMN, account.uid,
+        'Account details returned no readable fields. Keys: ' + Object.keys(details || {}).join(', '),
+        details);
+    }
+    return merged;
+  });
+}
+
+/** Overlay whatever the details response knows, without discarding what we had. */
+function mergeAccountDetails(account, details) {
+  if (!details) return account;
+
+  var identifiers = details.account_id || {};
+  return {
+    uid: account.uid,
+    name: account.name || details.name || details.product || details.details ||
+      details.display_name || details.owner_name || '',
+    currency: account.currency || details.currency || '',
+    iban: account.iban || identifiers.iban ||
+      (identifiers.other && identifiers.other.identification) || details.iban || ''
   };
 }
 

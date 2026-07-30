@@ -462,6 +462,18 @@ function ebDeleteSession(sessionId) {
   return ebFetch_('delete', '/sessions/' + encodeURIComponent(sessionId));
 }
 
+/**
+ * The descriptive fields for an account — name, product, currency, IBAN.
+ *
+ * Separate from the session because the session carries only identifiers.
+ * Not every provider exposes this, so callers should treat a failure here
+ * as "no name available" rather than as an error: an unnamed account is
+ * still a perfectly usable account.
+ */
+function ebGetAccountDetails(accountUid) {
+  return ebFetch_('get', '/accounts/' + encodeURIComponent(accountUid) + '/details');
+}
+
 function ebGetAccountBalances(accountUid) {
   var result = ebFetch_('get', '/accounts/' + encodeURIComponent(accountUid) + '/balances');
   return result.balances || [];
