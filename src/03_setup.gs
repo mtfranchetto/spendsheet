@@ -116,6 +116,10 @@ function applyFormulas_(ss, sep) {
 
   var acc = ss.getSheetByName(TABS.ACCOUNTS);
   setFormula_(acc, colOf(ACCOUNT_COLUMNS, 'balance'), accountBalanceFormula(), sep);
+
+  var status = ss.getSheetByName(TABS.STATUS);
+  setFormula_(status, colOf(STATUS_COLUMNS, 'days_left'), consentDaysLeftFormula(), sep);
+  setFormula_(status, colOf(STATUS_COLUMNS, 'state'), consentStateFormula(), sep);
 }
 
 /** Write a single array formula into row 2 of a column. Idempotent. */
@@ -275,6 +279,41 @@ function accountBalanceFormula() {
     '"")))))';
 }
 
+/**
+ * Days until a consent dies. A formula rather than a stored number, so it
+ * is truthful on a morning when the sync hasn't run — which is exactly the
+ * morning you'd want to know.
+ *
+ * Manual accounts have no consent and no `valid_until`, so they stay blank
+ * rather than reading as expired.
+ */
+function consentDaysLeftFormula() {
+  var id = colOf(STATUS_COLUMNS, 'connection_id');
+  var until = colOf(STATUS_COLUMNS, 'valid_until');
+  return '=ARRAYFORMULA(IF(LEN($' + id + '$2:$' + id + ')=0,"",' +
+    'IF(LEN($' + until + '$2:$' + until + ')=0,"",' +
+    'INT($' + until + '$2:$' + until + ')-TODAY())))';
+}
+
+/**
+ * Connection state, derived from the two facts that determine it rather
+ * than written by code and left to drift. An error outranks the clock: a
+ * connection that is failing is not "ACTIVE" merely because its consent
+ * has not expired yet.
+ */
+function consentStateFormula() {
+  var id = colOf(STATUS_COLUMNS, 'connection_id');
+  var days = colOf(STATUS_COLUMNS, 'days_left');
+  var error = colOf(STATUS_COLUMNS, 'last_error');
+  var warn = configLookup_('consent_warning_days', '7');
+
+  return '=ARRAYFORMULA(IF(LEN($' + id + '$2:$' + id + ')=0,"",' +
+    'IF(LEN($' + error + '$2:$' + error + ')>0,"ERROR",' +
+    'IF(LEN($' + days + '$2:$' + days + ')=0,"MANUAL",' +
+    'IF($' + days + '$2:$' + days + '<0,"EXPIRED",' +
+    'IF($' + days + '$2:$' + days + '<=' + warn + ',"EXPIRING","ACTIVE"))))))';
+}
+
 /** A _config value by key, with a fallback when the row is missing. */
 function configLookup_(key, fallbackLiteral) {
   return 'IFERROR(VLOOKUP("' + key + '",' + TABS.CONFIG + '!$A:$B,2,FALSE),' + fallbackLiteral + ')';
@@ -381,6 +420,15 @@ function applyProtection_(ss) {
     'spendsheet: formula (balance)');
   protectRange_(ss.getSheetByName(TABS.PENDING), 'A2:' + colOf(PENDING_COLUMNS, 'imported_at'),
     'spendsheet: rewritten every sync');
+
+  // state and days_left are derived; valid_until sits between them and is
+  // written by code, so these are two ranges rather than one.
+  protectRange_(ss.getSheetByName(TABS.STATUS),
+    colOf(STATUS_COLUMNS, 'state') + '2:' + colOf(STATUS_COLUMNS, 'state'),
+    'spendsheet: formula (consent state)');
+  protectRange_(ss.getSheetByName(TABS.STATUS),
+    colOf(STATUS_COLUMNS, 'days_left') + '2:' + colOf(STATUS_COLUMNS, 'days_left'),
+    'spendsheet: formula (days left)');
 }
 
 /**

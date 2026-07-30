@@ -26,7 +26,7 @@ const source = sourceFiles().map((f) => readFileSync(join(SRC, f), 'utf8')).join
 const SCOPE_FOR = [
   [/\.(showModalDialog|showSidebar|showModelessDialog)\s*\(/, 'script.container.ui', 'dialogs and sidebars'],
   [/\bUrlFetchApp\./, 'script.external_request', 'outbound HTTP'],
-  [/\bScriptApp\.newTrigger\b/, 'script.scriptapp', 'installing triggers'],
+  [/\bScriptApp\./, 'script.scriptapp', 'reading the deployment URL and installing triggers'],
   [/\bMailApp\./, 'script.send_mail', 'sending alerts'],
   [/\bDriveApp\./, 'drive.file', 'CSV snapshots'],
   [/\bSpreadsheetApp\./, 'spreadsheets.currentonly', 'reading and writing the sheet']

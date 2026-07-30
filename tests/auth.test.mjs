@@ -1,0 +1,300 @@
+/**
+ * The consent round-trip.
+ *
+ * `doGet` is a publicly reachable endpoint — it has to be, because the bank's
+ * redirect arrives with no Google session attached. The state nonce is the
+ * whole of what protects it, so it gets tested as a security boundary rather
+ * than as a happy path: every way a callback can be illegitimate is a case
+ * here, and each one must be rejected without explaining why.
+ */
+
+import { describe, it, expect } from 'vitest';
+import crypto from 'node:crypto';
+import { load } from './harness.mjs';
+
+const ctx = load();
+
+const { privateKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' }
+});
+
+const CREDS = { EB_ENV: 'SANDBOX', EB_SANDBOX_APP_ID: 'app', EB_SANDBOX_KEY: privateKey };
+
+const SESSION = {
+  session_id: 'sess-42',
+  aspsp: { name: 'Mock ASPSP', country: 'FI' },
+  access: { valid_until: '2026-12-25T00:00:00.000Z' },
+  accounts: [
+    { uid: 'acc-1', name: 'Current', currency: 'EUR', account_id: { iban: 'FI2112345600000785' } },
+    { uid: 'acc-2', name: 'Savings', currency: 'EUR', account_id: { iban: 'FI2112345600000999' } }
+  ]
+};
+
+/** A context with the sheet built, credentials installed and the API scripted. */
+function connected(fetch) {
+  const c = load({ properties: { ...CREDS }, fetch });
+  c.setup();
+  return c;
+}
+
+describe('validateAuthState', () => {
+  const NOW = 1_000_000;
+  const TTL = 1000;
+  const stored = { state: 'abc', createdAt: NOW };
+
+  it('accepts the nonce it issued', () => {
+    expect(ctx.validateAuthState(stored, 'abc', NOW + 500, TTL)).toEqual({ ok: true, reason: null });
+  });
+
+  it('rejects a callback for a flow that was never started', () => {
+    expect(ctx.validateAuthState(null, 'abc', NOW, TTL).ok).toBe(false);
+    expect(ctx.validateAuthState({}, 'abc', NOW, TTL).ok).toBe(false);
+  });
+
+  it('rejects a mismatched or absent state', () => {
+    // Without this, anyone with the URL could attach a bank session of
+    // their choosing to the sheet.
+    expect(ctx.validateAuthState(stored, 'wrong', NOW, TTL).ok).toBe(false);
+    expect(ctx.validateAuthState(stored, '', NOW, TTL).ok).toBe(false);
+    expect(ctx.validateAuthState(stored, undefined, NOW, TTL).ok).toBe(false);
+  });
+
+  it('rejects a nonce past its TTL, at the boundary', () => {
+    expect(ctx.validateAuthState(stored, 'abc', NOW + TTL, TTL).ok).toBe(true);
+    expect(ctx.validateAuthState(stored, 'abc', NOW + TTL + 1, TTL).ok).toBe(false);
+  });
+
+  it('rejects a record with no issue time rather than treating it as fresh', () => {
+    expect(ctx.validateAuthState({ state: 'abc' }, 'abc', NOW, TTL).ok).toBe(false);
+    expect(ctx.validateAuthState({ state: 'abc', createdAt: 0 }, 'abc', NOW, TTL).ok).toBe(false);
+  });
+});
+
+describe('generated state', () => {
+  it('is long and does not repeat', () => {
+    const c = load();
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      const s = c.generateState_();
+      expect(s.length).toBeGreaterThanOrEqual(64);
+      expect(s).toMatch(/^[0-9a-f]+$/);
+      seen.add(s);
+    }
+    expect(seen.size).toBe(200);
+  });
+});
+
+describe('buildAuthPayload', () => {
+  it('sends the fields /auth requires', () => {
+    const payload = ctx.buildAuthPayload({
+      aspspName: 'Mock ASPSP',
+      country: 'FI',
+      redirectUrl: 'https://script.google.com/macros/s/X/exec',
+      state: 'nonce',
+      validUntil: '2026-12-25T00:00:00.000Z',
+      psuType: 'personal'
+    });
+
+    expect(payload).toEqual({
+      access: { valid_until: '2026-12-25T00:00:00.000Z' },
+      aspsp: { name: 'Mock ASPSP', country: 'FI' },
+      state: 'nonce',
+      redirect_url: 'https://script.google.com/macros/s/X/exec',
+      psu_type: 'personal'
+    });
+  });
+
+  it('computes consent validity as UTC ISO 8601', () => {
+    const until = ctx.consentValidUntil(Date.parse('2026-01-01T00:00:00Z'), 180);
+    expect(until).toBe('2026-06-30T00:00:00.000Z');
+  });
+});
+
+describe('beginAuthorization', () => {
+  it('stores the nonce before the request goes out, and sends it', () => {
+    const c = connected(() => ({ code: 200, body: JSON.stringify({ url: 'https://bank.example/login' }) }));
+    const result = c.beginAuthorization('Mock ASPSP', 'FI');
+
+    expect(result.url).toBe('https://bank.example/login');
+
+    const sent = JSON.parse(c.__fetches.at(-1).params.payload);
+    const saved = JSON.parse(c.__properties.get('EB_AUTH_STATE'));
+    expect(sent.state).toBe(saved.state);
+    expect(sent.redirect_url).toBe('https://script.google.com/macros/s/FAKE/exec');
+  });
+
+  it('explains the missing deployment rather than failing obscurely', () => {
+    const c = load({ properties: { ...CREDS } });
+    c.webAppUrl = () => '';
+    // Simulate an undeployed script by removing the service URL.
+    c.ScriptApp.getService = () => ({ getUrl: () => '' });
+
+    expect(() => c.beginAuthorization('Mock ASPSP', 'FI')).toThrow(/New deployment/);
+  });
+});
+
+describe('doGet', () => {
+  function startedFlow(fetch) {
+    const c = connected(fetch);
+    c.PropertiesService.getScriptProperties().setProperty('EB_AUTH_STATE', JSON.stringify({
+      state: 'good-nonce', aspspName: 'Mock ASPSP', country: 'FI', createdAt: Date.now()
+    }));
+    return c;
+  }
+
+  const sessionResponse = () => ({ code: 200, body: JSON.stringify(SESSION) });
+
+  it('completes a legitimate callback and records the connection', () => {
+    const c = startedFlow(sessionResponse);
+    const html = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
+
+    expect(html).toContain('Connected');
+    expect(html).toContain('2 accounts');
+
+    const status = c.__spreadsheet.getSheetByName('_status');
+    expect(status.getRange('A2').getValue()).toBe('sess-42');
+    expect(status.getRange('B2').getValue()).toBe('Mock ASPSP');
+    expect(status.getRange('I2').getValue()).toBe(2);
+  });
+
+  it('consumes the nonce, so a captured callback cannot be replayed', () => {
+    const c = startedFlow(sessionResponse);
+    c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } });
+
+    expect(c.__properties.get('EB_AUTH_STATE')).toBeUndefined();
+
+    const replay = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
+    expect(replay).toContain('no longer valid');
+  });
+
+  it('rejects a forged state without touching the API', () => {
+    const c = startedFlow(sessionResponse);
+    const before = c.__fetches.length;
+
+    const html = c.doGet({ parameter: { state: 'forged', code: 'attacker-code' } }).getContent();
+
+    expect(html).toContain('Not connected');
+    expect(c.__fetches).toHaveLength(before);
+    expect(c.__spreadsheet.getSheetByName('_status').getLastRow()).toBe(1);
+  });
+
+  it('burns the nonce on a failed attempt, so guessing gets one try per flow', () => {
+    const c = startedFlow(sessionResponse);
+    c.doGet({ parameter: { state: 'forged', code: 'x' } });
+
+    expect(c.__properties.get('EB_AUTH_STATE')).toBeUndefined();
+  });
+
+  it('handles a bare request to the URL', () => {
+    const c = startedFlow(sessionResponse);
+    expect(c.doGet({}).getContent()).toContain('Not connected');
+    expect(c.doGet({ parameter: {} }).getContent()).toContain('Not connected');
+  });
+
+  it('reports a bank-side refusal without inventing a connection', () => {
+    const c = startedFlow(sessionResponse);
+    const html = c.doGet({ parameter: { error: 'access_denied' } }).getContent();
+
+    expect(html).toContain('Not connected');
+    expect(c.__spreadsheet.getSheetByName('_status').getLastRow()).toBe(1);
+  });
+
+  it('never leaks why a callback was rejected', () => {
+    // A response that explained itself would be a probing oracle for anyone
+    // who found the URL, and tells a legitimate user nothing useful.
+    const c = startedFlow(sessionResponse);
+    const html = c.doGet({ parameter: { state: 'forged', code: 'x' } }).getContent();
+
+    expect(html).not.toContain('mismatch');
+    expect(html).not.toContain('expired');
+    expect(html).not.toContain('good-nonce');
+  });
+
+  it('survives the session exchange failing', () => {
+    const c = startedFlow(() => ({ code: 500, body: 'gateway error' }));
+    const html = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
+
+    expect(html).toContain('Not connected');
+    expect(html).not.toContain('gateway error');
+  });
+});
+
+describe('extractAccounts', () => {
+  it('reads full account resources', () => {
+    expect(ctx.extractAccounts(SESSION)).toEqual([
+      { uid: 'acc-1', name: 'Current', currency: 'EUR', iban: 'FI2112345600000785' },
+      { uid: 'acc-2', name: 'Savings', currency: 'EUR', iban: 'FI2112345600000999' }
+    ]);
+  });
+
+  it('tolerates bare uid strings, which some responses use', () => {
+    expect(ctx.extractAccounts({ accounts: ['acc-9'] }))
+      .toEqual([{ uid: 'acc-9', name: '', currency: '', iban: '' }]);
+  });
+
+  it('falls back through the identifier fields a bank might populate', () => {
+    const accounts = ctx.extractAccounts({
+      accounts: [{ identification_hash: 'h1', product: 'Conto Corrente', currency: 'EUR' }]
+    });
+    expect(accounts[0].uid).toBe('h1');
+    expect(accounts[0].name).toBe('Conto Corrente');
+  });
+
+  it('drops entries with no usable identifier rather than creating a phantom account', () => {
+    expect(ctx.extractAccounts({ accounts: [{ name: 'nameless' }] })).toEqual([]);
+  });
+
+  it('handles a session with no accounts', () => {
+    expect(ctx.extractAccounts({})).toEqual([]);
+    expect(ctx.extractAccounts({ accounts: [] })).toEqual([]);
+  });
+});
+
+describe('maskIban', () => {
+  it('shows enough to recognise an account, not enough to use it', () => {
+    expect(ctx.maskIban('IT60X0542811101000000123456')).toBe('IT60…3456');
+    expect(ctx.maskIban('FI21 1234 5600 0007 85')).toBe('FI21…0785');
+  });
+
+  it('leaves short or absent values alone', () => {
+    expect(ctx.maskIban('')).toBe('');
+    expect(ctx.maskIban(null)).toBe('');
+    expect(ctx.maskIban('12345678')).toBe('12345678');
+  });
+});
+
+describe('recordConnection', () => {
+  it('adds discovered accounts as bank accounts', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(SESSION, 'Mock ASPSP');
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('A2').getValue()).toBe('acc-1');
+    expect(accounts.getRange('C2').getValue()).toBe('bank');
+    expect(accounts.getRange('E2').getValue()).toBe('FI21…0785');
+    expect(accounts.getLastRow()).toBe(3);
+  });
+
+  it('keeps a name you gave an account when the bank is reconnected', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(SESSION, 'Mock ASPSP');
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    accounts.getRange('B2').setValue('My spending account');
+
+    c.recordConnection(SESSION, 'Mock ASPSP');
+
+    expect(accounts.getRange('B2').getValue()).toBe('My spending account');
+    expect(accounts.getLastRow()).toBe(3);   // no duplicates
+  });
+
+  it('updates the existing _status row rather than appending on reconnect', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection(SESSION, 'Mock ASPSP');
+
+    expect(c.__spreadsheet.getSheetByName('_status').getLastRow()).toBe(2);
+  });
+});

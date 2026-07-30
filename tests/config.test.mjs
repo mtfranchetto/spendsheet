@@ -167,9 +167,10 @@ describe('the menu', () => {
 
     const names = menu.items.map((i) => i.name);
     expect(names).toContain('Setup sheet');
-    expect(names).toContain('Install credentials');   // phase 2 landed
-    // Phases 3-9 have not, so their entries must not be offered yet.
+    expect(names).toContain('Install credentials');   // phase 2
+    expect(names).toContain('Connect a bank');        // phase 3
+    // Phases 4-9 have not landed, so their entries must not be offered yet.
     expect(names).not.toContain('Sync now');
-    expect(names).not.toContain('Connect a bank');
+    expect(names).not.toContain('Detect recurring');
   });
 });
