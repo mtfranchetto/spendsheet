@@ -135,6 +135,60 @@ describe('beginAuthorization', () => {
   });
 });
 
+describe('redirect URL', () => {
+  it('prefers a pinned URL over what the runtime detects', () => {
+    // The detected value can name a deployment that has since been replaced,
+    // which resolves to nothing and fails as a Drive error page.
+    const pinned = 'https://script.google.com/macros/s/REAL/exec';
+    const c = load({ properties: { EB_REDIRECT_URL: pinned } });
+
+    expect(c.detectedWebAppUrl()).toBe('https://script.google.com/macros/s/FAKE/exec');
+    expect(c.webAppUrl()).toBe(pinned);
+  });
+
+  it('falls back to detection when nothing is pinned', () => {
+    expect(load().webAppUrl()).toBe('https://script.google.com/macros/s/FAKE/exec');
+  });
+
+  it('uses the pinned URL as redirect_url in the auth request', () => {
+    const c = load({
+      properties: { ...CREDS, EB_REDIRECT_URL: 'https://script.google.com/macros/s/REAL/exec' },
+      fetch: () => ({ code: 200, body: JSON.stringify({ url: 'https://bank.example' }) })
+    });
+    c.setup();
+    c.beginAuthorization('Mock ASPSP', 'FI');
+
+    expect(JSON.parse(c.__fetches.at(-1).params.payload).redirect_url)
+      .toBe('https://script.google.com/macros/s/REAL/exec');
+  });
+
+  it('names the specific mistake rather than just refusing', () => {
+    expect(ctx.validateRedirectUrl('https://script.google.com/macros/s/ABC/dev'))
+      .toMatch(/test deployment/);
+    expect(ctx.validateRedirectUrl('https://script.google.com/macros/s/ABC/exec/'))
+      .toMatch(/trailing slash/);
+    expect(ctx.validateRedirectUrl('https://example.com/callback'))
+      .toMatch(/Apps Script web app URL/);
+    expect(ctx.validateRedirectUrl('')).toMatch(/Paste the/);
+  });
+
+  it('accepts a well-formed /exec URL', () => {
+    expect(ctx.validateRedirectUrl('https://script.google.com/macros/s/AKfycb-x_9/exec')).toBeNull();
+  });
+
+  it('refuses to pin an invalid URL', () => {
+    const c = load();
+    expect(() => c.saveRedirectUrl('https://example.com')).toThrow();
+    expect(c.__properties.has('EB_REDIRECT_URL')).toBe(false);
+  });
+
+  it('can be cleared back to detection', () => {
+    const c = load({ properties: { EB_REDIRECT_URL: 'https://script.google.com/macros/s/REAL/exec' } });
+    c.clearRedirectUrl();
+    expect(c.webAppUrl()).toBe('https://script.google.com/macros/s/FAKE/exec');
+  });
+});
+
 describe('doGet', () => {
   function startedFlow(fetch) {
     const c = connected(fetch);

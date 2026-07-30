@@ -25,6 +25,7 @@ var EB_ENV = { SANDBOX: 'SANDBOX', PRODUCTION: 'PRODUCTION' };
 
 var EB_PROP = {
   ENV: 'EB_ENV',
+  REDIRECT_URL: 'EB_REDIRECT_URL',
   SANDBOX_APP_ID: 'EB_SANDBOX_APP_ID',
   SANDBOX_KEY: 'EB_SANDBOX_KEY',
   PROD_APP_ID: 'EB_PROD_APP_ID',
@@ -177,13 +178,12 @@ function credentialsFormHtml_() {
     '  <option value="PRODUCTION"' + (current === 'PRODUCTION' ? ' selected' : '') + '>Production — your real banks</option>',
     '</select>',
     '<div class="hint">Each environment is a separate registration with its own ID and key. Saving one does not overwrite the other.</div>',
-    '<label>Redirect URL to register</label>',
-    redirect
-      ? '<input readonly onclick="this.select()" value="' + redirect + '">' +
-        '<div class="hint">This exact string must be listed as a redirect URL for the application, ' +
-        'or authorisation fails with "Redirect URI not allowed". Click to select, then copy.</div>'
-      : '<div class="warn">No web app deployment yet. Deploy &rarr; New deployment &rarr; Web app, ' +
-        'with access set to "Anyone", then reopen this dialog to see the URL you need to register.</div>',
+    '<label for="redirect">Redirect URL</label>',
+    '<input id="redirect" value="' + redirect + '" placeholder="https://script.google.com/macros/s/…/exec">',
+    '<div class="hint">Must match a redirect URL registered for the application <i>exactly</i>. ' +
+    'Take it from <b>Deploy &rarr; Manage deployments</b> — the runtime\'s guess can point at a ' +
+    'deployment that no longer exists, which fails as a Google Drive error rather than anything useful. ' +
+    '<a href="#" onclick="saveRedirect();return false">Pin this URL</a></div>',
     '<label for="appId">Application ID</label>',
     '<input id="appId" placeholder="from the Enable Banking control panel" autocomplete="off">',
     '<label for="key">Private key (.pem)</label>',
@@ -193,6 +193,14 @@ function credentialsFormHtml_() {
     '<button id="save" onclick="submit()">Save</button>',
     '<div id="msg"></div>',
     '<script>',
+    ' function saveRedirect(){',
+    '   var m=document.getElementById("msg");',
+    '   m.className=""; m.textContent="Saving…";',
+    '   google.script.run',
+    '     .withSuccessHandler(function(r){ m.className="ok"; m.textContent=r; })',
+    '     .withFailureHandler(function(e){ m.className="err"; m.textContent=e.message; })',
+    '     .saveRedirectUrl(document.getElementById("redirect").value);',
+    ' }',
     ' function submit(){',
     '   var b=document.getElementById("save"), m=document.getElementById("msg");',
     '   b.disabled=true; m.className=""; m.textContent="Saving...";',

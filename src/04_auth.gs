@@ -130,13 +130,67 @@ function generateState_() {
   return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
 }
 
-/** The active deployment's /exec URL — self-healing, unlike a stored copy. */
+/**
+ * The redirect URL to hand the bank.
+ *
+ * An explicitly saved value wins over `ScriptApp.getService().getUrl()`,
+ * because that is not reliable once deployments have churned: it can return
+ * the URL of a deployment that has since been replaced, which resolves to
+ * nothing and lands the callback on a Google Drive error page. The one URL
+ * that matters is whichever is registered with Enable Banking, and only you
+ * can know which that is.
+ */
 function webAppUrl() {
+  var saved = PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL);
+  if (saved) return saved;
+  return detectedWebAppUrl();
+}
+
+/** What the runtime thinks the URL is. A starting guess, not an authority. */
+function detectedWebAppUrl() {
   try {
     return ScriptApp.getService().getUrl() || '';
   } catch (e) {
     return '';
   }
+}
+
+/**
+ * Pin the redirect URL. Called from the credentials dialog.
+ *
+ * Validated rather than trusted: a `/dev` URL or a stray trailing slash both
+ * fail late, at `/auth`, with an error that points at the bank rather than
+ * at the typo.
+ */
+function saveRedirectUrl(url) {
+  var error = validateRedirectUrl(url);
+  if (error) throw new Error(error);
+
+  PropertiesService.getScriptProperties().setProperty(EB_PROP.REDIRECT_URL, String(url).trim());
+  return 'Saved. Register this exact URL for the ' + ebEnvironment() + ' application.';
+}
+
+function validateRedirectUrl(url) {
+  if (!url || !String(url).trim()) return 'Paste the /exec URL of your web app deployment.';
+
+  var text = String(url).trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(text)) {
+    if (/\/dev$/.test(text)) {
+      return 'That is the test deployment (/dev). Use the /exec URL from Manage deployments.';
+    }
+    if (/\/exec\/$/.test(text)) {
+      return 'Remove the trailing slash — the URL must end in /exec.';
+    }
+    return 'That does not look like an Apps Script web app URL. It should look like ' +
+      'https://script.google.com/macros/s/…/exec';
+  }
+  return null;
+}
+
+/** Clear the pin and fall back to detection. */
+function clearRedirectUrl() {
+  PropertiesService.getScriptProperties().deleteProperty(EB_PROP.REDIRECT_URL);
+  return 'Cleared. Falling back to ' + (detectedWebAppUrl() || 'no detected URL') + '.';
 }
 
 // ---------------------------------------------------------------------------
