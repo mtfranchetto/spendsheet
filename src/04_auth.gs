@@ -595,6 +595,7 @@ function upsertStatusRow_(row) {
 function upsertAccounts_(accounts, provider) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ACCOUNTS);
   var idColumn = colIndex_(ACCOUNT_COLUMNS, 'account_id');
+  var placeholder = provider + ' account';
   var added = 0;
   // Each write records where it went and what came back, so "reported
   // success but the sheet is empty" is answerable rather than arguable.
@@ -606,11 +607,19 @@ function upsertAccounts_(accounts, provider) {
 
     if (!existing) {
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'account_id', account.uid);
-      writeCell_(sheet, row, ACCOUNT_COLUMNS, 'name', account.name || provider + ' account');
+      writeCell_(sheet, row, ACCOUNT_COLUMNS, 'name', account.name || placeholder);
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'kind', ACCOUNT_KIND.BANK);
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'include_in_net_worth', true);
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'active', true);
       added++;
+    } else if (account.name) {
+      // A name you typed is yours and survives a reconnect. Our own
+      // placeholder is not a decision anyone made, so a real name from the
+      // provider is allowed to replace it.
+      var current = sheet.getRange(row, colIndex_(ACCOUNT_COLUMNS, 'name')).getValue();
+      if (!current || current === placeholder) {
+        writeCell_(sheet, row, ACCOUNT_COLUMNS, 'name', account.name);
+      }
     }
 
     writeCell_(sheet, row, ACCOUNT_COLUMNS, 'provider', provider);

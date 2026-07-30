@@ -452,6 +452,23 @@ describe('recordConnection', () => {
     expect(accounts.getLastRow()).toBe(3);
   });
 
+  it('replaces its own placeholder once the provider supplies a real name', () => {
+    let named = false;
+    const c = connected(() => named
+      ? { code: 200, body: JSON.stringify({ name: 'Fineco mock' }) }
+      : { code: 404, body: '{}' });
+
+    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('B2').getValue()).toBe('Mock ASPSP account');
+
+    named = true;
+    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+
+    // The placeholder was never anyone's decision, so it is safe to replace.
+    expect(accounts.getRange('B2').getValue()).toBe('Fineco mock');
+  });
+
   it('keeps a name you gave an account when the bank is reconnected', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
     c.recordConnection(SESSION, 'Mock ASPSP');
