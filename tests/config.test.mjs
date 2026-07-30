@@ -165,8 +165,11 @@ describe('the menu', () => {
     fresh.onOpen();
     const menu = fresh.__ui.find((c) => c.title === 'Spendsheet');
 
-    expect(menu.items.map((i) => i.name)).toContain('Setup sheet');
-    // Phases 2-9 have not landed, so their entries must not be offered yet.
-    expect(menu.items.map((i) => i.name)).not.toContain('Sync now');
+    const names = menu.items.map((i) => i.name);
+    expect(names).toContain('Setup sheet');
+    expect(names).toContain('Install credentials');   // phase 2 landed
+    // Phases 3-9 have not, so their entries must not be offered yet.
+    expect(names).not.toContain('Sync now');
+    expect(names).not.toContain('Connect a bank');
   });
 });

@@ -12,6 +12,7 @@
 
 var MENU_ITEMS = [
   { name: 'Setup sheet', fn: 'setup' },
+  { name: 'Install credentials', fn: 'installCredentials' },
   { name: 'Connect a bank', fn: 'startAuth' },
   { name: 'Sync now', fn: 'syncNow' },
   { name: 'Re-categorise all', fn: 'recategorizeAll' },
