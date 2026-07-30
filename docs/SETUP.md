@@ -42,9 +42,15 @@ Copy the `/exec` URL. This is what makes the whole thing serverless: your bank n
 
 "Anyone" is required — the bank's redirect arrives unauthenticated. The endpoint is protected instead by a `state` nonce that `startAuth()` generates and the callback verifies, so a stray request to the URL can't do anything.
 
+> **Keep this URL stable.** Each **New deployment** mints a *different* `/exec` URL, and the one Enable Banking has registered stops matching — authorisation then fails with `Redirect URI not allowed`. To ship code changes, use **Manage deployments → edit the existing deployment → Version: New version**. That updates the code behind the same URL. `clasp push` alone doesn't change it either.
+>
+> If you're ever unsure which URL is live, open **Spendsheet → Install credentials** — it shows the current one, ready to copy.
+
 ### 5. Register a sandbox application
 
-At [enablebanking.com](https://enablebanking.com), register an application with environment **Sandbox**. It asks for a name and redirect URLs — paste the `/exec` URL from step 4.
+At [enablebanking.com](https://enablebanking.com), register an application with environment **Sandbox**. It asks for a name and redirect URLs — paste the `/exec` URL from step 4, **exactly** as it appears, with no trailing slash added or removed.
+
+This is the most common setup failure, and it fails late: everything works until you pick a bank, then `/auth` returns `400 — Redirect URI not allowed`. You can register more than one URL, so adding a second is harmless if you're unsure which is live.
 
 Let the browser generate the key pair. The private key is never transmitted and downloads as a `.pem`. (Generating one yourself with OpenSSL and uploading only the public half works too; it's just one more step.)
 

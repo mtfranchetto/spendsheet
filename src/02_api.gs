@@ -157,6 +157,7 @@ function installCredentials() {
 
 function credentialsFormHtml_() {
   var current = ebEnvironment();
+  var redirect = webAppUrl();
   return [
     '<style>',
     ' body{font:13px/1.5 -apple-system,BlinkMacSystemFont,Roboto,sans-serif;margin:0;padding:16px;color:#202124}',
@@ -176,6 +177,13 @@ function credentialsFormHtml_() {
     '  <option value="PRODUCTION"' + (current === 'PRODUCTION' ? ' selected' : '') + '>Production — your real banks</option>',
     '</select>',
     '<div class="hint">Each environment is a separate registration with its own ID and key. Saving one does not overwrite the other.</div>',
+    '<label>Redirect URL to register</label>',
+    redirect
+      ? '<input readonly onclick="this.select()" value="' + redirect + '">' +
+        '<div class="hint">This exact string must be listed as a redirect URL for the application, ' +
+        'or authorisation fails with "Redirect URI not allowed". Click to select, then copy.</div>'
+      : '<div class="warn">No web app deployment yet. Deploy &rarr; New deployment &rarr; Web app, ' +
+        'with access set to "Anyone", then reopen this dialog to see the URL you need to register.</div>',
     '<label for="appId">Application ID</label>',
     '<input id="appId" placeholder="from the Enable Banking control panel" autocomplete="off">',
     '<label for="key">Private key (.pem)</label>',
