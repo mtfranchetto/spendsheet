@@ -169,8 +169,23 @@ describe('the menu', () => {
     expect(names).toContain('Setup sheet');
     expect(names).toContain('Install credentials');   // phase 2
     expect(names).toContain('Connect a bank');        // phase 3
-    // Phases 4-9 have not landed, so their entries must not be offered yet.
-    expect(names).not.toContain('Sync now');
+    expect(names).toContain('Sync now');              // phase 4
+    // Phases 7-9 have not landed, so their entries must not be offered yet.
     expect(names).not.toContain('Detect recurring');
+    expect(names).not.toContain('Learn from corrections');
+  });
+
+  it('files the diagnostics away in a submenu', () => {
+    // They are for the days something is wrong. Putting them on the first
+    // screen makes the whole thing read as a system that expects to break.
+    const fresh = load();
+    fresh.onOpen();
+
+    const top = fresh.__ui.find((c) => c.title === 'Spendsheet').items.map((i) => i.name);
+    expect(top).not.toContain('Run smoke tests');
+    expect(top).not.toContain('Diagnose accounts tab');
+
+    const diagnostics = fresh.__ui.find((c) => c.title === 'Diagnostics');
+    expect(diagnostics.items.map((i) => i.name)).toContain('Run smoke tests');
   });
 });

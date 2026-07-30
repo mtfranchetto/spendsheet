@@ -17,6 +17,10 @@
  *    every field and reports zero transactions without erroring.
  *
  * Secrets live in Script Properties. Never in the Sheet, never in git.
+ *
+ * This file speaks HTTP and nothing else: it knows no tab names and reads no
+ * cells. What a response *means* belongs to 06_accounts.gs and 07_transactions.gs,
+ * and the live checks that exercise it are in 13_diagnostics.gs.
  */
 
 var EB_BASE_URL = 'https://api.enablebanking.com';
@@ -536,68 +540,4 @@ function ebGetAllTransactions(accountUid, options) {
     truncated: Boolean(continuationKey),
     continuationKey: continuationKey
   };
-}
-
-// ---------------------------------------------------------------------------
-// Smoke tests
-// ---------------------------------------------------------------------------
-
-/**
- * Checks that need the Google runtime and a live API, so they cannot run in
- * CI. Results go to the `_tests` tab. Phase 8 extends this with the
- * monitoring checks; for now it answers the phase 2 question — are the
- * credentials right and is the JWT accepted?
- */
-function runSmokeTests() {
-  var results = [];
-  var env = ebEnvironment();
-
-  results.push(smokeTest_('credentials', 'installed for ' + env, function () {
-    var creds = ebCredentials_();
-    return 'application ' + creds.applicationId.slice(0, 8) + '…';
-  }));
-
-  results.push(smokeTest_('jwt', 'signs and decodes', function () {
-    var payload = decodeJwtPayload(ebJwt_());
-    if (payload.aud !== JWT_AUDIENCE) throw new Error('unexpected audience ' + payload.aud);
-    return 'expires in ' + (payload.exp - Math.floor(Date.now() / 1000)) + 's';
-  }));
-
-  results.push(smokeTest_('api', 'GET /application', function () {
-    var app = ebGetApplication();
-    return app.name || app.kid || 'ok';
-  }));
-
-  results.push(smokeTest_('api', 'GET /aspsps', function () {
-    var banks = ebListAspsps();
-    if (!banks.length) throw new Error('no banks returned');
-    return banks.length + ' banks, e.g. ' + banks[0].name;
-  }));
-
-  writeTestResults_(results);
-
-  var failed = results.filter(function (r) { return r.result !== 'PASS'; }).length;
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    failed ? failed + ' of ' + results.length + ' checks failed — see the _tests tab'
-           : 'All ' + results.length + ' checks passed',
-    'Smoke tests', 10);
-
-  return results;
-}
-
-function smokeTest_(suite, name, fn) {
-  try {
-    return { suite: suite, name: name, result: 'PASS', detail: String(fn()) };
-  } catch (e) {
-    return { suite: suite, name: name, result: 'FAIL', detail: e.message };
-  }
-}
-
-function writeTestResults_(results) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TESTS);
-  if (!sheet) throw new Error('No ' + TABS.TESTS + ' tab. Run Setup sheet first.');
-
-  var now = new Date();
-  var rows = results.map(function (r) { return [now, r.suite, r.name, r.result, r.detail]; });
-  if (rows.length) sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, TEST_COLUMNS.length).setValues(rows);
 }

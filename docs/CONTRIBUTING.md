@@ -101,7 +101,7 @@ npm run pull          # pull remote edits back down
 
 ### Why `rootDir` is `src`
 
-`clasp` requires `appsscript.json` to sit in `rootDir`, which is why the manifest lives in `src/` rather than at the repo root. The payoff is that files arrive in the editor named `00_config`, `03_setup`, `10_menu` — exactly what the README tells copy-paste users to call them. With `rootDir: "."` they'd arrive as `src/00_config`, and the two setup paths would produce different projects.
+`clasp` requires `appsscript.json` to sit in `rootDir`, which is why the manifest lives in `src/` rather than at the repo root. The payoff is that files arrive in the editor named `00_config`, `04_setup`, `14_menu` — exactly what the README tells copy-paste users to call them. With `rootDir: "."` they'd arrive as `src/00_config`, and the two setup paths would produce different projects.
 
 ### Watch out
 

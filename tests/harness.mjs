@@ -118,6 +118,13 @@ class FakeRange {
 
   setValue(v) { this.sheet._set(this.row, this.col, v); return this; }
 
+  clearContent() {
+    for (let r = 0; r < this.numRows; r++) {
+      for (let c = 0; c < this.numCols; c++) this.sheet._set(this.row + r, this.col + c, '');
+    }
+    return this;
+  }
+
   setFormula(f) {
     this.sheet.formulas.set(`${this.row},${this.col}`, f);
     return this;
@@ -198,6 +205,18 @@ class FakeSheet {
 
   getName() { return this.name; }
   setName(n) { this.name = n; return this; }
+
+  /**
+   * Appends after getLastRow(), exactly as Sheets does — including on a tab
+   * whose row 2 holds an ARRAYFORMULA, where that is row 1001 and not row 2.
+   * Faithful rather than helpful on purpose: appendRow is the trap that
+   * `appendRows_` exists to avoid, so the fake has to be able to spring it.
+   */
+  appendRow(values) {
+    const row = this.getLastRow() + 1;
+    values.forEach((v, c) => this._set(row, c + 1, v));
+    return this;
+  }
 
   getRange(a, b, c, d) {
     if (typeof a === 'string') {
@@ -363,12 +382,17 @@ export function createGoogleStubs(options = {}) {
       getActive: () => spreadsheet,
       getUi: () => ({
         createMenu(title) {
-          const items = [];
+          // Recorded on creation, not on addToUi: a submenu is never added to
+          // the UI itself, it is handed to addSubMenu — and a test still has
+          // to be able to see what is in it.
+          const record = { title, items: [], attached: false, subMenus: [] };
+          uiCalls.push(record);
           const menu = {
-            addItem(name, fn) { items.push({ name, fn }); return menu; },
-            addSeparator() { return menu; },
-            addSubMenu() { return menu; },
-            addToUi() { uiCalls.push({ title, items }); }
+            addItem(name, fn) { record.items.push({ name, fn }); return menu; },
+            addSeparator() { record.items.push({ separator: true }); return menu; },
+            addSubMenu(sub) { record.subMenus.push(sub.__title()); return menu; },
+            addToUi() { record.attached = true; },
+            __title: () => title
           };
           return menu;
         },
@@ -418,6 +442,7 @@ export function createGoogleStubs(options = {}) {
         return [...hash].map((b) => (b > 127 ? b - 256 : b));
       },
       DigestAlgorithm: { SHA_256: 'SHA_256', MD5: 'MD5' },
+      Charset: { UTF_8: 'UTF_8', US_ASCII: 'US_ASCII' },
       computeRsaSha256Signature: (value, key) => {
         const signer = crypto.createSign('RSA-SHA256');
         signer.update(String(value));
@@ -457,6 +482,22 @@ export function createGoogleStubs(options = {}) {
       getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/FAKE/exec' })
     },
 
+    /**
+     * A real lock, so a test can prove that a second sync is refused rather
+     * than allowed to interleave. `options.lockHeld` starts it already taken.
+     */
+    LockService: {
+      getScriptLock: () => ({
+        tryLock: () => {
+          if (lockHeld) return false;
+          lockHeld = true;
+          return true;
+        },
+        releaseLock: () => { lockHeld = false; },
+        hasLock: () => lockHeld
+      })
+    },
+
     DriveApp: {
       getFoldersByName: () => ({ hasNext: () => false, next: () => null }),
       createFolder: (name) => ({ getName: () => name, createFile: () => ({}) })
@@ -468,6 +509,7 @@ export function createGoogleStubs(options = {}) {
   };
 
   let triggers = [];
+  let lockHeld = Boolean(options.lockHeld);
 
   // Handles for assertions.
   sandbox.__spreadsheet = spreadsheet;

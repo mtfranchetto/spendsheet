@@ -133,7 +133,10 @@ So pending never enters the history. When a transaction settles it arrives in th
 | L | `balance_updated_at` | code |
 | M | `balances_raw` | code — the full typed set, for debugging |
 | N | `include_in_net_worth` | you |
-| O | `active` | you |
+| O | `active` | you — untick to stop syncing a closed account without losing its history |
+| P | `connection_id` | code — which `_status` consent covers this account |
+
+`connection_id` is at the end rather than next to `provider` on purpose: inserting a column mid-schema renames the headers without moving the data underneath them. Appending to the right is always safe; inserting never is.
 
 Three balance columns rather than one is what lets you **add a manual account by typing a row** — no script, no menu item. `balance` is a single `ARRAYFORMULA` written once by `setup()` covering every row you'll ever add:
 
@@ -179,6 +182,10 @@ uid = SHA256(account_id + "|" + entry_reference)                       when pres
 `entry_reference` is immutable per account but **not globally unique** — the same value legitimately appears on different accounts — so it's always scoped by `account_id`.
 
 **The `ordinal` matters more than it looks.** Two genuine €3 coffees at the same bar on the same day hash identically without it, and one would be silently swallowed — a bug that loses real transactions and is nearly impossible to notice later. The fallback key counts identical tuples within the batch and appends an occurrence index.
+
+The ordinal is stable across syncs because a fetch always covers **whole days**: `date_from` and `date_to` are dates, so a day is either entirely inside the window or entirely outside it, and a day that is inside arrives complete. The same day fetched tomorrow therefore produces the same groups in the same order.
+
+The one case it doesn't cover: two identical transactions where the second settles later *and* the bank sorts it ahead of the first. They swap ordinals, so one row inserts a second time and the other never matches its earlier self. The count stays right — two coffees, two rows — which is why this is a wrinkle rather than something worth carrying per-transaction state to fix.
 
 And because some banks emit bad duplicates: if the same `account_id|entry_reference` reappears with a **different** amount or date, that's a provider bug, not a duplicate. It goes to `_anomalies` rather than being silently dropped or double-inserted.
 

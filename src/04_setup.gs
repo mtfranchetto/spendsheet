@@ -1,5 +1,5 @@
 /**
- * 03_setup.gs — builds the spreadsheet.
+ * 04_setup.gs — builds the spreadsheet.
  *
  * setup() is idempotent by construction: it creates only what is missing,
  * rewrites headers and formulas to their canonical values, and seeds a tab
@@ -110,7 +110,7 @@ function applyFormulas_(ss, sep) {
   setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula(), sep);
 
   // category_auto / subcategory_auto / category_source are written by the
-  // categorisation cascade in 07_categorize.gs (phase 7), not by a formula:
+  // categorisation cascade in 09_categorize.gs (phase 7), not by a formula:
   // tier 3 needs normalizeMerchant() and tier 5 needs priority-ordered
   // substring matching, neither of which is expressible in ARRAYFORMULA.
 

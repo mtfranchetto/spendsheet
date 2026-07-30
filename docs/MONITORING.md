@@ -1,6 +1,6 @@
 # Monitoring
 
-> **Not written yet.** Lands in phase 8, alongside `09_monitor.gs`.
+> **Not written yet.** Lands in phase 8, alongside `12_monitor.gs`.
 
 ## The six failure modes
 

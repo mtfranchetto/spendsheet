@@ -10,6 +10,28 @@ This is why there's no CSV importer (File → Import, then paste-values) and no 
 
 The one accepted exception is `installCredentials()`: a documented procedure that silently corrupts a multi-line PEM is a trap, not a procedure.
 
+## Where things go
+
+Files are numbered because Apps Script has no modules — it concatenates `src/*.gs` in filename order into one global scope. The numbering is layering, not just sequence: nothing lower may depend on anything higher.
+
+| | |
+|---|---|
+| `00_config.gs` | pure data. No `SpreadsheetApp`, no network. |
+| `01_jwt.gs` | RS256 signing. |
+| `02_api.gs` | Enable Banking HTTP. Speaks no tab names, reads no cells. |
+| `03_sheets.gs` | spreadsheet primitives — addressing, appending, `_config`, `_anomalies`. |
+| `04_setup.gs` | builds the book. Idempotent. |
+| `05_auth.gs` | the consent round-trip and `doGet`. Nothing about what a session *means*. |
+| `06_accounts.gs` | sessions → `accounts` and `_status`, plus balance selection. |
+| `07_transactions.gs` | provider transaction → row. Pure. |
+| `08_dedup.gs` | identity: uid, ordinal, conflict detection. Pure. |
+| `09_sync.gs` | orchestration only. What to ask for, in what order, what to do when one bank fails. |
+| `10`–`12` | reserved: categorise, recurring, monitor. |
+| `13_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
+| `14_menu.gs` | last, so every function it names is defined. |
+
+When a file starts holding two kinds of thing, split it before adding a third. `04_auth.gs` reached 769 lines by owning the consent flow, the accounts domain, the sheet primitives and the diagnostics at once; the primitives in particular were invisible there, and the sync would have grown its own copy.
+
 ## After pushing code
 
 `npm test` → `npx clasp push --force` → **say whether a redeploy is needed.**
@@ -26,8 +48,11 @@ The one accepted exception is `installCredentials()`: a documented procedure tha
 - **File numbering is load order.** Apps Script has no modules and sorts by name.
 - **Author formulas with commas and write them through `setFormula_()`.** Decimal-comma locales (it-IT and friends) need `;`, and `setFormula()` does not convert — a comma form lands as `#ERROR!`. `localizeFormula()` translates once at the write boundary.
 - **`oauthScopes` are explicit**, so a missing one fails at the moment of the call. `tests/manifest.test.mjs` derives the required set from what `src/` calls — add a service and add its scope, or CI fails. It also fails on scopes nothing uses.
-- **`transactions` is never sorted, and no column is ever inserted mid-schema.** Both break row identity and every formula reference silently. Append to the right is fine.
-- **Code owns `transactions` A–O; formulas and the user own P onward.** Sync appends, never rewrites.
+- **`getLastRow()` is not a record count.** Several tabs carry an open-ended `ARRAYFORMULA` in row 2, so Sheets reports ~1000 rows of content on a tab holding nothing — which once put a real account at row 1001 while every run reported success. Never append at `getLastRow() + 1`; use `appendRows_` (strictly after the last record) or `nextEmptyRow_` (upserts, reuses a gap). `sheet.appendRow()` has the same bug baked in and the harness reproduces it faithfully.
+- **Bulk writes go through one `setValues`.** A per-cell loop is fine for `accounts`; at a few thousand transactions it burns the six-minute limit on round-trips alone.
+- **`transactions` is never sorted, and no column is ever inserted mid-schema.** Both break row identity and every formula reference silently. Append to the right is fine — that is why `connection_id` is the last `accounts` column rather than sitting next to `provider`.
+- **Code owns `transactions` A–O; formulas and the user own P onward.** Sync appends, never rewrites. A row already in the sheet is never touched again.
+- **The sign is never in the amount.** Direction is `credit_debit_indicator`, applied to `Math.abs(...)` — on transactions *and* independently on balances. Both are places where getting it wrong inverts a total while looking plausible.
 - **Every report reads `amount_eur`, never `amount`.**
 
 ## Testing

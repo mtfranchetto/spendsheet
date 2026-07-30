@@ -99,7 +99,11 @@ var ACCOUNT_COLUMNS = [
   'balance_updated_at',   // L
   'balances_raw',         // M  full typed set, for debugging
   'include_in_net_worth', // N
-  'active'                // O
+  'active',               // O
+  // Which _status connection covers this account. Appended rather than
+  // slotted in next to `provider`, because inserting a column mid-schema
+  // renames headers without moving the data underneath them.
+  'connection_id'         // P
 ];
 
 var RULE_COLUMNS = [
@@ -144,8 +148,33 @@ var ANOMALY_KIND = {
   UNMAPPED_COLUMN: 'unmapped_column',
   NON_EUR: 'non_eur',                  // no rate yet, so amount_eur is blank not wrong
   MISSING_BALANCE: 'missing_balance',
+  UNKNOWN_BALANCE_TYPE: 'unknown_balance_type',
   NO_ACCOUNTS: 'no_accounts',          // a session we cannot read accounts out of
+  UNPARSEABLE_AMOUNT: 'unparseable_amount',
+  TRUNCATED: 'truncated',              // paging cap hit: we did NOT fetch everything
+  FETCH_FAILED: 'fetch_failed',
+  RATE_LIMITED: 'rate_limited',
   RAW_DUMP: 'raw_dump'                 // deliberate capture, for working out a shape
+};
+
+/** Transaction statuses. Only BOOK is allowed into `transactions`. */
+var TX_STATUS = { BOOKED: 'BOOK', PENDING: 'PDNG' };
+
+/** Which way the money went. The amount itself is unsigned — see 07_transactions. */
+var CREDIT_DEBIT = { CREDIT: 'CRDT', DEBIT: 'DBIT' };
+
+/**
+ * How a run was started. Recorded in `_runs` because "it broke" and "it broke
+ * when *I* ran it" are different problems.
+ */
+var RUN_TRIGGER = { MANUAL: 'manual', SCHEDULED: 'scheduled' };
+
+var RUN_RESULT = { OK: 'OK', PARTIAL: 'PARTIAL', FAIL: 'FAIL' };
+
+/** Script Properties owned by the sync, kept apart from the EB_* credentials. */
+var SYNC_PROP = {
+  BACKFILL_PENDING: 'SYNC_BACKFILL_PENDING',  // accounts that have never had a full history fetch
+  CALL_BUDGET: 'SYNC_CALL_BUDGET'             // {date, counts:{uid:n}} — see callsUsedToday_
 };
 
 /** A cell holds 50,000 characters; leave headroom rather than losing the row. */
