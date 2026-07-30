@@ -152,6 +152,14 @@ var ANOMALY_KIND = {
 var MAX_CELL_CHARS = 45000;
 
 /**
+ * Nobody has this many accounts. A record landing below this row means an
+ * append went astray rather than that you are unusually banked — the shape
+ * of the bug that once hid an account at row 1001 while every run reported
+ * success.
+ */
+var MAX_PLAUSIBLE_ACCOUNTS = 200;
+
+/**
  * Balance preference order.
  *
  * The API returns MULTIPLE typed balances per account and each bank supports

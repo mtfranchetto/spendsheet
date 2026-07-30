@@ -369,7 +369,15 @@ function refreshAccounts() {
     }
   });
 
-  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'refreshAccounts trace', trace);
+  // Only worth recording when something looks wrong. A row far below the
+  // records that precede it means an append went astray — the failure that
+  // hid an account at row 1001 while every run reported success.
+  var suspicious = failures.length > 0 || trace.some(function (entry) {
+    return (entry.summary && entry.summary.written || []).some(function (write) {
+      return String(write.readBack) !== String(write.uid) || write.row > MAX_PLAUSIBLE_ACCOUNTS;
+    });
+  });
+  if (suspicious) logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'refreshAccounts trace', trace);
 
   var message = total + ' account' + (total === 1 ? '' : 's') + ' across ' + ids.length + ' connection' +
     (ids.length === 1 ? '' : 's') + (failures.length ? '. Failed: ' + failures.join(' | ') : '');
