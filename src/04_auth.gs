@@ -334,6 +334,40 @@ function logAnomaly_(kind, accountId, detail, raw) {
 }
 
 /**
+ * Re-read every live session and rewrite what it says about accounts.
+ *
+ * Useful beyond first connection: a bank can expose an account later, or
+ * change what it reports about one, and neither should require redoing SCA.
+ * Names you have given accounts are preserved, as on any reconnect.
+ */
+function refreshAccounts() {
+  var status = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.STATUS);
+  if (!status || status.getLastRow() < 2) throw new Error('No connections in _status yet.');
+
+  var idColumn = colIndex_(STATUS_COLUMNS, 'session_id');
+  var ids = status.getRange(2, idColumn, status.getLastRow() - 1, 1).getValues()
+    .map(function (row) { return row[0]; })
+    .filter(function (id) { return id; });
+
+  var total = 0;
+  var failures = [];
+
+  ids.forEach(function (sessionId) {
+    try {
+      var summary = recordConnection(ebGetSession(sessionId));
+      total += summary.accountCount;
+    } catch (e) {
+      failures.push(String(sessionId).slice(0, 8) + '…: ' + e.message);
+    }
+  });
+
+  var message = total + ' account' + (total === 1 ? '' : 's') + ' across ' + ids.length + ' connection' +
+    (ids.length === 1 ? '' : 's') + (failures.length ? '. Failed: ' + failures.join(' | ') : '');
+  SpreadsheetApp.getActiveSpreadsheet().toast(message, 'Accounts refreshed', 10);
+  return { accounts: total, connections: ids.length, failures: failures };
+}
+
+/**
  * Dump the current session's raw JSON into _anomalies.
  *
  * A diagnostic for working out what a provider actually returns, since the
