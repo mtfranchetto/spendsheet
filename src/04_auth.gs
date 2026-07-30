@@ -477,6 +477,37 @@ function diagnoseAccounts() {
 }
 
 /**
+ * Dump the raw /details response for every account in the accounts tab.
+ *
+ * Which field carries a usable account label varies by provider, and it is
+ * not something documentation settles — this is the probe that answers it
+ * per bank, and feeds docs/PROVIDERS.md.
+ */
+function inspectAccountDetails() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ACCOUNTS);
+  var idColumn = colIndex_(ACCOUNT_COLUMNS, 'account_id');
+  if (!sheet || sheet.getLastRow() < 2) throw new Error('No accounts yet.');
+
+  var uids = sheet.getRange(2, idColumn, sheet.getLastRow() - 1, 1).getValues()
+    .map(function (row) { return row[0]; })
+    .filter(function (uid) { return uid; });
+
+  uids.forEach(function (uid) {
+    try {
+      var details = ebGetAccountDetails(uid);
+      logAnomaly_(ANOMALY_KIND.RAW_DUMP, uid,
+        'GET /accounts/{uid}/details — keys: ' + Object.keys(details || {}).join(', '), details);
+    } catch (e) {
+      logAnomaly_(ANOMALY_KIND.RAW_DUMP, uid, 'GET /accounts/{uid}/details failed: ' + e.message, '');
+    }
+  });
+
+  SpreadsheetApp.getActiveSpreadsheet()
+    .toast(uids.length + ' account(s) inspected. See _anomalies.', 'Details dumped', 10);
+  return uids.length;
+}
+
+/**
  * Dump the current session's raw JSON into _anomalies.
  *
  * A diagnostic for working out what a provider actually returns, since the
