@@ -368,6 +368,48 @@ function refreshAccounts() {
 }
 
 /**
+ * Report what the accounts tab actually looks like to the script, including
+ * whether a write to it survives.
+ *
+ * For when the code reports success and the sheet disagrees — at that point
+ * every remaining explanation is about the sheet rather than the logic, and
+ * guessing between them has a poor record.
+ */
+function diagnoseAccounts() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(TABS.ACCOUNTS);
+
+  var report = {
+    tabsInBook: ss.getSheets().map(function (s) { return s.getName(); }),
+    accountsTabFound: Boolean(sheet)
+  };
+
+  if (sheet) {
+    var idColumn = colIndex_(ACCOUNT_COLUMNS, 'account_id');
+    report.lastRow = sheet.getLastRow();
+    report.lastColumn = sheet.getLastColumn();
+    report.maxRows = sheet.getMaxRows();
+    report.maxColumns = sheet.getMaxColumns();
+    report.hidden = sheet.isSheetHidden();
+    report.headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn() || 1).getValues()[0];
+    report.firstRows = sheet.getRange(1, 1, Math.min(6, sheet.getMaxRows()), 3).getValues();
+    report.computedAppendRow = nextEmptyRow_(sheet, idColumn);
+
+    // Does a write to that cell actually stick?
+    var probeRow = report.computedAppendRow;
+    sheet.getRange(probeRow, idColumn).setValue('__probe__');
+    SpreadsheetApp.flush();
+    report.probeReadBack = sheet.getRange(probeRow, idColumn).getValue();
+    sheet.getRange(probeRow, idColumn).clearContent();
+    report.probeWrittenToRow = probeRow;
+  }
+
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'accounts tab diagnosis', report);
+  ss.toast('Written to _anomalies.', 'Diagnosed', 10);
+  return report;
+}
+
+/**
  * Dump the current session's raw JSON into _anomalies.
  *
  * A diagnostic for working out what a provider actually returns, since the
