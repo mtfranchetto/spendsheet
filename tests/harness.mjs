@@ -207,17 +207,23 @@ class FakeSheet {
     return new FakeRange(this, a, b, c === undefined ? 1 : c, d === undefined ? 1 : d);
   }
 
-  getLastRow() {
+  /**
+   * Formula cells count as content, exactly as they do in Sheets. This
+   * matters: several tabs carry an ARRAYFORMULA in row 2, so getLastRow()
+   * reports 2 with zero records — and code that appends at getLastRow() + 1
+   * silently leaves a blank first row. Modelling only stored values made the
+   * fake more forgiving than the real thing, which is the worst direction
+   * for a test double to be wrong in.
+   */
+  _lastIn(index) {
     let last = 0;
-    for (const key of this.cells.keys()) last = Math.max(last, Number(key.split(',')[0]));
+    for (const key of this.cells.keys()) last = Math.max(last, Number(key.split(',')[index]));
+    for (const key of this.formulas.keys()) last = Math.max(last, Number(key.split(',')[index]));
     return last;
   }
 
-  getLastColumn() {
-    let last = 0;
-    for (const key of this.cells.keys()) last = Math.max(last, Number(key.split(',')[1]));
-    return last;
-  }
+  getLastRow() { return this._lastIn(0); }
+  getLastColumn() { return this._lastIn(1); }
 
   getMaxRows() { return this.maxRows; }
   getMaxColumns() { return this.maxColumns; }

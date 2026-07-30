@@ -22,14 +22,37 @@ const { privateKey } = crypto.generateKeyPairSync('rsa', {
 
 const CREDS = { EB_ENV: 'SANDBOX', EB_SANDBOX_APP_ID: 'app', EB_SANDBOX_KEY: privateKey };
 
+/**
+ * The real shape, captured from a live Mock ASPSP session: `accounts` holds
+ * UID strings and `accounts_data` holds the descriptions. This fixture is a
+ * recording, not a guess — the previous guess had them merged, which read
+ * zero accounts from a perfectly good session.
+ */
 const SESSION = {
   session_id: 'sess-42',
-  aspsp: { name: 'Mock ASPSP', country: 'FI' },
-  access: { valid_until: '2026-12-25T00:00:00.000Z' },
-  accounts: [
+  status: 'AUTHORIZED',
+  aspsp: { name: 'Mock ASPSP', country: 'IT' },
+  psu_type: 'business',
+  access: { accounts: null, balances: true, transactions: true, valid_until: '2027-01-26T19:55:29.069000Z' },
+  accounts: ['acc-1', 'acc-2'],
+  accounts_data: [
     { uid: 'acc-1', name: 'Current', currency: 'EUR', account_id: { iban: 'FI2112345600000785' } },
     { uid: 'acc-2', name: 'Savings', currency: 'EUR', account_id: { iban: 'FI2112345600000999' } }
   ]
+};
+
+/** Mock ASPSP itself returns no descriptive fields at all — only identifiers. */
+const SPARSE_SESSION = {
+  session_id: 'sess-43',
+  status: 'AUTHORIZED',
+  aspsp: { name: 'Mock ASPSP', country: 'IT' },
+  access: { valid_until: '2027-01-26T19:55:29.069000Z' },
+  accounts: ['a8160088-28a0-45f2-ba4d-3c7959863f92'],
+  accounts_data: [{
+    uid: 'a8160088-28a0-45f2-ba4d-3c7959863f92',
+    identification_hash: 'WwpbCiJhc3BzcF9uYW1lIgpdLApb.BqpDfy',
+    identification_hashes: ['WwpbCiJhc3BzcF9uYW1lIgpdLApb.BqpDfy']
+  }]
 };
 
 /** A context with the sheet built, credentials installed and the API scripted. */
@@ -231,7 +254,9 @@ describe('doGet', () => {
 
     expect(html).toContain('Not connected');
     expect(c.__fetches).toHaveLength(before);
-    expect(c.__spreadsheet.getSheetByName('_status').getLastRow()).toBe(1);
+    // The key column, not getLastRow(): a formula in row 2 makes the sheet
+    // report content even with no connections recorded.
+    expect(c.__spreadsheet.getSheetByName('_status').getRange('A2').getValue()).toBe('');
   });
 
   it('burns the nonce on a failed attempt, so guessing gets one try per flow', () => {
@@ -252,7 +277,9 @@ describe('doGet', () => {
     const html = c.doGet({ parameter: { error: 'access_denied' } }).getContent();
 
     expect(html).toContain('Not connected');
-    expect(c.__spreadsheet.getSheetByName('_status').getLastRow()).toBe(1);
+    // The key column, not getLastRow(): a formula in row 2 makes the sheet
+    // report content even with no connections recorded.
+    expect(c.__spreadsheet.getSheetByName('_status').getRange('A2').getValue()).toBe('');
   });
 
   it('never leaks why a callback was rejected', () => {
@@ -276,33 +303,67 @@ describe('doGet', () => {
 });
 
 describe('extractAccounts', () => {
-  it('reads full account resources', () => {
+  it('joins the UID list to the separate details list', () => {
     expect(ctx.extractAccounts(SESSION)).toEqual([
       { uid: 'acc-1', name: 'Current', currency: 'EUR', iban: 'FI2112345600000785' },
       { uid: 'acc-2', name: 'Savings', currency: 'EUR', iban: 'FI2112345600000999' }
     ]);
   });
 
-  it('tolerates bare uid strings, which some responses use', () => {
+  it('still yields an account when the bank supplies no descriptive fields', () => {
+    // Mock ASPSP returns only identifiers. An account with no name is still
+    // an account, and dropping it is how this failed the first time.
+    const accounts = ctx.extractAccounts(SPARSE_SESSION);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].uid).toBe('a8160088-28a0-45f2-ba4d-3c7959863f92');
+    expect(accounts[0].name).toBe('');
+  });
+
+  it('reads UIDs with no accounts_data at all', () => {
     expect(ctx.extractAccounts({ accounts: ['acc-9'] }))
       .toEqual([{ uid: 'acc-9', name: '', currency: '', iban: '' }]);
   });
 
-  it('falls back through the identifier fields a bank might populate', () => {
+  it('reads accounts_data with no accounts list', () => {
     const accounts = ctx.extractAccounts({
-      accounts: [{ identification_hash: 'h1', product: 'Conto Corrente', currency: 'EUR' }]
+      accounts_data: [{ uid: 'acc-7', product: 'Conto Corrente', currency: 'EUR' }]
     });
-    expect(accounts[0].uid).toBe('h1');
-    expect(accounts[0].name).toBe('Conto Corrente');
+    expect(accounts).toEqual([{ uid: 'acc-7', name: 'Conto Corrente', currency: 'EUR', iban: '' }]);
   });
 
-  it('drops entries with no usable identifier rather than creating a phantom account', () => {
-    expect(ctx.extractAccounts({ accounts: [{ name: 'nameless' }] })).toEqual([]);
+  it('tolerates objects in the accounts list, in case a bank differs', () => {
+    expect(ctx.extractAccounts({ accounts: [{ uid: 'acc-3' }] })[0].uid).toBe('acc-3');
+  });
+
+  it('never lists the same account twice', () => {
+    const accounts = ctx.extractAccounts({
+      accounts: ['acc-1', 'acc-1'],
+      accounts_data: [{ uid: 'acc-1', name: 'Current' }]
+    });
+    expect(accounts).toHaveLength(1);
   });
 
   it('handles a session with no accounts', () => {
     expect(ctx.extractAccounts({})).toEqual([]);
     expect(ctx.extractAccounts({ accounts: [] })).toEqual([]);
+    expect(ctx.extractAccounts(null)).toEqual([]);
+  });
+});
+
+describe('append position', () => {
+  it('uses row 2 even though a formula already occupies it', () => {
+    // accounts and _status both carry an ARRAYFORMULA in row 2, so
+    // getLastRow() reports content with zero records. Appending after it
+    // leaves a permanent blank first row.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('J2').getFormula()).toContain('ARRAYFORMULA');
+
+    c.recordConnection(SESSION, 'Mock ASPSP');
+
+    expect(accounts.getRange('A2').getValue()).toBe('acc-1');
+    expect(accounts.getRange('A3').getValue()).toBe('acc-2');
+    expect(c.__spreadsheet.getSheetByName('_status').getRange('A2').getValue()).toBe('sess-42');
   });
 });
 

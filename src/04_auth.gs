@@ -386,21 +386,37 @@ function mapSessionToStatusRow(session, provider, now) {
  * wrong guess here shows up as a row to look at instead of a silent absence.
  */
 function extractAccounts(session) {
-  var raw = (session && (session.accounts || session.account_list)) || [];
-  if (!raw.length) return [];
+  if (!session) return [];
 
-  return raw.map(function (entry) {
-    if (typeof entry === 'string') return { uid: entry, name: '', currency: '', iban: '' };
+  // Confirmed against a live session: `accounts` is a list of UID *strings*
+  // and the descriptive fields live alongside it in `accounts_data`. Reading
+  // only the first gives accounts with no name, currency or IBAN; reading
+  // only the second misses any UID the bank listed without details.
+  var details = {};
+  (session.accounts_data || []).forEach(function (entry) {
+    if (entry && entry.uid) details[entry.uid] = entry;
+  });
 
-    var identifiers = entry.account_id || {};
+  var uids = [];
+  function addUid(uid) {
+    if (uid && uids.indexOf(uid) === -1) uids.push(uid);
+  }
+
+  (session.accounts || []).forEach(function (entry) {
+    if (typeof entry === 'string') addUid(entry);
+    else if (entry) addUid(entry.uid || entry.resource_id || entry.identification_hash);
+  });
+  Object.keys(details).forEach(addUid);
+
+  return uids.map(function (uid) {
+    var detail = details[uid] || {};
+    var identifiers = detail.account_id || {};
     return {
-      uid: entry.uid || entry.resource_id || entry.identification_hash || '',
-      name: entry.name || entry.product || entry.details || '',
-      currency: entry.currency || '',
+      uid: uid,
+      name: detail.name || detail.product || detail.details || '',
+      currency: detail.currency || '',
       iban: identifiers.iban || (identifiers.other && identifiers.other.identification) || ''
     };
-  }).filter(function (account) {
-    return account.uid;
   });
 }
 
@@ -414,8 +430,9 @@ function maskIban(iban) {
 
 function upsertStatusRow_(row) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.STATUS);
-  var existing = findRowByValue_(sheet, colIndex_(STATUS_COLUMNS, 'connection_id'), row.connection_id);
-  var target = existing || sheet.getLastRow() + 1;
+  var idColumn = colIndex_(STATUS_COLUMNS, 'connection_id');
+  var existing = findRowByValue_(sheet, idColumn, row.connection_id);
+  var target = existing || nextEmptyRow_(sheet, idColumn);
 
   writeCell_(sheet, target, STATUS_COLUMNS, 'connection_id', row.connection_id);
   writeCell_(sheet, target, STATUS_COLUMNS, 'provider', row.provider);
@@ -439,7 +456,7 @@ function upsertAccounts_(accounts, provider) {
 
   accounts.forEach(function (account) {
     var existing = findRowByValue_(sheet, idColumn, account.uid);
-    var row = existing || sheet.getLastRow() + 1;
+    var row = existing || nextEmptyRow_(sheet, idColumn);
 
     if (!existing) {
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'account_id', account.uid);
@@ -466,6 +483,25 @@ function colIndex_(headers, name) {
 
 function writeCell_(sheet, row, headers, name, value) {
   sheet.getRange(row, colIndex_(headers, name)).setValue(value);
+}
+
+/**
+ * The first row whose key column is empty.
+ *
+ * Not `getLastRow() + 1`: several tabs carry an ARRAYFORMULA in row 2, so
+ * the sheet reports content there even with no records, and appending after
+ * it leaves a permanent blank first row. The key column is the honest
+ * measure of how many records exist.
+ */
+function nextEmptyRow_(sheet, column) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 2;
+
+  var values = sheet.getRange(2, column, lastRow - 1, 1).getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (values[i][0] === '' || values[i][0] === null) return i + 2;
+  }
+  return lastRow + 1;
 }
 
 function findRowByValue_(sheet, column, value) {
