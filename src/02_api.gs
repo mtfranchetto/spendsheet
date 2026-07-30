@@ -171,6 +171,9 @@ function credentialsFormHtml_() {
     ' button{margin-top:16px;padding:9px 18px;border:0;border-radius:4px;background:#1a73e8;color:#fff;font-size:13px;cursor:pointer}',
     ' button:disabled{background:#dadce0}',
     ' #msg{margin-top:12px;font-size:12px}',
+    ' .row{display:flex;align-items:center;gap:10px;margin-top:8px}',
+    ' button.small{margin-top:0;padding:6px 12px;font-size:12px}',
+    ' #redirectMsg{font-size:12px;color:#5f6368}',
     ' .err{color:#c5221f}.ok{color:#188038}',
     '</style>',
     '<label for="env">Environment</label>',
@@ -184,14 +187,18 @@ function credentialsFormHtml_() {
     // Deliberately NOT pre-filled with the detected value: it can name a
     // deployment that has been archived, and a wrong value sitting next to a
     // "pin" button is an invitation to pin it.
+    '<div class="row">',
+    '  <button class="small" onclick="saveRedirect()">Pin this URL</button>',
+    // Status belongs beside the control that produces it. At the foot of the
+    // dialog it sits below the fold, and a click reads as doing nothing.
+    '  <span id="redirectMsg">' + (pinned ? '&#10003; pinned' : 'nothing pinned yet') + '</span>',
+    '</div>',
     '<div class="hint">Copy this from <b>Deploy &rarr; Manage deployments &rarr; Web app &rarr; URL</b>, ' +
-    'and register the same string with Enable Banking. ' +
-    '<a href="#" onclick="saveRedirect();return false"><b>Pin this URL</b></a>' +
-    (pinned ? '' : ' &nbsp;<span style="color:#c5221f">Nothing pinned yet.</span>') + '</div>',
-    detected
-      ? '<div class="hint">The runtime reports <code>' + detected + '</code> — treat that as a guess. ' +
-        'It is the right value only if it matches the <b>active</b> deployment; archived ones linger here.</div>'
-      : '',
+    'and register the same string with Enable Banking.' +
+    (detected
+      ? ' The runtime guesses <code>' + detected + '</code>, which is right only if it matches your ' +
+        '<b>active</b> deployment — archived ones linger there.'
+      : '') + '</div>',
     '<label for="appId">Application ID</label>',
     '<input id="appId" placeholder="from the Enable Banking control panel" autocomplete="off">',
     '<label for="key">Private key (.pem)</label>',
@@ -202,10 +209,10 @@ function credentialsFormHtml_() {
     '<div id="msg"></div>',
     '<script>',
     ' function saveRedirect(){',
-    '   var m=document.getElementById("msg");',
-    '   m.className=""; m.textContent="Saving…";',
+    '   var m=document.getElementById("redirectMsg");',
+    '   m.className=""; m.textContent="saving…";',
     '   google.script.run',
-    '     .withSuccessHandler(function(r){ m.className="ok"; m.textContent=r; })',
+    '     .withSuccessHandler(function(r){ m.className="ok"; m.textContent="\\u2713 "+r; })',
     '     .withFailureHandler(function(e){ m.className="err"; m.textContent=e.message; })',
     '     .saveRedirectUrl(document.getElementById("redirect").value);',
     ' }',
