@@ -146,6 +146,23 @@ kind = cash  → opening_balance + SUMIF(transactions, this account, amount_eur)
 kind = asset → balance_manual
 ```
 
+### An account you no longer use
+
+Common, and it has a right answer that isn't "delete it". A closed bank account, a payment app you moved off, a wallet you stopped topping up — all of them have history that is still true, and history is the thing this system exists to keep.
+
+| | |
+|---|---|
+| `active` → **FALSE** | the sync skips the row entirely. This is what the column is for |
+| `balance_api` → **clear it** | code only writes this for syncable rows, so once `active` is off the last figure sits there forever. A 2024 balance in today's net worth is the actual failure mode here |
+| `include_in_net_worth` → **FALSE** | if the account is closed and empty |
+| `transactions` | **leave every row** |
+
+Deleting the history costs more than it looks. It understates the years the account was live, so a year-over-year comparison reads as a drop in spending that never happened. And a payment app is an *instrument*, not a destination — the merchants behind those rows are places you still go, and they're training data for the categorisation cascade, which learns merchant → category from labelled history.
+
+The asymmetry is the argument: you can hide a dormant account at any point, but you cannot un-delete its history without redoing the import.
+
+If you do decide to delete rows from `transactions`, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Run **Accept row count** from the menu immediately afterwards.
+
 ### The two kinds of non-bank account
 
 Conflating these is why manual accounts usually feel awkward in a spreadsheet.

@@ -27,6 +27,8 @@ The shipped preset was later rebuilt against a **full year** — 1,464 rows, 57 
 
 Expect more account names than you have banks. A real year's export carried eleven, of which four were reachable by open banking and the rest were a cash wallet, two brokerages, a savings pot and two property accounts. Every one of them needs a row in `accounts` — kind `cash` for the wallet, `asset` for the brokerages and property — or a chunk of the history arrives unattached.
 
+That includes the accounts you've since closed. Give them a row, import their history, then set `active` to FALSE and clear `balance_api` — see [an account you no longer use](SHEET-SCHEMA.md#an-account-you-no-longer-use). Leaving them out of the import is the one decision here you can't reverse without doing the whole import again.
+
 **Read `_category_map` first, not afterwards.** Their taxonomy is single-level and ours is two, so the second level is invented in that tab. These become `category_override` — the training signal the whole categorisation cascade learns from in phase 7. A category you wouldn't have chosen teaches the wrong thing about every future transaction from that merchant. Ten minutes there is worth more than any amount of correcting later.
 
 ## The category map
