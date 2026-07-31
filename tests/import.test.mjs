@@ -206,6 +206,30 @@ function stringLiterals(formula) {
   return formula.match(/"[^"]*"/g) || [];
 }
 
+/**
+ * Tab names in a formula that aren't followed by `!`.
+ *
+ * Longest names first, so `_import_raw` is consumed before a shorter name
+ * could match inside it. Anything already followed by `!` or by another word
+ * character is fine — the second is what stops `_import_map` being reported
+ * because `_import_raw` was searched for first and missed.
+ */
+function danglingSheetRefs(formula) {
+  const tabs = Object.values(ctx.TABS).sort((a, b) => b.length - a.length);
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const found = [];
+  let rest = formula;
+
+  tabs.forEach((tab) => {
+    rest = rest.replace(new RegExp(escape(tab) + '(?![\\w!])', 'g'), () => {
+      found.push(tab);
+      return ' ';
+    });
+    rest = rest.split(tab + '!').join(' !');
+  });
+  return found;
+}
+
 describe('the staged formulas', () => {
   const formulas = ctx.stagedFormulas();
 
@@ -213,6 +237,20 @@ describe('the staged formulas', () => {
     const columns = formulas.map((entry) => entry.column);
     ['uid', 'account_id', 'booking_date', 'amount', 'description', 'source', 'category_override']
       .forEach((column) => expect(columns).toContain(column));
+  });
+
+  it('follows every sheet name with a "!"', () => {
+    // `_import_raw` + `$A$2:$A` reads fine at the call site and produces
+    // `_import_raw$A$2:$A`, which Sheets cannot parse. It shipped that way and
+    // every test passed — parentheses balanced, quotes balanced, localisation
+    // clean — because none of them could tell a valid reference from an
+    // invalid one. This is the cheapest check that can, and the symptom it
+    // prevents is a whole row of "Formula parse error" with nothing to say
+    // which of a dozen columns is at fault.
+    formulas.concat([{ column: 'instructions', formula: ctx.stagedInstructionsFormula() }])
+      .forEach(({ column, formula }) => {
+        expect(danglingSheetRefs(formula), `${column} references a sheet without "!"`).toEqual([]);
+      });
   });
 
   it('builds formulas with balanced parentheses and quotes', () => {

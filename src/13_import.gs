@@ -171,25 +171,40 @@ function importAccountIdExpr_() {
 // The staged columns
 // ---------------------------------------------------------------------------
 
-var STAGED_ANCHOR = '$A$2:$A';
+/**
+ * The column of `_import_raw` that tells a staged row whether it exists at all.
+ *
+ * A function that builds the whole reference, rather than a bare range each
+ * caller prefixes with the tab name, because the `!` between the two is the
+ * entire difference between a formula and a parse error — and concatenating
+ * `_import_raw` with `$A$2:$A` reads perfectly well at the call site while
+ * producing `_import_raw$A$2:$A`, which Sheets cannot parse.
+ *
+ * It shipped that way. Every unit test passed: the parentheses balanced, the
+ * quotes balanced, localisation was clean. None of them could tell, because
+ * the harness never hands a formula to a spreadsheet — the same gap that let
+ * the locale `#ERROR!` bug through, and the reason `assertsSheetRefs` below
+ * now checks the one thing a string test actually can.
+ */
+function stagedAnchor_() {
+  return TABS.IMPORT_RAW + '!$A$2:$A';
+}
 
 /** TRUE for the rows that should become history. */
 function stagedIncludeFormula() {
-  var raw = TABS.IMPORT_RAW;
   var date = importDateExpr_(importRawColumn_('booking_date'));
   var cutoff = 'IFERROR(VLOOKUP(' + importAccountIdExpr_() + ',' + importCutoffTable_() + ',2,FALSE),0)';
 
-  return '=ARRAYFORMULA(IF(' + raw + STAGED_ANCHOR + '="","",' +
+  return '=ARRAYFORMULA(IF(' + stagedAnchor_() + '="","",' +
     '(' + date + '<>"")*((' + cutoff + '=0)+(' + date + '<' + cutoff + ')>0)))';
 }
 
 /** Why a row is not coming through, in words rather than a code. */
 function stagedWhyFormula() {
-  var raw = TABS.IMPORT_RAW;
   var include = '$' + colOf(STAGED_COLUMNS, 'include') + '2:$' + colOf(STAGED_COLUMNS, 'include');
   var date = importDateExpr_(importRawColumn_('booking_date'));
 
-  return '=ARRAYFORMULA(IF(' + raw + STAGED_ANCHOR + '="","",' +
+  return '=ARRAYFORMULA(IF(' + stagedAnchor_() + '="","",' +
     'IF(' + include + '=TRUE,"",' +
     'IF(' + date + '="","no readable date",' +
     '"already covered by the API for this account"))))';
@@ -204,10 +219,9 @@ function stagedWhyFormula() {
  * only kept out by your attention.
  */
 function stagedColumnFormula(expression) {
-  var raw = TABS.IMPORT_RAW;
   var include = '$' + colOf(STAGED_COLUMNS, 'include') + '2:$' + colOf(STAGED_COLUMNS, 'include');
 
-  return '=ARRAYFORMULA(IF(' + raw + STAGED_ANCHOR + '="","",' +
+  return '=ARRAYFORMULA(IF(' + stagedAnchor_() + '="","",' +
     'IF(' + include + '=TRUE,' + expression + ',"")))';
 }
 
@@ -246,9 +260,8 @@ function stagedAmountExpression() {
  * you can read tells you where a row came from at a glance.
  */
 function stagedUidExpression() {
-  var raw = TABS.IMPORT_RAW;
   return '"csv:"&' + importPreset_() + '&":"&' + configLookup_('import_batch', '"import1"') +
-    '&"#"&ROW(' + raw + STAGED_ANCHOR + ')';
+    '&"#"&ROW(' + stagedAnchor_() + ')';
 }
 
 /** Your taxonomy, via `_category_map`. Unmapped source categories stay blank. */
