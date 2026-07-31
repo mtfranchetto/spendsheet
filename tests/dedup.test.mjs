@@ -64,6 +64,14 @@ describe('dateKey and amountKey', () => {
     expect(ctx.amountKey(3.004)).toBe('3.00');
     expect(ctx.amountKey('x')).toBe('');
   });
+
+  it('does not read an emptied cell as a confident zero', () => {
+    // Number('') is 0, so a blank would otherwise compare equal to a genuine
+    // zero-euro row — and a cleared amount is missing data, not a value.
+    expect(ctx.amountKey('')).toBe('');
+    expect(ctx.amountKey(null)).toBe('');
+    expect(ctx.amountKey(0)).toBe('0.00');
+  });
 });
 
 describe('computeUid', () => {

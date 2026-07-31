@@ -291,8 +291,13 @@ function refreshAccounts() {
  * that also sends a minus sign cannot double-negate it back to positive.
  */
 function balanceAmount(balance) {
+  // Written as a guard rather than a ternary because the ternary form derefed
+  // a null `balance_amount`: `(raw && raw.amount) !== undefined` is true when
+  // raw is null, and the branch it then takes is `raw.amount`.
   var raw = balance && balance.balance_amount;
-  var parsed = parseFloat((raw && raw.amount) !== undefined ? raw.amount : NaN);
+  if (!raw) return null;
+
+  var parsed = parseFloat(raw.amount);
   if (!isFinite(parsed)) return null;
 
   var magnitude = Math.abs(parsed);

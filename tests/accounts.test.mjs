@@ -289,6 +289,19 @@ describe('pickBalance', () => {
     expect(ctx.pickBalance([{ balance_type: 'CLBD' }])).toBe(null);
   });
 
+  it('survives junk in the list rather than taking the account down', () => {
+    // A null entry used to throw here, which would have failed the whole
+    // account's sync — from a function whose entire job is tolerating
+    // whatever a provider sends.
+    expect(ctx.pickBalance([null])).toBe(null);
+    expect(ctx.pickBalance([undefined, of('CLBD', '10')]).amount).toBe(10);
+    expect(ctx.pickBalance([{ balance_amount: null, balance_type: 'CLBD' }])).toBe(null);
+  });
+
+  it('reads a zero balance as a balance', () => {
+    expect(ctx.pickBalance([of('CLBD', '0.00')]).amount).toBe(0);
+  });
+
   it('skips a type whose amount will not parse', () => {
     const picked = ctx.pickBalance([of('CLBD', 'n/a'), of('ITBD', '5')]);
     expect(picked.type).toBe('ITBD');

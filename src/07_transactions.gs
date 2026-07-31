@@ -69,8 +69,9 @@ function mapTransaction(raw, account, now) {
  */
 function signedAmount(raw) {
   var money = raw && raw.transaction_amount;
-  var parsed = parseFloat(money && money.amount !== undefined && money.amount !== null
-    ? money.amount : NaN);
+  if (!money) return null;
+
+  var parsed = parseFloat(money.amount);
   if (!isFinite(parsed)) return null;
 
   var magnitude = Math.abs(parsed);

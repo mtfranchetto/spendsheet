@@ -67,8 +67,17 @@ function dateKey(value) {
   return match ? match[1] : String(value);
 }
 
-/** Fixed precision, so 3 and 3.00 and "3.0" are one number and not three. */
+/**
+ * Fixed precision, so 3 and 3.00 and "3.0" are one number and not three.
+ *
+ * A blank is checked before Number(), which would turn it into a confident
+ * `0.00` — the same shape of bug as reading a cleared config cell as a
+ * deliberate zero, and here it would make an emptied amount cell compare
+ * equal to a genuine zero-euro row.
+ */
 function amountKey(amount) {
+  if (isBlankCell_(amount)) return '';
+
   var parsed = Number(amount);
   return isFinite(parsed) ? parsed.toFixed(2) : '';
 }
