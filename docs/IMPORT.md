@@ -29,6 +29,10 @@ Expect more account names than you have banks. A real year's export carried elev
 
 That includes the accounts you've since closed. Give them a row, import their history, then set `active` to FALSE and clear `balance_api` — see [an account you no longer use](SHEET-SCHEMA.md#an-account-you-no-longer-use). Leaving them out of the import is the one decision here you can't reverse without doing the whole import again.
 
+**Don't hand-create a row for an account you're going to connect.** The sync matches on `account_id`, and the id it uses comes from the provider — so a row you typed with your own id doesn't get recognised, and you end up with two rows for one bank: your history on one, the balance on the other. Connect it first, rename the row the sync created to whatever the export calls it, *then* import. The import joins on the name, so that's all it takes for the history to land on the real account.
+
+If you import before connecting, the fix afterwards is a find-and-replace on `account_id` in `transactions` — recoverable, but it's a code-owned column and thousands of rows.
+
 **Read `_category_map` first, not afterwards.** Their taxonomy is single-level and ours is two, so the second level is invented in that tab. These become `category_override` — the training signal the whole categorisation cascade learns from in phase 7. A category you wouldn't have chosen teaches the wrong thing about every future transaction from that merchant. Ten minutes there is worth more than any amount of correcting later.
 
 ## The category map
@@ -70,9 +74,21 @@ Cell `T1` of `_import_staged` spells out both targets with the row number comput
 
 Two pastes rather than one, because column P of `transactions` holds the `amount_eur` ARRAYFORMULA and a pasted blank would destroy it. **Paste special → Values only**, both times, at the same row.
 
-## Several files — a year at a time
+## Several files — merge them first
 
-BudgetBakers exports per year, so a full history is one file per year and the steps above run once per file. Three things change between runs, and two of them are silent if you skip them.
+BudgetBakers exports per year, so a full history arrives as one file per year. **Concatenate them into one file before you start.** The headers are identical across versions — five years of a real export, Oct 2022 to Jul 2026, matched byte for byte — so it's a `cat` with the extra header lines dropped, and it removes every one of the failure modes below at once: one import, one batch, one paste, nothing to clear in between, no way to lose your place.
+
+Sort the merged file by date while you're there. `transactions` is append-only and **never sorted** — that rule is what keeps row identity and every formula reference intact, and it means paste order is the sheet's order forever. Nothing depends on it; every report goes through `QUERY`. But a sheet that runs 2024, 2019, 2022 can't be fixed later, and sorting the CSV is free.
+
+Two things to check on the merged file, because both are silent:
+
+**Exact duplicate rows.** If two exports overlapped at a year boundary you now have the overlap twice. Compare every field: a pair inside one source file is a genuine repeat — two train tickets on one day at the same fare is real, and the row-number uid keeps both — while a pair spanning two files is overlap, and one copy should go.
+
+**Fields containing a line break.** Bank descriptors sometimes carry one, quoted, which is valid CSV and which Sheets parses correctly. It is still the one thing that could split a row and shift every column after it, so after importing check that `_import_raw` holds exactly as many data rows as the file has records. If it doesn't, that's where it went.
+
+## Several files — one at a time
+
+If you'd rather not merge, the steps above run once per file. Three things change between runs, and two of them are silent if you skip them.
 
 **Import oldest first.** `transactions` is append-only and **never sorted** — that rule is what keeps row identity and every formula reference intact, and it means the order you paste in is the order the sheet is in forever. Nothing depends on it; every report goes through `QUERY` or a formula. But scrolling through a sheet that runs 2024, 2019, 2022 is unpleasant in a way you can't fix later. Ten seconds of ordering now.
 
