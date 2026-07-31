@@ -8,6 +8,22 @@
 
 Change the hour with `sync_hour` in `_config` (default 4am, in the spreadsheet's timezone) and re-run Install triggers. Apps Script picks a random minute within the hour, which is deliberate on their side and harmless here.
 
+### Running more than once a day
+
+Comma-separate the hours: `sync_hour` = `4,16` installs two triggers.
+
+This is worth doing, but it is **not twice the data**, and Install triggers tells you so at the moment you choose it. PSD2 caps unattended access at around four calls per account per day and a full sync is three of them — balances, booked, pending. So the first run of the day fetches everything and every later run makes do with what's left: **transactions only, no balance refresh, no pending**.
+
+That's still the right trade. Transactions are the thing that can't be recovered once they fall out of the rolling window; a balance is only ever a few hours stale. But past two runs a day the extra ones are skipped and logged rather than silently doing nothing:
+
+| `sync_hour` | What happens |
+|---|---|
+| `4` | one full sync |
+| `4,16` | full sync, then transactions only |
+| `2,8,14,20` | two useful runs; the other two are skipped and logged |
+
+To buy a third useful run, set `fetch_pending` to `no` in `_config` — that frees one call per sync at the cost of the `pending` tab.
+
 **Spendsheet → Show schedule** reports what's currently installed, because the Apps Script triggers page is three clicks away inside a different app and "is this actually running?" is a question you ask from the spreadsheet.
 
 Install triggers is **idempotent** — it removes the ones it owns before creating them, and leaves any trigger you added yourself alone. That matters more than it sounds: adding a second nightly sync by hand is two clicks, warns you about nothing, and doubles your API calls every night straight into the rate limit below. You'd see it as "the sync stopped working", days later, with nothing to connect it to.
