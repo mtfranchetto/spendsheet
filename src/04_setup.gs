@@ -31,7 +31,7 @@ function setup() {
 
 function runSetup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var report = { created: [], existing: [], seeded: [] };
+  var report = { created: [], existing: [], seeded: [], added: [] };
 
   buildTable_(ss, TABS.TRANSACTIONS, TX_COLUMNS, report);
   buildTable_(ss, TABS.PENDING, PENDING_COLUMNS, report);
@@ -45,6 +45,7 @@ function runSetup_() {
   buildTable_(ss, TABS.STATUS, STATUS_COLUMNS, report);
   buildTable_(ss, TABS.RUNS, RUN_COLUMNS, report);
   buildTable_(ss, TABS.CONFIG, CONFIG_COLUMNS, report, DEFAULT_CONFIG);
+  addMissingConfigKeys_(ss, report);
   buildTable_(ss, TABS.IMPORT_MAP, IMPORT_MAP_COLUMNS, report, DEFAULT_IMPORT_MAP);
   buildTable_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, report, DEFAULT_CATEGORY_MAP);
   buildTable_(ss, TABS.MEMORY, MEMORY_COLUMNS, report);
@@ -68,6 +69,7 @@ function runSetup_() {
     ? 'Created: ' + report.created.join(', ')
     : 'Everything already in place — nothing changed.';
   if (report.seeded.length) msg += '\nSeeded: ' + report.seeded.join(', ');
+  if (report.added.length) msg += '\nNew settings: ' + report.added.join(', ');
 
   SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'Setup complete', 10);
   return report;
@@ -86,6 +88,34 @@ function getOrCreate_(ss, name, report) {
   sh = ss.insertSheet(name);
   if (report) report.created.push(name);
   return sh;
+}
+
+/**
+ * Add `_config` keys that did not exist yet, without touching the ones that do.
+ *
+ * Seeding is all-or-nothing — a tab with rows in it is left alone, which is
+ * what keeps your edits — and that is right for `rules` and `categories`,
+ * where a row you deleted was a decision. It is wrong for `_config`, where a
+ * key that arrived in a later version is not a row you deleted but a setting
+ * you have never seen. Without this, upgrading leaves a feature that reads its
+ * default and offers you no way to change it.
+ *
+ * Values are never overwritten, so this only ever adds.
+ */
+function addMissingConfigKeys_(ss, report) {
+  var sheet = ss.getSheetByName(TABS.CONFIG);
+  if (!sheet) return;
+
+  var present = readColumn_(sheet, 1).map(String);
+  var missing = DEFAULT_CONFIG.filter(function (row) {
+    return present.indexOf(String(row[0])) === -1;
+  });
+  if (!missing.length) return;
+
+  appendRows_(sheet, 1, missing);
+  if (report) {
+    report.added = (report.added || []).concat(missing.map(function (row) { return row[0]; }));
+  }
 }
 
 /**

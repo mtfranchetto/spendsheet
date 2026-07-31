@@ -157,3 +157,39 @@ describe('running setup twice at once', () => {
     expect(c.__spreadsheet.getSheets()).toContain(active);
   });
 });
+
+describe('upgrading an existing sheet', () => {
+  it('adds settings that did not exist in the version you set up with', () => {
+    // Seeding is all-or-nothing, which is right for `rules` — a row you
+    // deleted was a decision. It is wrong for `_config`, where a key from a
+    // later version is not a row you deleted but a setting you have never
+    // seen, and its absence leaves a feature unconfigurable.
+    const c = load();
+    c.setup();
+
+    const config = c.__spreadsheet.getSheetByName('_config');
+    const olderVersion = c.readColumn_(config, 1).slice(0, 5);
+    c.clearDataRows_(config, 1, c.CONFIG_COLUMNS.length);
+    c.appendRows_(config, 1, olderVersion.map((key) => [key, 'mine', '']));
+
+    const report = c.setup();
+
+    expect(c.readColumn_(config, 1)).toEqual(
+      c.DEFAULT_CONFIG.map((row) => row[0]));
+    expect(report.added).toContain('import_batch');
+  });
+
+  it('never overwrites a value you changed', () => {
+    const c = load();
+    c.setup();
+
+    const config = c.__spreadsheet.getSheetByName('_config');
+    const row = c.readColumn_(config, 1).indexOf('sync_hour') + 2;
+    config.getRange(row, 2).setValue(23);
+
+    c.setup();
+
+    expect(config.getRange(row, 2).getValue()).toBe(23);
+    expect(c.setup().added).toEqual([]);
+  });
+});
