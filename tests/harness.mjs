@@ -132,6 +132,9 @@ class FakeRange {
 
   getFormula() { return this.sheet.formulas.get(`${this.row},${this.col}`) || ''; }
 
+  setNote(note) { this.sheet.notes.set(`${this.row},${this.col}`, note); return this; }
+  getNote() { return this.sheet.notes.get(`${this.row},${this.col}`) || ''; }
+
   setNumberFormat(pattern) {
     this.sheet.record('numberFormat', { a1: this.a1(), pattern });
     return this;
@@ -187,6 +190,7 @@ class FakeSheet {
     this.book = book;
     this.cells = new Map();
     this.formulas = new Map();
+    this.notes = new Map();
     this.protections = [];
     this.frozenRows = 0;
     this.hidden = false;
@@ -266,7 +270,7 @@ class FakeSheet {
   hideSheet() { this.hidden = true; return this; }
   showSheet() { this.hidden = false; return this; }
   isSheetHidden() { return this.hidden; }
-  clear() { this.cells.clear(); this.formulas.clear(); return this; }
+  clear() { this.cells.clear(); this.formulas.clear(); this.notes.clear(); return this; }
   getProtections() { return this.protections.slice(); }
 
   /** Test convenience: the header row as a plain array. */
@@ -284,6 +288,7 @@ class FakeSheet {
       maxColumns: this.maxColumns,
       cells: [...this.cells.entries()].sort(),
       formulas: [...this.formulas.entries()].sort(),
+      notes: [...this.notes.entries()].sort(),
       protections: this.protections.map((p) => [p.getDescription(), p.isWarningOnly()]).sort()
     };
   }

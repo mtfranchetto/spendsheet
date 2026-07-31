@@ -173,8 +173,8 @@ var RUN_RESULT = { OK: 'OK', PARTIAL: 'PARTIAL', FAIL: 'FAIL' };
 
 /** Script Properties owned by the sync, kept apart from the EB_* credentials. */
 var SYNC_PROP = {
-  BACKFILL_PENDING: 'SYNC_BACKFILL_PENDING',  // accounts that have never had a full history fetch
-  CALL_BUDGET: 'SYNC_CALL_BUDGET'             // {date, counts:{uid:n}} — see callsUsedToday_
+  CALL_BUDGET: 'SYNC_CALL_BUDGET',   // {date, counts:{uid:n}} — see callsUsedToday_
+  CASH_SEQUENCE: 'SYNC_CASH_SEQUENCE'  // only ever goes up — see computeCashUid
 };
 
 /** A cell holds 50,000 characters; leave headroom rather than losing the row. */

@@ -1,5 +1,5 @@
 /**
- * 14_menu.gs — the Spendsheet menu.
+ * 19_menu.gs — the Spendsheet menu.
  *
  * Numbered last so every function it references is already defined when
  * Apps Script finishes concatenating the sources.

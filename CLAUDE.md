@@ -26,9 +26,12 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `07_transactions.gs` | provider transaction → row. Pure. |
 | `08_dedup.gs` | identity: uid, ordinal, conflict detection. Pure. |
 | `09_sync.gs` | orchestration only. What to ask for, in what order, what to do when one bank fails. |
-| `10`–`12` | reserved: categorise, recurring, monitor. |
-| `13_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
-| `14_menu.gs` | last, so every function it names is defined. |
+| `10_cash.gs` | `cash_entry` → `transactions`. Money no API knows about. |
+| `11`–`17` | free: categorise, recurring, monitor, import. |
+| `18_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
+| `19_menu.gs` | last, so every function it names is defined. |
+
+The gap before `18` is deliberate — adding a phase should not renumber anything.
 
 When a file starts holding two kinds of thing, split it before adding a third. `04_auth.gs` reached 769 lines by owning the consent flow, the accounts domain, the sheet primitives and the diagnostics at once; the primitives in particular were invisible there, and the sync would have grown its own copy.
 

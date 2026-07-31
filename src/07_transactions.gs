@@ -23,6 +23,9 @@
 
 var TX_SOURCE_API = 'enablebanking';
 
+/** Typed by you into cash_entry — see 10_cash.gs. */
+var TX_SOURCE_CASH = 'manual';
+
 /**
  * A provider transaction as a row object, keyed by column name.
  *

@@ -389,6 +389,15 @@ function applyValidation_(ss) {
   tx.getRange(colOf(TX_COLUMNS, 'category_override') + '2:' + colOf(TX_COLUMNS, 'category_override'))
     .setDataValidation(categoryRule);
 
+  // The sign rule, written where a phone will show it: tapping a header cell
+  // in mobile Sheets reveals its note. Documentation nobody has to find.
+  cash.getRange(colOf(CASH_ENTRY_COLUMNS, 'amount') + '1').setNote(
+    'Type the amount without a sign.\n\n' +
+    'A bare number is spending. Pick an Income or Transfer category and it ' +
+    'counts the other way — so an ATM withdrawal adds to this account, and ' +
+    'the matching debit on the bank side nets it to zero.\n\n' +
+    'Type a minus sign to force money out.');
+
   var kindRule = SpreadsheetApp.newDataValidation()
     .requireValueInList([ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, ACCOUNT_KIND.ASSET], true)
     .setAllowInvalid(false)

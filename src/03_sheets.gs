@@ -98,6 +98,29 @@ function nextEmptyRow_(sheet, keyColumn) {
   return lastRow + 1;
 }
 
+/**
+ * The last row with anything at all in the schema block.
+ *
+ * For tabs you type into in no fixed order — `cash_entry` on a phone — where
+ * insisting on one key column means a row whose first cell you haven't filled
+ * yet is invisible, and a transaction you typed silently never syncs.
+ *
+ * Only safe on a tab with no formulas in that block, since a formula counts
+ * as content. `cash_entry` has none.
+ */
+function lastFilledRow_(sheet, width) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 1;
+
+  var values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  for (var i = values.length - 1; i >= 0; i--) {
+    for (var c = 0; c < width; c++) {
+      if (values[i][c] !== '' && values[i][c] !== null) return i + 2;
+    }
+  }
+  return 1;
+}
+
 function findRowByValue_(sheet, column, value) {
   if (!value) return null;
   var lastRow = sheet.getLastRow();
@@ -117,15 +140,19 @@ function readColumn_(sheet, column) {
   return sheet.getRange(2, column, last - 1, 1).getValues().map(function (row) { return row[0]; });
 }
 
+/** Pass as `keyColumn` when no single column is reliably filled first. */
+var ANY_COLUMN = 0;
+
 /**
  * The data rows of a tab as objects keyed by column name.
  *
  * Reads the header block only, so columns you have added to the right of the
  * schema are neither read nor disturbed.
  */
-function readRecords_(sheet, headers) {
-  var keyColumn = 1;
-  var last = lastRecordRow_(sheet, keyColumn);
+function readRecords_(sheet, headers, keyColumn) {
+  var last = keyColumn === ANY_COLUMN
+    ? lastFilledRow_(sheet, headers.length)
+    : lastRecordRow_(sheet, keyColumn || 1);
   if (last < 2) return [];
 
   return sheet.getRange(2, 1, last - 1, headers.length).getValues().map(function (values, i) {
@@ -213,16 +240,8 @@ function readConfig_() {
 
 function configNumber_(config, key) {
   var raw = config[key];
-
-  // Emptiness is checked before Number(), because `Number('')` is 0 and
-  // `isFinite(0)` is true — so a cleared cell would otherwise read as a
-  // deliberate zero. A zero-day sync window fetches nothing and looks exactly
-  // like a working sync.
-  var blank = raw === '' || raw === null || raw === undefined ||
-    (typeof raw === 'string' && !raw.trim());
-
   var value = Number(raw);
-  if (!blank && isFinite(value)) return value;
+  if (!isBlankCell_(raw) && isFinite(value)) return value;
 
   var fallback = DEFAULT_CONFIG.filter(function (row) { return row[0] === key; })[0];
   return fallback ? Number(fallback[1]) : 0;
@@ -231,6 +250,20 @@ function configNumber_(config, key) {
 /** `yes`/`true`/`1` are all yes; anything else is no. */
 function configFlag_(config, key) {
   return isTruthyCell_(config[key]);
+}
+
+/**
+ * A cell with nothing in it.
+ *
+ * Worth its own function because the obvious check is wrong: `Number('')` is
+ * 0 and `isFinite(0)` is true, so an empty cell reads as a deliberate zero
+ * everywhere a number is parsed. A zero-day sync window fetches nothing and
+ * looks exactly like a working sync; a zero-euro cash entry is a transaction
+ * that never happened.
+ */
+function isBlankCell_(value) {
+  if (value === '' || value === null || value === undefined) return true;
+  return typeof value === 'string' && !value.trim();
 }
 
 /**

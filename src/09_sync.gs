@@ -68,7 +68,7 @@ function runSync_(options) {
   var pendingSheet = sheetOrThrow_(TABS.PENDING);
 
   var existing = readExistingIndex_(txSheet);
-  var totals = { fetched: 0, inserted: 0, duplicate: 0, ok: 0, skipped: 0 };
+  var totals = { fetched: 0, inserted: 0, duplicate: 0, ok: 0, skipped: 0, cashPending: 0 };
   var messages = [];
   var pendingRows = [];
   var refreshed = [];
@@ -120,6 +120,12 @@ function runSync_(options) {
     }
   });
 
+  // Cash last, so a bank outage cannot stop the entries you typed yourself
+  // from landing — they need nothing from the network.
+  var cash = drainCashEntries_(existing, new Date());
+  totals.inserted += cash.inserted;
+  totals.cashPending = cash.incomplete;
+
   rewritePending_(pendingSheet, refreshed, pendingRows);
 
   var attempted = accounts.length - totals.skipped;
@@ -148,13 +154,20 @@ function runSync_(options) {
 }
 
 function describeRun_(attempted, totals, messages) {
-  if (!attempted && !totals.skipped) {
+  if (!attempted && !totals.skipped && !totals.inserted && !totals.cashPending) {
     return 'No bank accounts to sync. Connect a bank, or check `kind` and `active` on the accounts tab.';
   }
   var text = attempted
     ? totals.inserted + ' new, ' + totals.duplicate + ' already held, across ' +
       totals.ok + '/' + attempted + ' accounts.'
-    : 'Nothing fetched.';
+    : totals.inserted + ' new from cash entries.';
+
+  if (totals.cashPending) {
+    // Said out loud rather than left to be discovered: a half-typed row waits
+    // forever and looks like a transaction that simply never synced.
+    text += ' ' + totals.cashPending + ' cash entr' +
+      (totals.cashPending === 1 ? 'y is' : 'ies are') + ' missing an account or amount.';
+  }
   return messages.length ? text + ' ' + messages.join(' | ') : text;
 }
 

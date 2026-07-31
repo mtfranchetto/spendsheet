@@ -1,5 +1,5 @@
 /**
- * 13_diagnostics.gs — the tools for when the code says it worked and the
+ * 18_diagnostics.gs — the tools for when the code says it worked and the
  * sheet disagrees.
  *
  * These are not features and none of them runs unattended. They exist because

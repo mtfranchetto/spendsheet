@@ -189,7 +189,7 @@ The one case it doesn't cover: two identical transactions where the second settl
 
 And because some banks emit bad duplicates: if the same `account_id|entry_reference` reappears with a **different** amount or date, that's a provider bug, not a duplicate. It goes to `_anomalies` rather than being silently dropped or double-inserted.
 
-Manual entries have neither an `entry_reference` nor a batch to count against, so their uid includes a monotonic counter from Script Properties.
+Cash entries have neither an `entry_reference` nor a batch to count against — two identical coffees can be typed hours apart and drained by different runs, where a within-batch ordinal would give both the same key and silently discard the second. So their uid carries a counter that only ever goes up, kept in Script Properties. The content is hashed in alongside it, so losing the property makes a collision merely possible again rather than certain.
 
 ---
 
@@ -222,6 +222,16 @@ Manual entries have neither an `entry_reference` nor a batch to count against, s
 ---
 
 ## Other tabs
+
+### Typing a cash entry
+
+`cash_entry` is `date` · `account` · `amount` · `category` · `note` · `processed`, drained into `transactions` at the end of every sync.
+
+**Type the amount without a sign.** A bare number is spending, which is what almost every cash entry is — standing in a bar you type `3`, not `-3`. Picking an **Income** or **Transfer** category counts it the other way, so an ATM withdrawal *adds* to the wallet while the matching debit on the bank side nets the pair to zero. A minus sign you type deliberately always wins, which is how you record cash going back into a bank. The rule is also a note on the `amount` header, visible by tapping it in mobile Sheets.
+
+The category you pick lands in `category_override`, not `category_auto`: you chose it, so the cascade doesn't get to overrule it.
+
+A row missing an account or an amount is **left unprocessed rather than rejected** — on a phone that's someone mid-typing, not an error. It's picked up whenever it's finished, and the run message says how many are waiting so it can't sit there unnoticed. Columns can be filled in any order; a row whose date you haven't typed yet is still visible to the drain.
 
 **`recurring`** — written by `detectRecurring()`. **`cashflow`** — 90-day forward projection. **`dashboard`** — the Wallet-like view, formula-driven, with a health strip in row 1 so status lives where you already look. **`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app; drained into `transactions` by the daily trigger.
 
