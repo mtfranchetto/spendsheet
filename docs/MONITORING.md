@@ -1,6 +1,24 @@
 # Monitoring
 
-> **Not written yet.** Lands in phase 8, alongside `12_monitor.gs`.
+> **Partly built.** The schedule below works now. The alerting — failures 3 to 6 — lands in phase 8, alongside `12_monitor.gs`.
+
+## Running it automatically
+
+**Spendsheet → Install triggers.** That's it: a daily time-driven trigger that runs the sync whether or not the spreadsheet is open, whether or not you're logged in, on Google's infrastructure, for free. It's what makes "no server" true rather than aspirational.
+
+Change the hour with `sync_hour` in `_config` (default 4am, in the spreadsheet's timezone) and re-run Install triggers. Apps Script picks a random minute within the hour, which is deliberate on their side and harmless here.
+
+**Spendsheet → Show schedule** reports what's currently installed, because the Apps Script triggers page is three clicks away inside a different app and "is this actually running?" is a question you ask from the spreadsheet.
+
+Install triggers is **idempotent** — it removes the ones it owns before creating them, and leaves any trigger you added yourself alone. That matters more than it sounds: adding a second nightly sync by hand is two clicks, warns you about nothing, and doubles your API calls every night straight into the rate limit below. You'd see it as "the sync stopped working", days later, with nothing to connect it to.
+
+### Turn on the failure email
+
+Apps Script emails you when a triggered run **throws**, but the default is a daily digest. Make it immediate — it's a per-account setting and can't be set from code:
+
+> [script.google.com](https://script.google.com) → your project → **Triggers** → the pencil on the sync trigger → *Failure notification settings* → **Notify me immediately**
+
+This covers failure 1 only. A run where one bank fails and the others succeed is caught and recorded rather than thrown, so it sends no email until phase 8 — check `_status.last_error` and the `state` column in the meantime.
 
 ## The six failure modes
 

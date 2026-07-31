@@ -473,11 +473,15 @@ export function createGoogleStubs(options = {}) {
 
     ScriptApp: {
       newTrigger: (fn) => {
-        const t = { fn, type: null, at: null };
+        const t = {
+          fn, type: null, hour: null,
+          getHandlerFunction: () => fn,
+          getUniqueId: () => `trigger-${triggerSeq++}`
+        };
         const builder = {
           timeBased: () => ({
-            everyDays: (n) => ({ atHour: (h) => ({ create: () => { t.type = `every ${n}d @${h}`; triggers.push(t); return t; } }) }),
-            everyWeeks: (n) => ({ onWeekDay: () => ({ atHour: (h) => ({ create: () => { t.type = `every ${n}w @${h}`; triggers.push(t); return t; } }) }) })
+            everyDays: (n) => ({ atHour: (h) => ({ create: () => { t.type = `every ${n}d`; t.hour = h; triggers.push(t); return t; } }) }),
+            everyWeeks: (n) => ({ onWeekDay: () => ({ atHour: (h) => ({ create: () => { t.type = `every ${n}w`; t.hour = h; triggers.push(t); return t; } }) }) })
           })
         };
         return builder;
@@ -515,6 +519,7 @@ export function createGoogleStubs(options = {}) {
 
   let triggers = [];
   let lockHeld = Boolean(options.lockHeld);
+  let triggerSeq = 1;
 
   // Handles for assertions.
   sandbox.__spreadsheet = spreadsheet;

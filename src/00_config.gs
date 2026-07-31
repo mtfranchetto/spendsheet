@@ -226,7 +226,9 @@ var DEFAULT_CONFIG = [
   ['fetch_pending', 'yes', 'Set to no per-account to save one API call/day.'],
   ['max_calls_per_account_per_day', 4, 'Most ASPSPs cap unattended fetching here.'],
   ['snapshot_folder', 'spendsheet-backups', 'Drive folder for weekly CSV snapshots.'],
-  ['runs_to_keep', 500, '_runs is trimmed to this many rows.']
+  ['runs_to_keep', 500, '_runs is trimmed to this many rows.'],
+  ['sync_hour', 4, 'Hour (0-23) the daily sync runs. Overnight, so a morning look is current.'],
+  ['selfcheck_hour', 9, 'Hour (0-23) the self-check runs. After the sync, so it has something to check.']
 ];
 
 /**

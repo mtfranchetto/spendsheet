@@ -27,6 +27,7 @@ var MENU_ITEMS = [
   { name: 'Setup sheet', fn: 'setup' },
   { name: 'Install credentials', fn: 'installCredentials' },
   { name: 'Install triggers', fn: 'installTriggers' },
+  { name: 'Show schedule', fn: 'describeTriggers' },
   { name: 'Health check', fn: 'healthCheck' }
 ];
 

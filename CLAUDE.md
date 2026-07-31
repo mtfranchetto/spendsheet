@@ -27,7 +27,8 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `08_dedup.gs` | identity: uid, ordinal, conflict detection. Pure. |
 | `09_sync.gs` | orchestration only. What to ask for, in what order, what to do when one bank fails. |
 | `10_cash.gs` | `cash_entry` → `transactions`. Money no API knows about. |
-| `11`–`17` | free: categorise, recurring, monitor, import. |
+| `11_triggers.gs` | the daily schedule. Idempotent by construction. |
+| `12`–`17` | free: categorise, recurring, monitor, import. |
 | `18_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
 | `19_menu.gs` | last, so every function it names is defined. |
 
