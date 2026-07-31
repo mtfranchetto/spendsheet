@@ -176,7 +176,7 @@ describe('upgrading an existing sheet', () => {
 
     expect(c.readColumn_(config, 1)).toEqual(
       c.DEFAULT_CONFIG.map((row) => row[0]));
-    expect(report.added).toContain('import_batch');
+    expect(report.added).toContain('_config: import_batch');
   });
 
   it('never overwrites a value you changed', () => {
@@ -191,5 +191,56 @@ describe('upgrading an existing sheet', () => {
 
     expect(config.getRange(row, 2).getValue()).toBe(23);
     expect(c.setup().added).toEqual([]);
+  });
+
+  it('adds category mappings that did not exist in the version you set up with', () => {
+    // The same gap as _config and a worse one to land on: a category map
+    // missing twenty-five of its rows imports a year of history with blank
+    // categories, and the import is the operation you least want to do twice.
+    const c = load();
+    c.setup();
+
+    const map = c.__spreadsheet.getSheetByName('_category_map');
+    const older = c.DEFAULT_CATEGORY_MAP.slice(0, 10);
+    c.clearDataRows_(map, 1, c.CATEGORY_MAP_COLUMNS.length);
+    c.appendRows_(map, 1, older);
+
+    const report = c.setup();
+
+    expect(c.readColumn_(map, 2)).toHaveLength(c.DEFAULT_CATEGORY_MAP.length);
+    expect(report.added.filter((a) => a.startsWith('_category_map')))
+      .toHaveLength(c.DEFAULT_CATEGORY_MAP.length - older.length);
+  });
+
+  it('matches a mapping on its source category, not on where you sent it', () => {
+    // The whole point of that tab is disagreeing with the default. An upgrade
+    // that read your edit as a missing row and appended the shipped one would
+    // leave two rows for one category — and INDEX/MATCH takes the first, so
+    // your correction would keep working right up until it didn't.
+    const c = load();
+    c.setup();
+
+    const map = c.__spreadsheet.getSheetByName('_category_map');
+    const row = c.readColumn_(map, 2).indexOf('Kids') + 2;
+    map.getRange(row, 3).setValue('Shopping');
+    map.getRange(row, 4).setValue('Gifts');
+
+    const report = c.setup();
+
+    expect(map.getRange(row, 3).getValue()).toBe('Shopping');
+    expect(report.added).toEqual([]);
+  });
+
+  it('leaves rules alone, because a rule you deleted was a decision', () => {
+    const c = load();
+    c.setup();
+
+    const rules = c.__spreadsheet.getSheetByName('rules');
+    c.clearDataRows_(rules, 1, c.RULE_COLUMNS.length);
+    c.appendRows_(rules, 1, c.DEFAULT_RULES.slice(0, 3));
+
+    c.setup();
+
+    expect(c.readColumn_(rules, 1)).toHaveLength(3);
   });
 });
