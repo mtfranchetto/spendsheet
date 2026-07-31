@@ -190,13 +190,27 @@ function stagedAnchor_() {
   return TABS.IMPORT_RAW + '!$A$2:$A';
 }
 
-/** TRUE for the rows that should become history. */
+/**
+ * TRUE for the rows that should become history.
+ *
+ * The trailing `>0` is not decoration. Twelve other columns ask
+ * `include = TRUE`, and **Sheets does not coerce a number to a boolean in a
+ * comparison** — `1 = TRUE` is FALSE there, where in Excel it is TRUE. Left as
+ * the bare product of the two conditions this returns `1`, every one of those
+ * comparisons misses, and the tab renders as a full set of blank columns with
+ * `include` reading `1` and `why` giving the excluded-row reason. Both at
+ * once, which is the tell: the two columns disagree because only one of them
+ * is comparing types Sheets thinks are comparable.
+ */
 function stagedIncludeFormula() {
   var date = importDateExpr_(importRawColumn_('booking_date'));
   var cutoff = 'IFERROR(VLOOKUP(' + importAccountIdExpr_() + ',' + importCutoffTable_() + ',2,FALSE),0)';
 
+  var hasDate = '(' + date + '<>"")';
+  var beforeCutoff = '((' + cutoff + '=0)+(' + date + '<' + cutoff + ')>0)';
+
   return '=ARRAYFORMULA(IF(' + stagedAnchor_() + '="","",' +
-    '(' + date + '<>"")*((' + cutoff + '=0)+(' + date + '<' + cutoff + ')>0)))';
+    '(' + hasDate + '*' + beforeCutoff + ')>0))';
 }
 
 /** Why a row is not coming through, in words rather than a code. */

@@ -206,6 +206,43 @@ function stringLiterals(formula) {
   return formula.match(/"[^"]*"/g) || [];
 }
 
+/** The comma-separated arguments of `NAME(...)`, ignoring nested calls and strings. */
+function topLevelArgs(call) {
+  const body = call.slice(call.indexOf('(') + 1, call.lastIndexOf(')'));
+  const args = [];
+  let depth = 0, cur = '', inString = false;
+
+  for (const ch of body) {
+    if (ch === '"') inString = !inString;
+    if (!inString) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (ch === ',' && depth === 0) { args.push(cur); cur = ''; continue; }
+    }
+    cur += ch;
+  }
+  args.push(cur);
+  return args;
+}
+
+/**
+ * Whether an expression evaluates to a boolean rather than a number.
+ *
+ * True when a comparison operator sits at the outermost level — outside every
+ * bracket and every string literal — or when the whole thing is a literal.
+ */
+function yieldsBoolean(expr) {
+  let depth = 0, inString = false;
+  for (const ch of expr) {
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (depth === 0 && '=<>'.includes(ch)) return true;
+  }
+  return /^(TRUE|FALSE)$/.test(expr.trim());
+}
+
 /**
  * Tab names in a formula that aren't followed by `!`.
  *
@@ -237,6 +274,30 @@ describe('the staged formulas', () => {
     const columns = formulas.map((entry) => entry.column);
     ['uid', 'account_id', 'booking_date', 'amount', 'description', 'source', 'category_override']
       .forEach((column) => expect(columns).toContain(column));
+  });
+
+  it('makes include a boolean, because every other column compares it to TRUE', () => {
+    // Sheets does not coerce a number to a boolean in a comparison: `1 = TRUE`
+    // is FALSE there, where in Excel it is TRUE. Left as the bare product of
+    // its two conditions, `include` returns 1, all twelve `= TRUE` tests miss,
+    // and the tab renders blank with `include` showing 1 and `why` giving the
+    // excluded-row reason — contradicting each other, which is the tell.
+    const include = formulas.filter((e) => e.column === 'include')[0].formula;
+    const body = include.replace(/^=ARRAYFORMULA\(/, '').replace(/\)$/, '');
+    const value = topLevelArgs(body)[2];
+
+    expect(yieldsBoolean(value), `include yields a number: ${value.slice(-40)}`).toBe(true);
+  });
+
+  it('has every consumer of include test it the same way', () => {
+    // One producer, twelve consumers. They have to agree about the type, and
+    // the only reason they can drift is that nothing here evaluates anything.
+    const consumers = formulas.filter((e) => e.column !== 'include' && e.column !== 'why');
+    const q = ctx.colOf(ctx.STAGED_COLUMNS, 'include');
+
+    consumers.forEach(({ column, formula }) => {
+      expect(formula, `${column} does not gate on include`).toContain(`$${q}2:$${q}=TRUE`);
+    });
   });
 
   it('follows every sheet name with a "!"', () => {
