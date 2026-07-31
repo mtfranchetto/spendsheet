@@ -243,11 +243,15 @@ var DEFAULT_CATEGORIES = [
   ['Income', 'Bonus', 'income', '💰'],
   ['Income', 'Refund', 'income', '↩️'],
   ['Income', 'Interest', 'income', '📈'],
+  ['Income', 'Rent received', 'income', '🏘️'],
+  ['Income', 'Child support', 'income', '👶'],
+  ['Income', 'Gifts received', 'income', '🎁'],
   ['Income', 'Other income', 'income', '💰'],
   ['Housing', 'Rent', 'expense', '🏠'],
   ['Housing', 'Mortgage', 'expense', '🏠'],
   ['Housing', 'Maintenance', 'expense', '🔧'],
   ['Housing', 'Furniture', 'expense', '🛋️'],
+  ['Housing', 'Other housing', 'expense', '🏠'],
   ['Bills & Utilities', 'Electricity', 'expense', '⚡'],
   ['Bills & Utilities', 'Gas', 'expense', '🔥'],
   ['Bills & Utilities', 'Water', 'expense', '💧'],
@@ -258,6 +262,8 @@ var DEFAULT_CATEGORIES = [
   ['Food & Drink', 'Restaurants', 'expense', '🍽️'],
   ['Food & Drink', 'Bars & Cafes', 'expense', '☕'],
   ['Food & Drink', 'Delivery', 'expense', '🛵'],
+  ['Food & Drink', 'Alcohol & Tobacco', 'expense', '🍷'],
+  ['Food & Drink', 'Other food & drink', 'expense', '🍴'],
   ['Transport', 'Fuel', 'expense', '⛽'],
   ['Transport', 'Public transport', 'expense', '🚆'],
   ['Transport', 'Taxi', 'expense', '🚕'],
@@ -268,10 +274,13 @@ var DEFAULT_CATEGORIES = [
   ['Shopping', 'Home', 'expense', '🏡'],
   ['Shopping', 'Books', 'expense', '📚'],
   ['Shopping', 'Gifts', 'expense', '🎁'],
+  ['Shopping', 'Other shopping', 'expense', '🛍️'],
   ['Health', 'Pharmacy', 'expense', '💊'],
   ['Health', 'Doctor', 'expense', '🩺'],
   ['Health', 'Fitness', 'expense', '🏋️'],
-  ['Health', 'Insurance', 'expense', '🛡️'],
+  ['Health', 'Personal care', 'expense', '💅'],
+  ['Family', 'Kids', 'expense', '🧸'],
+  ['Family', 'Life events', 'expense', '🎉'],
   ['Entertainment', 'Cinema & Events', 'expense', '🎬'],
   ['Entertainment', 'Hobbies', 'expense', '🎨'],
   ['Entertainment', 'Streaming', 'expense', '📺'],
@@ -280,8 +289,16 @@ var DEFAULT_CATEGORIES = [
   ['Travel', 'Holiday', 'expense', '🏖️'],
   ['Education', 'Courses', 'expense', '🎓'],
   ['Education', 'Books', 'expense', '📖'],
+  // Insurance is its own parent rather than a child of Health. Home and
+  // vehicle cover are the bulk of it for most people, and filing those under
+  // Health inflates a category you read as "am I spending more on being ill".
+  ['Insurance', 'Home', 'expense', '🛡️'],
+  ['Insurance', 'Vehicle', 'expense', '🛡️'],
+  ['Insurance', 'Health', 'expense', '🛡️'],
+  ['Insurance', 'Other insurance', 'expense', '🛡️'],
   ['Fees & Taxes', 'Bank fees', 'expense', '🏦'],
   ['Fees & Taxes', 'Taxes', 'expense', '🧾'],
+  ['Fees & Taxes', 'Professional fees', 'expense', '📄'],
   ['Fees & Taxes', 'Interest paid', 'expense', '💸'],
   ['Transfer', 'Between accounts', 'transfer', '🔄'],
   ['Transfer', 'Cash withdrawal', 'transfer', '🏧'],
@@ -322,7 +339,7 @@ var DEFAULT_RULES = [
   [41, 'mcc', 'equals', '8011', '', 'Health', 'Doctor', 'expense', true],
   [42, 'mcc', 'equals', '8062', '', 'Health', 'Doctor', 'expense', true],
   [43, 'mcc', 'equals', '7997', '', 'Health', 'Fitness', 'expense', true],
-  [44, 'mcc', 'equals', '6300', '', 'Health', 'Insurance', 'expense', true],
+  [44, 'mcc', 'equals', '6300', '', 'Insurance', 'Other insurance', 'expense', true],
   [50, 'mcc', 'equals', '5651', '', 'Shopping', 'Clothing', 'expense', true],
   [51, 'mcc', 'equals', '5691', '', 'Shopping', 'Clothing', 'expense', true],
   [52, 'mcc', 'equals', '5732', '', 'Shopping', 'Electronics', 'expense', true],
@@ -353,7 +370,7 @@ var DEFAULT_RULES = [
   [111, 'description', 'contains', 'AFFITTO', '', 'Housing', 'Rent', 'expense', true],
   [112, 'description', 'contains', 'LOCAZIONE', '', 'Housing', 'Rent', 'expense', true],
   [113, 'description', 'contains', 'INPS', '', 'Fees & Taxes', 'Taxes', 'expense', true],
-  [114, 'description', 'contains', 'ASSICURAZIONE', '', 'Health', 'Insurance', 'expense', true],
+  [114, 'description', 'contains', 'ASSICURAZIONE', '', 'Insurance', 'Other insurance', 'expense', true],
 
   // ---- Merchants: groceries ----
   [200, 'description', 'contains', 'ESSELUNGA', '', 'Food & Drink', 'Groceries', 'expense', true],
@@ -468,15 +485,42 @@ var IMPORT_TYPE_EXPENSE = 'Expense';
  * would not have chosen teaches the wrong thing about every future
  * transaction from that merchant.
  *
- * `Missing`, `Unknown expense` and `Services` land in Other/Uncategorised on
- * purpose. They carry no information, and inventing one for them would hide
- * rows that deserve a look in the needs-review queue.
+ * `Missing`, `Unknown expense`, `Services` and `Others` land in
+ * Other/Uncategorised on purpose. They carry no information, and inventing one
+ * for them would hide rows that deserve a look in the needs-review queue.
+ *
+ * Built from a **full year** of a real export — 1,464 rows, 57 distinct
+ * categories — after a first pass written against a 20-row sample covered only
+ * 36 of them. The 21 it missed were not exotic: they included `Wage, invoices`,
+ * which is where a salary lives.
+ *
+ * Two shapes of mistake the full year exposed, both of which had survived the
+ * sample because the sample happened not to contain them:
+ *
+ *   **`Gifts` is income; `Gifts, joy` is the expense.** Both used to land in
+ *   Shopping/Gifts, which files money *received* as money *spent*. Over the
+ *   year that was €9,400 on the wrong side.
+ *
+ *   **A parent-level category is not its most common child.** `Food & Drinks`
+ *   is BudgetBakers' parent of Groceries/Bar/Restaurant, and mapping it to
+ *   Groceries inflated the weekly shop with what were plainly coffees — €8.60
+ *   average against Groceries' €41. Parent-level sources now map to an
+ *   `Other <parent>` child, which keeps the row out of a total it would
+ *   distort while still saying more than "uncategorised".
+ *
+ * `Cleaning`, `Insurances`, `Pizza` and `Unknown expense` appear in no row of
+ * this export. They are kept because they are real BudgetBakers categories and
+ * this preset ships to other people, whose exports will contain them.
  */
 var DEFAULT_CATEGORY_MAP = [
+  ['budgetbakers', 'Active sport, fitness', 'Health', 'Fitness'],
+  ['budgetbakers', 'Advisory', 'Fees & Taxes', 'Professional fees'],
+  ['budgetbakers', 'Alcohol, tobacco', 'Food & Drink', 'Alcohol & Tobacco'],
   ['budgetbakers', 'Bar, cafe', 'Food & Drink', 'Bars & Cafes'],
   ['budgetbakers', 'Books, audio, subscriptions', 'Bills & Utilities', 'Subscriptions'],
   ['budgetbakers', 'Charges, Fees', 'Fees & Taxes', 'Bank fees'],
-  ['budgetbakers', 'Child Support', 'Other', 'Uncategorised'],
+  ['budgetbakers', 'Charity, gifts', 'Shopping', 'Gifts'],
+  ['budgetbakers', 'Child Support', 'Income', 'Child support'],
   ['budgetbakers', 'Cleaning', 'Housing', 'Maintenance'],
   ['budgetbakers', 'Clothes & Footwear', 'Shopping', 'Clothing'],
   ['budgetbakers', 'Culture, sport events', 'Entertainment', 'Cinema & Events'],
@@ -484,31 +528,52 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Education, development', 'Education', 'Courses'],
   ['budgetbakers', 'Electronics, accessories', 'Shopping', 'Electronics'],
   ['budgetbakers', 'Energy, utilities', 'Bills & Utilities', 'Electricity'],
-  ['budgetbakers', 'Food & Drinks', 'Food & Drink', 'Groceries'],
+  ['budgetbakers', 'Financial expenses', 'Fees & Taxes', 'Bank fees'],
+  ['budgetbakers', 'Food & Drinks', 'Food & Drink', 'Other food & drink'],
   ['budgetbakers', 'Fuel', 'Transport', 'Fuel'],
-  ['budgetbakers', 'Gifts', 'Shopping', 'Gifts'],
+  ['budgetbakers', 'Gifts', 'Income', 'Gifts received'],
   ['budgetbakers', 'Gifts, joy', 'Shopping', 'Gifts'],
   ['budgetbakers', 'Groceries', 'Food & Drink', 'Groceries'],
-  ['budgetbakers', 'Health and beauty', 'Health', 'Doctor'],
+  ['budgetbakers', 'Health and beauty', 'Health', 'Personal care'],
+  ['budgetbakers', 'Health care, doctor', 'Health', 'Doctor'],
   ['budgetbakers', 'Holiday, trips, hotels', 'Travel', 'Holiday'],
   ['budgetbakers', 'Home, garden', 'Shopping', 'Home'],
-  ['budgetbakers', 'Insurances', 'Health', 'Insurance'],
+  ['budgetbakers', 'Housing', 'Housing', 'Other housing'],
+  ['budgetbakers', 'Income', 'Income', 'Other income'],
+  ['budgetbakers', 'Insurances', 'Insurance', 'Other insurance'],
+  ['budgetbakers', 'Interests, dividends', 'Income', 'Interest'],
+  ['budgetbakers', 'Internet', 'Bills & Utilities', 'Internet'],
+  ['budgetbakers', 'Kids', 'Family', 'Kids'],
+  ['budgetbakers', 'Leisure time', 'Entertainment', 'Hobbies'],
   ['budgetbakers', 'Life & Entertainment', 'Entertainment', 'Hobbies'],
+  ['budgetbakers', 'Life events', 'Family', 'Life events'],
+  ['budgetbakers', 'Lottery, gambling', 'Entertainment', 'Hobbies'],
+  ['budgetbakers', 'Maintenance, repairs', 'Housing', 'Maintenance'],
   ['budgetbakers', 'Missing', 'Other', 'Uncategorised'],
   ['budgetbakers', 'Mortgage', 'Housing', 'Mortgage'],
+  ['budgetbakers', 'Others', 'Other', 'Uncategorised'],
   ['budgetbakers', 'Parking', 'Transport', 'Tolls & Parking'],
   ['budgetbakers', 'Pizza', 'Food & Drink', 'Restaurants'],
+  ['budgetbakers', 'Property insurance', 'Insurance', 'Home'],
   ['budgetbakers', 'Public transport', 'Transport', 'Public transport'],
   ['budgetbakers', 'Refunds (tax, purchase)', 'Income', 'Refund'],
+  ['budgetbakers', 'Rental income', 'Income', 'Rent received'],
   ['budgetbakers', 'Restaurant, fast-food', 'Food & Drink', 'Restaurants'],
+  ['budgetbakers', 'Sale', 'Income', 'Other income'],
   ['budgetbakers', 'Services', 'Other', 'Uncategorised'],
+  ['budgetbakers', 'Shopping', 'Shopping', 'Other shopping'],
   ['budgetbakers', 'Software, apps, games', 'Bills & Utilities', 'Subscriptions'],
+  ['budgetbakers', 'Stationery, tools', 'Shopping', 'Home'],
   ['budgetbakers', 'TV, Streaming', 'Entertainment', 'Streaming'],
+  ['budgetbakers', 'Taxes', 'Fees & Taxes', 'Taxes'],
   ['budgetbakers', 'Telephony, mobile phone', 'Bills & Utilities', 'Phone'],
   ['budgetbakers', 'Transfer, withdraw', 'Transfer', 'Between accounts'],
   ['budgetbakers', 'Unknown expense', 'Other', 'Uncategorised'],
   ['budgetbakers', 'Vehicle', 'Transport', 'Car maintenance'],
-  ['budgetbakers', 'Wellness, beauty', 'Health', 'Fitness']
+  ['budgetbakers', 'Vehicle insurance', 'Insurance', 'Vehicle'],
+  ['budgetbakers', 'Vehicle maintenance', 'Transport', 'Car maintenance'],
+  ['budgetbakers', 'Wage, invoices', 'Income', 'Salary'],
+  ['budgetbakers', 'Wellness, beauty', 'Health', 'Personal care']
 ];
 
 /** Column-letter helpers. Pure, so the harness tests them directly. */

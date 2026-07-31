@@ -4,7 +4,7 @@ There is **no import code**, deliberately. Importing your history is something y
 
 What the repo does build is the tab in between. `_import_staged` is pure formulas: it reads whatever landed in `_import_raw`, maps it through `_import_map` and `_category_map`, and shows you the result **before** any of it becomes history. You see which rows are excluded and why, rather than trusting a log written afterwards. And when the mapping is wrong — it will be, because every export differs by app version and locale — the fix is editing a tab, not editing code.
 
-The same procedure covers Satispay, DeGiro, or any bank Enable Banking can't reach: add rows to `_import_map` under a new preset name and point `import_preset` at it.
+The same procedure covers Satispay, DeGiro, or any bank Enable Banking can't reach: add rows to `_import_map` under a new preset name and point `import_preset` at it. See [Other providers](#other-providers).
 
 ## What a BudgetBakers export actually looks like
 
@@ -19,11 +19,27 @@ Probed against a real one, because it can't be verified from any primary source:
 
 Columns deliberately left unmapped: `ref_currency_amount` (identical to `amount` unless you hold a non-EUR account), `payment_type` (the instrument — `Transfer` there means *bank transfer*, not a move between your own accounts, and is easy to confuse with the `transfer` column), `transfer`, and `labels` (free-form tags on a small minority of rows; preserving them would need a third paste block, which isn't worth the chance of misaligning one).
 
+The shipped preset was later rebuilt against a **full year** — 1,464 rows, 57 distinct categories, where the first pass had been written off a 20-row sample and covered 36. See [the category map](#the-category-map).
+
 ## Before you start
 
 **Name your accounts to match the export.** `_import_staged` resolves each row's `account_id` by matching the CSV's account name against `accounts` column B. Rename your rows there to whatever the export calls them — `Fineco EUR`, `Illimity`, `Revolut` — and the join is free. An account name that doesn't match still imports; it just arrives with `account_name` and no `account_id`, so it won't roll into that account's balance.
 
+Expect more account names than you have banks. A real year's export carried eleven, of which four were reachable by open banking and the rest were a cash wallet, two brokerages, a savings pot and two property accounts. Every one of them needs a row in `accounts` — kind `cash` for the wallet, `asset` for the brokerages and property — or a chunk of the history arrives unattached.
+
 **Read `_category_map` first, not afterwards.** Their taxonomy is single-level and ours is two, so the second level is invented in that tab. These become `category_override` — the training signal the whole categorisation cascade learns from in phase 7. A category you wouldn't have chosen teaches the wrong thing about every future transaction from that merchant. Ten minutes there is worth more than any amount of correcting later.
+
+## The category map
+
+Two mistakes worth knowing about, because both survived a 20-row sample and both are the kind that look fine in the sheet:
+
+**Some of their categories are income.** `Gifts` is a gift *received*; `Gifts, joy` is the expense. Filing both under Shopping/Gifts counted a year of presents received as a year of presents bought — €9,400 on the wrong side. The others that mean money in: `Wage, invoices`, `Rental income`, `Interests, dividends`, `Child Support`, `Sale`, `Refunds (tax, purchase)`, and the bare `Income`. A test now asserts every one of them maps to a category whose `kind` is `income`.
+
+**A parent-level category is not its most common child.** `Food & Drinks` is BudgetBakers' parent of Groceries/Bar/Restaurant, and it gets used when nothing more specific fits. Mapping it to Groceries moved a year of stray coffees into the weekly shop — €8.60 average against Groceries' €41. Parent-level sources map to an `Other <parent>` child instead, which keeps them out of a total they'd distort while still saying more than "uncategorised".
+
+`Missing`, `Unknown expense`, `Services` and `Others` map to Other/Uncategorised deliberately. They carry no information, and inventing a category for them hides rows that deserve a look in the needs-review queue.
+
+The taxonomy grew to meet the export rather than the export being squashed into it: `Family` (kids, life events), `Insurance` as its own parent rather than a child of Health, and income subcategories for rent, gifts and child support. **A distinction you spent a year making in BudgetBakers is data**, and collapsing it on the way in is the one loss the import can't be undone from.
 
 ## The steps
 
@@ -52,11 +68,55 @@ Cell `T1` of `_import_staged` spells out both targets with the row number comput
 
 Two pastes rather than one, because column P of `transactions` holds the `amount_eur` ARRAYFORMULA and a pasted blank would destroy it. **Paste special → Values only**, both times, at the same row.
 
-## Importing a second file
+## Several files — a year at a time
 
-Change `import_batch` in `_config` first. It goes into the uid of every imported row, so leaving it alone would give the second file's row 2 the same key as the first file's row 2.
+BudgetBakers exports per year, so a full history is one file per year and the steps above run once per file. Three things change between runs, and two of them are silent if you skip them.
 
-Imported rows use a readable key — `csv:budgetbakers:import1#42` — rather than a hash. Cross-source dedup can't work anyway: an imported row and the same transaction fetched from the bank share no field that's stable between them. The cutoff is what prevents overlap, and a key you can read tells you where a row came from at a glance.
+**Import oldest first.** `transactions` is append-only and **never sorted** — that rule is what keeps row identity and every formula reference intact, and it means the order you paste in is the order the sheet is in forever. Nothing depends on it; every report goes through `QUERY` or a formula. But scrolling through a sheet that runs 2024, 2019, 2022 is unpleasant in a way you can't fix later. Ten seconds of ordering now.
+
+**Change `import_batch` before each file.** It goes into the uid of every imported row — `csv:budgetbakers:2019#42` — and the number after `#` is the row of `_import_raw`. Leave the batch alone and the second file's row 42 gets the same key as the first file's row 42. Name it after the year and it stays obvious later.
+
+**Clear `_import_raw` before each import, don't just re-import over it.** File → Import → *Replace data at selected cell* replaces the cells the new data lands on and leaves anything past it alone. So importing a 900-row year on top of a 1,400-row year leaves 500 rows of the previous file below it — which stage, look completely normal, and paste in a second time. Select `_import_raw`, ⌘A, Delete, then import.
+
+Then the loop, per file:
+
+1. Clear `_import_raw`, import the year into it
+2. Set `import_batch` to that year
+3. Check `_import_staged` — the paste targets in `T1` recompute themselves, so they're right without counting
+4. Paste both blocks
+5. Tie out one month against BudgetBakers before doing the next file
+
+That fifth step only matters on the first file. Once one year ties out, the mapping is proven and the rest are mechanical.
+
+**What the cutoff does and doesn't catch.** The `why` column excludes rows the API already has — it's derived per account from the oldest `enablebanking` row in `transactions`. It does **not** compare against rows you imported earlier, so importing the same year twice inserts it twice. Nothing detects that but you. Since the years are disjoint this only bites if you lose your place; the batch name in the uid is what tells you where you got to.
+
+Imported rows use a readable key rather than a hash. Cross-source dedup can't work anyway: an imported row and the same transaction fetched from the bank share no field that's stable between them. The cutoff is what prevents overlap with the API, and a key you can read tells you where a row came from at a glance.
+
+## Other providers
+
+Yes — the mapping is data, not code, and nothing in it is BudgetBakers-specific. Satispay, DeGiro, a bank Enable Banking can't reach, a different PFM app: each gets a **preset**, which is just a name in column A of `_import_map` and `_category_map`.
+
+To add one:
+
+1. Add rows to `_import_map` under a new preset name, one per column you want, mapping *their* header to *our* column
+2. Add rows to `_category_map` under the same name, mapping their categories to yours — or none, and categorise it in phase 7 instead
+3. Set `import_preset` in `_config` to that name
+4. Import their CSV into `_import_raw` and check `_import_staged`
+
+`_import_staged` rebuilds itself from whichever preset is named, so switching providers is editing one cell. Presets coexist; you're only ever using one at a time.
+
+**The four columns a row can't do without** are `booking_date`, `amount`, `account_name` and `description`. Everything else is optional and lands blank.
+
+**The direction of the money is the part that differs most**, and it's handled two ways:
+
+| The export | What to map |
+|---|---|
+| Unsigned amount + a direction column (BudgetBakers) | map `type`; the word for money out is `Expense` |
+| Signed amount, `-42.00` for money out (most banks) | **don't map `type`** — the amount's own sign is used |
+
+Don't map `type` to something that isn't a direction just to fill it in. An unmapped `type` is a supported state; a wrong one is a sheet where every expense is income.
+
+Two constraints that aren't negotiable per-preset: the file must be **one row per transaction with a header line**, and dates must be **ISO** (`2024-03-15`, with or without a time). A `15/03/2024` export needs a find-and-replace in `_import_raw` first, or a column of `DATE()` alongside it that you map instead. Parsing that here would mean guessing between `03/04` as March 4th and April 3rd, and guessing wrong is invisible for eleven days of every month.
 
 ## Transfers
 

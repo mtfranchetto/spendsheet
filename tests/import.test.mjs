@@ -17,19 +17,38 @@ const ctx = load();
 /**
  * The header line and category list of an actual export, recorded rather than
  * guessed. No transaction data — this is the file's shape, not its contents.
+ *
+ * The categories are every distinct one in a **full year**: 1,464 rows, 57
+ * categories. The list this replaced came from a 20-row sample and had 36 of
+ * them, which is the failure mode a sample always has — it is not a smaller
+ * version of the data, it is the data minus everything that happens rarely.
+ * Salary appears eleven times in a year and was absent from it.
  */
 const REAL_HEADERS = ['account', 'category', 'currency', 'amount', 'ref_currency_amount',
   'type', 'payment_type', 'note', 'date', 'transfer', 'payee', 'labels'];
 
 const REAL_CATEGORIES = [
-  'Bar, cafe', 'Books, audio, subscriptions', 'Charges, Fees', 'Child Support', 'Cleaning',
+  'Active sport, fitness', 'Advisory', 'Alcohol, tobacco', 'Bar, cafe',
+  'Books, audio, subscriptions', 'Charges, Fees', 'Charity, gifts', 'Child Support',
   'Clothes & Footwear', 'Culture, sport events', 'Drug-store, chemist', 'Education, development',
-  'Electronics, accessories', 'Energy, utilities', 'Food & Drinks', 'Fuel', 'Gifts', 'Gifts, joy',
-  'Groceries', 'Health and beauty', 'Holiday, trips, hotels', 'Home, garden', 'Insurances',
-  'Life & Entertainment', 'Missing', 'Mortgage', 'Parking', 'Pizza', 'Public transport',
-  'Refunds (tax, purchase)', 'Restaurant, fast-food', 'Services', 'Software, apps, games',
-  'TV, Streaming', 'Telephony, mobile phone', 'Transfer, withdraw', 'Unknown expense',
-  'Vehicle', 'Wellness, beauty'
+  'Electronics, accessories', 'Energy, utilities', 'Financial expenses', 'Food & Drinks', 'Fuel',
+  'Gifts', 'Gifts, joy', 'Groceries', 'Health and beauty', 'Health care, doctor',
+  'Holiday, trips, hotels', 'Home, garden', 'Housing', 'Income', 'Interests, dividends',
+  'Internet', 'Kids', 'Leisure time', 'Life & Entertainment', 'Life events', 'Lottery, gambling',
+  'Maintenance, repairs', 'Missing', 'Mortgage', 'Others', 'Parking', 'Property insurance',
+  'Public transport', 'Refunds (tax, purchase)', 'Rental income', 'Restaurant, fast-food',
+  'Sale', 'Services', 'Shopping', 'Software, apps, games', 'Stationery, tools', 'TV, Streaming',
+  'Taxes', 'Telephony, mobile phone', 'Transfer, withdraw', 'Vehicle', 'Vehicle insurance',
+  'Vehicle maintenance', 'Wage, invoices', 'Wellness, beauty'
+];
+
+/**
+ * Categories the export uses for money **coming in**. Everything else in the
+ * file is an expense, apart from `Transfer, withdraw`, which is both.
+ */
+const INCOME_CATEGORIES = [
+  'Child Support', 'Gifts', 'Income', 'Interests, dividends',
+  'Refunds (tax, purchase)', 'Rental income', 'Sale', 'Wage, invoices'
 ];
 
 const preset = (rows) => rows.filter((row) => row[0] === 'budgetbakers');
@@ -102,12 +121,54 @@ describe('the category map', () => {
   });
 
   it('leaves the uninformative categories uninformative', () => {
-    // Missing / Unknown / Services carry nothing. Inventing a category for
-    // them would hide rows that deserve a look.
-    ['Missing', 'Unknown expense', 'Services'].forEach((source) => {
+    // Missing / Unknown / Services / Others carry nothing. Inventing a
+    // category for them would hide rows that deserve a look.
+    ['Missing', 'Unknown expense', 'Services', 'Others'].forEach((source) => {
       const row = preset(ctx.DEFAULT_CATEGORY_MAP).filter((r) => r[1] === source)[0];
       expect(row.slice(2)).toEqual(['Other', 'Uncategorised']);
     });
+  });
+
+  it('files money coming in as income, not as spending', () => {
+    // The one this caught: `Gifts` is a gift *received* and `Gifts, joy` is
+    // the expense. Both used to land in Shopping/Gifts, so a year of presents
+    // received counted as a year of presents bought — €9,400 on the wrong
+    // side of the report, and nothing about the sheet would have looked odd.
+    const kindOf = new Map(ctx.DEFAULT_CATEGORIES.map((c) => [`${c[0]}|${c[1]}`, c[2]]));
+    const misfiled = preset(ctx.DEFAULT_CATEGORY_MAP)
+      .filter((row) => INCOME_CATEGORIES.includes(row[1]))
+      .filter((row) => kindOf.get(`${row[2]}|${row[3]}`) !== 'income')
+      .map((row) => row[1]);
+
+    expect(misfiled).toEqual([]);
+  });
+
+  it('has a home for a salary', () => {
+    // Absent from the preset built off a 20-row sample, because a salary
+    // arrives monthly and a sample of twenty rows is a fortnight.
+    const row = preset(ctx.DEFAULT_CATEGORY_MAP).filter((r) => r[1] === 'Wage, invoices')[0];
+    expect(row.slice(2)).toEqual(['Income', 'Salary']);
+  });
+
+  it('does not file a parent-level category under one of its children', () => {
+    // `Food & Drinks` is BudgetBakers' parent of Groceries, Bar and
+    // Restaurant. Mapping it to Groceries is not a rounding error — it moves
+    // every uncategorised coffee into the weekly shop, and the weekly shop is
+    // exactly the figure people check against their own memory.
+    const map = new Map(preset(ctx.DEFAULT_CATEGORY_MAP).map((r) => [r[1], r.slice(2)]));
+
+    expect(map.get('Food & Drinks')).toEqual(['Food & Drink', 'Other food & drink']);
+    expect(map.get('Housing')).toEqual(['Housing', 'Other housing']);
+    expect(map.get('Shopping')).toEqual(['Shopping', 'Other shopping']);
+  });
+
+  it('keeps insurance out of Health', () => {
+    // Property and vehicle cover are the bulk of it, and neither says
+    // anything about health spending.
+    const map = new Map(preset(ctx.DEFAULT_CATEGORY_MAP).map((r) => [r[1], r.slice(2)]));
+
+    expect(map.get('Property insurance')).toEqual(['Insurance', 'Home']);
+    expect(map.get('Vehicle insurance')).toEqual(['Insurance', 'Vehicle']);
   });
 
   it('has no duplicate source categories', () => {
@@ -184,6 +245,27 @@ describe('the staged formulas', () => {
     const amount = formulas.filter((entry) => entry.column === 'amount')[0].formula;
     expect(amount).toContain('POWER(10,LEN(');
     expect(amount).toContain('FIND(".",');
+  });
+
+  it('strips the minus before splitting on the dot, and puts it back', () => {
+    // Splitting "-116.87" on the dot gives "-116" and "87", which add to
+    // -115.13 — off by 1.74 and in the direction of less debt. Nothing about
+    // that number looks wrong on a screen of other numbers. BudgetBakers only
+    // ever emits positives so it cannot fire there; a bank export that signs
+    // its amounts is the first place it would.
+    const amount = formulas.filter((entry) => entry.column === 'amount')[0].formula;
+
+    expect(amount).toContain('SUBSTITUTE(SUBSTITUTE(');
+    expect(amount).toContain('"-",""');
+    expect(amount).toContain('LEFT(TRIM(TO_TEXT(');
+  });
+
+  it('falls back to the amount\'s own sign when the preset has no type column', () => {
+    // What makes a second preset possible. Plenty of exports carry no
+    // direction column and sign the amount instead; mapping `type` for those
+    // would mean pointing it at a column that means something else.
+    const amount = formulas.filter((entry) => entry.column === 'amount')[0].formula;
+    expect(amount).toContain('IFERROR(IF(');
   });
 
   it('builds dates from their parts rather than parsing a string', () => {

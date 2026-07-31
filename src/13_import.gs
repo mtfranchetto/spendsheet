@@ -94,13 +94,22 @@ function importRawColumn_(target) {
  * either side of the dot are parsed as **integers**, which every locale reads
  * the same way. No `VALUE()` on a decimal string, ever: that is the one call
  * whose meaning changes with the spreadsheet's language.
+ *
+ * The minus is stripped and reapplied rather than carried through the split.
+ * Splitting `-116.87` on the dot gives `-116` and `87`, and adding them lands
+ * on `-115.13` — off by 1.74, wrong in the direction of *less* debt, and
+ * plausible enough to survive a read-through. BudgetBakers never emits a
+ * negative so this could not fire there, but a bank export that signs its
+ * amounts is exactly the second preset someone adds.
  */
 function importNumberExpr_(cell) {
-  var text = 'SUBSTITUTE(TO_TEXT(' + cell + '),",","")';
+  var raw = 'TRIM(TO_TEXT(' + cell + '))';
+  var sign = 'IF(LEFT(' + raw + ',1)="-",-1,1)';
+  var text = 'SUBSTITUTE(SUBSTITUTE(' + raw + ',",",""),"-","")';
   var dot = 'FIND(".",' + text + ')';
   var frac = 'MID(' + text + ',' + dot + '+1,9)';
 
-  return 'IFERROR(IF(ISNUMBER(' + cell + '),' + cell + ',' +
+  return 'IFERROR(IF(ISNUMBER(' + cell + '),' + cell + ',' + sign + '*' +
     'IF(ISERROR(' + dot + '),VALUE(' + text + '),' +
     'VALUE(LEFT(' + text + ',' + dot + '-1))+VALUE(' + frac + ')/POWER(10,LEN(' + frac + ')))),0)';
 }
@@ -209,10 +218,23 @@ function stagedColumnFormula(expression) {
  * API path: an export that ever emits a negative amount *and* `Expense` would
  * otherwise double-negate into income, turning every total in the sheet upside
  * down while looking entirely plausible.
+ *
+ * **`type` is optional**, and that is what lets a second preset exist. Plenty
+ * of exports carry no direction column at all and sign the amount instead —
+ * `-42.00` for money out. Mapping `type` for those would mean pointing it at a
+ * column that means something else. So when the preset has no `type` row the
+ * lookup errors, and the fallback is the amount's own sign.
+ *
+ * Which means a preset that maps `type` to a header the file does not have
+ * quietly gets the raw amount rather than an error. The check is the one you
+ * would do anyway: `_import_staged` shows the signed amount for every row
+ * before any of it is pasted, and an export imported with the wrong sign shows
+ * a screen of positive numbers.
  */
 function stagedAmountExpression() {
-  var magnitude = 'ABS(' + importNumberExpr_(importRawColumn_('amount')) + ')';
-  return 'IF(' + importRawColumn_('type') + '="' + IMPORT_TYPE_EXPENSE + '",-1,1)*' + magnitude;
+  var number = importNumberExpr_(importRawColumn_('amount'));
+  return 'IFERROR(IF(' + importRawColumn_('type') + '="' + IMPORT_TYPE_EXPENSE + '",-1,1)*ABS(' +
+    number + '),' + number + ')';
 }
 
 /**
