@@ -330,6 +330,7 @@ class FakeSpreadsheet {
 
   toast(message, title, timeout) { this.toasts.push({ message, title, timeout }); }
   getSpreadsheetTimeZone() { return 'Europe/Rome'; }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/fake/edit'; }
   getId() { return 'fake-spreadsheet-id'; }
 
   /** Ordered snapshot of the whole book — `deepEqual` two of these to prove idempotency. */
@@ -488,8 +489,16 @@ export function createGoogleStubs(options = {}) {
       },
       getProjectTriggers: () => triggers.slice(),
       deleteTrigger: (t) => { triggers = triggers.filter((x) => x !== t); },
-      getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/FAKE/exec' })
+      getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/FAKE/exec' }),
+      WeekDay: { SUNDAY: 'SUNDAY', MONDAY: 'MONDAY', SATURDAY: 'SATURDAY' }
     },
+
+    Session: {
+      getEffectiveUser: () => ({ getEmail: () => options.userEmail || 'you@example.com' }),
+      getActiveUser: () => ({ getEmail: () => options.userEmail || 'you@example.com' })
+    },
+
+    MimeType: { CSV: 'text/csv', PLAIN_TEXT: 'text/plain' },
 
     /**
      * A real lock, so a test can prove that a second sync is refused rather
@@ -508,8 +517,23 @@ export function createGoogleStubs(options = {}) {
     },
 
     DriveApp: {
-      getFoldersByName: () => ({ hasNext: () => false, next: () => null }),
-      createFolder: (name) => ({ getName: () => name, createFile: () => ({}) })
+      getFoldersByName: (name) => {
+        const found = folders.filter((f) => f.name === name);
+        let i = 0;
+        return { hasNext: () => i < found.length, next: () => found[i++] };
+      },
+      createFolder: (name) => {
+        const folder = {
+          name,
+          getName: () => name,
+          createFile: (fileName, content, mime) => {
+            driveFiles.push({ name: fileName, content, mime });
+            return { getName: () => fileName, getId: () => `file-${driveFiles.length}` };
+          }
+        };
+        folders.push(folder);
+        return folder;
+      }
     },
 
     HtmlService: {
@@ -520,6 +544,8 @@ export function createGoogleStubs(options = {}) {
   let triggers = [];
   let lockHeld = Boolean(options.lockHeld);
   let triggerSeq = 1;
+  const folders = [];
+  const driveFiles = [];
 
   // Handles for assertions.
   sandbox.__spreadsheet = spreadsheet;
@@ -528,6 +554,8 @@ export function createGoogleStubs(options = {}) {
   sandbox.__fetches = fetches;
   sandbox.__ui = uiCalls;
   sandbox.__triggers = () => triggers;
+  sandbox.__driveFiles = driveFiles;
+  sandbox.__driveFiles = driveFiles;
 
   return sandbox;
 }

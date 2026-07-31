@@ -28,7 +28,9 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `09_sync.gs` | orchestration only. What to ask for, in what order, what to do when one bank fails. |
 | `10_cash.gs` | `cash_entry` → `transactions`. Money no API knows about. |
 | `11_triggers.gs` | the daily schedule. Idempotent by construction. |
-| `12`–`17` | free: categorise, recurring, monitor, import. |
+| `12_monitor.gs` | the six failure detectors, alerting, Drive snapshots. |
+| `13_import.gs` | formula builders for `_import_staged`. No importer — see the governing rule. |
+| `14`–`17` | free: categorise, recurring. |
 | `18_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
 | `19_menu.gs` | last, so every function it names is defined. |
 

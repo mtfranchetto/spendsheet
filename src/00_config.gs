@@ -228,7 +228,10 @@ var DEFAULT_CONFIG = [
   ['snapshot_folder', 'spendsheet-backups', 'Drive folder for weekly CSV snapshots.'],
   ['runs_to_keep', 500, '_runs is trimmed to this many rows.'],
   ['sync_hour', 4, 'Hour(s) 0-23 the sync runs. Comma-separate for more than one, e.g. 4,16.'],
-  ['selfcheck_hour', 9, 'Hour (0-23) the self-check runs. After the sync, so it has something to check.']
+  ['selfcheck_hour', 9, 'Hour (0-23) the self-check runs. After the sync, so it has something to check.'],
+  ['snapshot_hour', 5, 'Hour (0-23) the weekly Drive snapshot runs, on Sundays.'],
+  ['import_preset', 'budgetbakers', 'Which _import_map and _category_map rows to use.'],
+  ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.']
 ];
 
 /**
@@ -419,22 +422,93 @@ var DEFAULT_RULES = [
 /**
  * BudgetBakers CSV column preset.
  *
- * Their export headers vary by app version and locale and could not be
- * verified from a primary source, so this is a starting guess that you
- * correct against your own export in phase 6 — which is exactly why the
- * import is mapping-driven rather than hardcoded. Editing the _import_map
- * tab is the supported way to fix it; no code change required.
+ * Probed against a real export rather than guessed — their support page
+ * refuses automated fetches, so the previous version of this table was
+ * invention. Four of its nine rows were wrong.
+ *
+ * The file is **semicolon-delimited**, so File → Import needs the separator
+ * set by hand. See docs/IMPORT.md.
+ *
+ * Deliberately unmapped, and why:
+ *
+ *   `ref_currency_amount`  the amount in your base currency. Identical to
+ *                          `amount` on a single-currency export; the column to
+ *                          reach for if you ever hold a non-EUR account.
+ *   `payment_type`         the instrument — `Transfer` here means bank
+ *                          transfer, NOT a move between your own accounts.
+ *                          Easy to confuse with the `transfer` column, which
+ *                          is the one that means that.
+ *   `transfer`             a boolean, not a pair id. See 13_import.gs.
+ *   `labels`               free-form tags, on a small minority of rows. Would
+ *                          need a third paste block into `notes` to preserve,
+ *                          which is not worth the chance of misaligning one.
  */
 var DEFAULT_IMPORT_MAP = [
-  ['budgetbakers', 'date', 'booking_date'],
   ['budgetbakers', 'account', 'account_name'],
-  ['budgetbakers', 'category', 'category_override'],
+  ['budgetbakers', 'date', 'booking_date'],
   ['budgetbakers', 'amount', 'amount'],
+  ['budgetbakers', 'type', 'type'],
   ['budgetbakers', 'currency', 'currency'],
   ['budgetbakers', 'note', 'description'],
   ['budgetbakers', 'payee', 'counterparty'],
-  ['budgetbakers', 'labels', 'notes'],
-  ['budgetbakers', 'transfer', 'transfer_group']
+  ['budgetbakers', 'category', 'category_override']
+];
+
+/** The value in the `type` column that means money out. */
+var IMPORT_TYPE_EXPENSE = 'Expense';
+
+/**
+ * BudgetBakers categories mapped onto ours.
+ *
+ * Their taxonomy is single-level and ours is two, so this is where the extra
+ * level is invented — and it is a starting point, not an answer. Editing this
+ * tab is the supported way to disagree with it, and worth doing *before* the
+ * import rather than after: these become `category_override`, which is the
+ * training signal the whole categorisation cascade learns from. A category you
+ * would not have chosen teaches the wrong thing about every future
+ * transaction from that merchant.
+ *
+ * `Missing`, `Unknown expense` and `Services` land in Other/Uncategorised on
+ * purpose. They carry no information, and inventing one for them would hide
+ * rows that deserve a look in the needs-review queue.
+ */
+var DEFAULT_CATEGORY_MAP = [
+  ['budgetbakers', 'Bar, cafe', 'Food & Drink', 'Bars & Cafes'],
+  ['budgetbakers', 'Books, audio, subscriptions', 'Bills & Utilities', 'Subscriptions'],
+  ['budgetbakers', 'Charges, Fees', 'Fees & Taxes', 'Bank fees'],
+  ['budgetbakers', 'Child Support', 'Other', 'Uncategorised'],
+  ['budgetbakers', 'Cleaning', 'Housing', 'Maintenance'],
+  ['budgetbakers', 'Clothes & Footwear', 'Shopping', 'Clothing'],
+  ['budgetbakers', 'Culture, sport events', 'Entertainment', 'Cinema & Events'],
+  ['budgetbakers', 'Drug-store, chemist', 'Health', 'Pharmacy'],
+  ['budgetbakers', 'Education, development', 'Education', 'Courses'],
+  ['budgetbakers', 'Electronics, accessories', 'Shopping', 'Electronics'],
+  ['budgetbakers', 'Energy, utilities', 'Bills & Utilities', 'Electricity'],
+  ['budgetbakers', 'Food & Drinks', 'Food & Drink', 'Groceries'],
+  ['budgetbakers', 'Fuel', 'Transport', 'Fuel'],
+  ['budgetbakers', 'Gifts', 'Shopping', 'Gifts'],
+  ['budgetbakers', 'Gifts, joy', 'Shopping', 'Gifts'],
+  ['budgetbakers', 'Groceries', 'Food & Drink', 'Groceries'],
+  ['budgetbakers', 'Health and beauty', 'Health', 'Doctor'],
+  ['budgetbakers', 'Holiday, trips, hotels', 'Travel', 'Holiday'],
+  ['budgetbakers', 'Home, garden', 'Shopping', 'Home'],
+  ['budgetbakers', 'Insurances', 'Health', 'Insurance'],
+  ['budgetbakers', 'Life & Entertainment', 'Entertainment', 'Hobbies'],
+  ['budgetbakers', 'Missing', 'Other', 'Uncategorised'],
+  ['budgetbakers', 'Mortgage', 'Housing', 'Mortgage'],
+  ['budgetbakers', 'Parking', 'Transport', 'Tolls & Parking'],
+  ['budgetbakers', 'Pizza', 'Food & Drink', 'Restaurants'],
+  ['budgetbakers', 'Public transport', 'Transport', 'Public transport'],
+  ['budgetbakers', 'Refunds (tax, purchase)', 'Income', 'Refund'],
+  ['budgetbakers', 'Restaurant, fast-food', 'Food & Drink', 'Restaurants'],
+  ['budgetbakers', 'Services', 'Other', 'Uncategorised'],
+  ['budgetbakers', 'Software, apps, games', 'Bills & Utilities', 'Subscriptions'],
+  ['budgetbakers', 'TV, Streaming', 'Entertainment', 'Streaming'],
+  ['budgetbakers', 'Telephony, mobile phone', 'Bills & Utilities', 'Phone'],
+  ['budgetbakers', 'Transfer, withdraw', 'Transfer', 'Between accounts'],
+  ['budgetbakers', 'Unknown expense', 'Other', 'Uncategorised'],
+  ['budgetbakers', 'Vehicle', 'Transport', 'Car maintenance'],
+  ['budgetbakers', 'Wellness, beauty', 'Health', 'Fitness']
 ];
 
 /** Column-letter helpers. Pure, so the harness tests them directly. */

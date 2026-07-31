@@ -41,6 +41,13 @@ var SCHEDULED = [
     hourKey: 'selfcheck_hour',
     budgeted: false,
     describe: 'notice if the sync has stopped running at all'
+  },
+  {
+    fn: 'snapshotToDrive',
+    hourKey: 'snapshot_hour',
+    budgeted: false,
+    weekly: true,
+    describe: 'save a CSV of transactions to Drive'
   }
 ];
 
@@ -59,15 +66,20 @@ function installTriggers() {
 
     var hours = parseHours_(config[entry.hourKey], DEFAULT_TRIGGER_HOUR);
     hours.forEach(function (hour) {
-      ScriptApp.newTrigger(entry.fn).timeBased().everyDays(1).atHour(hour).create();
-      installed.push({ fn: entry.fn, hour: hour, describe: entry.describe });
+      var timed = ScriptApp.newTrigger(entry.fn).timeBased();
+      if (entry.weekly) timed.everyWeeks(1).onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(hour).create();
+      else timed.everyDays(1).atHour(hour).create();
+
+      installed.push({
+        fn: entry.fn, hour: hour, weekly: Boolean(entry.weekly), describe: entry.describe
+      });
     });
 
     if (entry.budgeted) notes.push(describeBudget_(config, hours.length));
   });
 
   var message = installed.map(function (entry) {
-    return formatHour_(entry.hour) + ' — ' + entry.describe;
+    return formatHour_(entry.hour) + (entry.weekly ? ' Sundays' : ' daily') + ' — ' + entry.describe;
   }).join('\n') || 'Nothing to schedule yet.';
 
   if (removed) message = 'Replaced ' + removed + ' existing.\n' + message;

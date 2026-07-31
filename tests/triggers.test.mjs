@@ -28,19 +28,47 @@ describe('installTriggers', () => {
     const c = built();
     const result = c.installTriggers();
 
-    expect(handlers(c)).toEqual(['syncScheduled']);
+    expect(handlers(c)).toContain('syncScheduled');
     expect(c.__triggers()[0].type).toBe('every 1d');
     expect(result.installed[0].hour).toBe(4);
   });
 
-  it('replaces its own triggers instead of stacking them', () => {
+  it('gives the self-check its own trigger, not a step inside the sync', () => {
+    // Inside the sync, a crash would take the alarm down with it — precisely
+    // the failure where you most need to hear something.
     const c = built();
     c.installTriggers();
+
+    expect(handlers(c)).toContain('selfCheck');
+    expect(c.__triggers().filter((t) => t.getHandlerFunction() === 'selfCheck')[0].type)
+      .toBe('every 1d');
+  });
+
+  it('runs the snapshot weekly rather than daily', () => {
+    const c = built();
+    c.installTriggers();
+
+    const snapshot = c.__triggers().filter((t) => t.getHandlerFunction() === 'snapshotToDrive');
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0].type).toBe('every 1w');
+  });
+
+  it('runs the self-check after the sync, so it has something to check', () => {
+    const c = built();
+    const result = c.installTriggers();
+    const at = (fn) => result.installed.filter((e) => e.fn === fn)[0].hour;
+
+    expect(at('selfCheck')).toBeGreaterThan(at('syncScheduled'));
+  });
+
+  it('replaces its own triggers instead of stacking them', () => {
+    const c = built();
+    const first = c.installTriggers().installed.length;
     c.installTriggers();
     const result = c.installTriggers();
 
-    expect(handlers(c)).toEqual(['syncScheduled']);
-    expect(result.removed).toBe(1);
+    expect(c.__triggers()).toHaveLength(first);
+    expect(result.removed).toBe(first);
   });
 
   it('leaves a trigger you added yourself alone', () => {
@@ -55,13 +83,14 @@ describe('installTriggers', () => {
     expect(handlers(c)).toContain('syncScheduled');
   });
 
-  it('skips phases that have not landed', () => {
-    // selfCheck is phase 8. Scheduling a function that does not exist would
-    // fail nightly, by email, forever.
+  it('skips anything that has not landed', () => {
+    // Scheduling a function that does not exist would fail nightly, by
+    // email, forever. Everything in SCHEDULED exists as of phase 8, so the
+    // guard is asserted directly rather than through an absent phase.
     const c = built();
     c.installTriggers();
 
-    expect(handlers(c)).not.toContain('selfCheck');
+    handlers(c).forEach((fn) => expect(c.functionExists_(fn)).toBe(true));
   });
 
   it('runs at the hour you set in _config', () => {
@@ -79,8 +108,8 @@ describe('installTriggers', () => {
 
     const result = c.installTriggers();
 
-    expect(c.__triggers().map((t) => t.hour)).toEqual([4, 16]);
-    expect(result.installed).toHaveLength(2);
+    expect(result.installed.filter((e) => e.fn === 'syncScheduled').map((e) => e.hour))
+      .toEqual([4, 16]);
   });
 
   it('says what the second run will and will not fetch', () => {
@@ -110,7 +139,8 @@ describe('installTriggers', () => {
     const c = built();
     setHour(c, '4, 4');
 
-    expect(c.installTriggers().installed).toHaveLength(1);
+    expect(c.installTriggers().installed.filter((e) => e.fn === 'syncScheduled'))
+      .toHaveLength(1);
   });
 
   it('falls back to a sane hour rather than trusting a bad one', () => {
@@ -122,7 +152,8 @@ describe('installTriggers', () => {
       setHour(c, value);
       c.installTriggers();
       expect(c.__triggers()[0].hour).toBe(4);
-      expect(c.__triggers()).toHaveLength(1);
+      expect(c.__triggers().filter((t) => t.getHandlerFunction() === 'syncScheduled'))
+        .toHaveLength(1);
     });
   });
 });
@@ -138,7 +169,7 @@ describe('describeTriggers', () => {
     const c = built();
     c.installTriggers();
 
-    expect(c.describeTriggers()).toEqual(['syncScheduled']);
+    expect(c.describeTriggers()).toContain('syncScheduled');
     // Nothing inside a script can report that the script is not running.
     expect(c.__spreadsheet.toasts.pop().message).toMatch(/does not email/);
   });

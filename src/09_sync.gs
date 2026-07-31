@@ -61,6 +61,12 @@ function syncAll(options) {
 
 function runSync_(options) {
   var started = new Date();
+
+  // Before anything else. Appending to a tab that has silently lost rows
+  // writes new history on top of a hole, and every run afterwards makes the
+  // restore harder — so this aborts rather than warns.
+  if (functionExists_('assertNoRowLoss_')) assertNoRowLoss_();
+
   var config = readConfig_();
   var accounts = listSyncableAccounts_();
 
@@ -150,6 +156,7 @@ function runSync_(options) {
   };
 
   recordRun_(summary, config);
+  if (functionExists_('rememberRowCount_')) rememberRowCount_();
   return summary;
 }
 

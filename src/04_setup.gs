@@ -30,16 +30,17 @@ function setup() {
   buildTable_(ss, TABS.RUNS, RUN_COLUMNS, report);
   buildTable_(ss, TABS.CONFIG, CONFIG_COLUMNS, report, DEFAULT_CONFIG);
   buildTable_(ss, TABS.IMPORT_MAP, IMPORT_MAP_COLUMNS, report, DEFAULT_IMPORT_MAP);
-  buildTable_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, report);
+  buildTable_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, report, DEFAULT_CATEGORY_MAP);
   buildTable_(ss, TABS.MEMORY, MEMORY_COLUMNS, report);
   buildTable_(ss, TABS.TESTS, TEST_COLUMNS, report);
 
   // Working tabs with no fixed schema.
   getOrCreate_(ss, TABS.IMPORT_RAW, report);      // CSV lands here via File → Import
-  getOrCreate_(ss, TABS.IMPORT_STAGED, report);   // formula-mapped, you paste from it
   getOrCreate_(ss, TABS.DASHBOARD, report);
 
-  applyFormulas_(ss, detectArgSeparator_(ss));
+  var sep = detectArgSeparator_(ss);
+  buildImportStaged_(ss, sep, report);
+  applyFormulas_(ss, sep);
   applyFormats_(ss);
   applyValidation_(ss);
   applyProtection_(ss);
@@ -96,6 +97,28 @@ function buildTable_(ss, name, headers, report, seed) {
     if (report) report.seeded.push(name);
   }
   return sh;
+}
+
+/**
+ * `_import_staged` — the tab that reads whatever landed in `_import_raw`.
+ *
+ * Rebuilt every run rather than seeded, because it is entirely formulas: there
+ * is nothing of yours in it to preserve, and the mapping it reads lives in
+ * `_import_map`, which is yours and is not touched here.
+ */
+function buildImportStaged_(ss, sep, report) {
+  var sheet = getOrCreate_(ss, TABS.IMPORT_STAGED, report);
+  sheet.getRange(1, 1, 1, STAGED_COLUMNS.length).setValues([STAGED_COLUMNS]);
+  sheet.setFrozenRows(1);
+
+  stagedFormulas().forEach(function (entry) {
+    setFormula_(sheet, colOf(STAGED_COLUMNS, entry.column), entry.formula, sep);
+  });
+
+  // Past the schema, so it can say where to paste without being in the way of
+  // what you are pasting.
+  sheet.getRange(1, STAGED_COLUMNS.length + 2)
+    .setFormula(localizeFormula(stagedInstructionsFormula(), sep));
 }
 
 // ---------------------------------------------------------------------------

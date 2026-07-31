@@ -1,6 +1,6 @@
 # Monitoring
 
-> **Partly built.** The schedule below works now. The alerting — failures 3 to 6 — lands in phase 8, alongside `12_monitor.gs`.
+Everything here is built. `12_monitor.gs` holds the detectors; **Spendsheet → Health check** runs them all and reports without emailing, which is the way to see what the alarm would say without waiting for it to say it.
 
 ## Running it automatically
 
@@ -40,14 +40,31 @@ This covers failure 1 only. A run where one bank fails and the others succeed is
 
 Each needs its own detector, because none of them catches the others.
 
-| # | Failure | Detector |
-|---|---|---|
-| 1 | The script threw | Apps Script's built-in trigger-failure email, set to notify immediately |
-| 2 | One bank broke, the others were fine | per-account try/catch → `_status.last_error`, run marked `PARTIAL` |
-| 3 | A consent is expiring or expired | `valid_until` → `days_left`, alert at ≤7 days |
-| 4 | It ran "fine" and returned nothing | `rows_fetched` = 0 across all accounts for 3 consecutive days |
-| 5 | It never ran at all | `selfCheck()` on a **separate trigger**, reading only `_runs` |
-| 6 | Rows disappeared | row count went *down* — never legitimate in an append-only tab. Alert **and abort** |
+| # | Failure | Detector | Tuned by |
+|---|---|---|---|
+| 1 | The script threw | Apps Script's built-in trigger-failure email, set to notify immediately | — |
+| 2 | One bank broke, the others were fine | per-account try/catch → `_status.last_error`, run marked `PARTIAL` | — |
+| 3 | A consent is expiring or expired | `valid_until` against today | `consent_warning_days` |
+| 4 | It ran "fine" and returned nothing | zero rows fetched across N consecutive days | `empty_run_threshold_days` |
+| 5 | It never ran at all | `selfCheck()` on a **separate trigger**, reading only `_runs` | `stale_threshold_days` |
+| 6 | Rows disappeared | row count went *down* — never legitimate in an append-only tab. Alert **and abort** | — |
+
+Two of these are deliberately reluctant to fire, because an alarm you learn to ignore is worse than none:
+
+- **Failure 4** tolerates a single quiet day, and several. Most people have days with no transactions.
+- **Failure 5** measures from the last *successful* run, not the last attempt — a sync that has failed every night for a week is not "current".
+
+### When rows disappear, syncing stops
+
+Failure 6 doesn't warn, it **aborts**. Appending to a tab that has silently lost rows writes new history on top of a hole, and every run afterwards makes the restore harder.
+
+The way out: File → Version history to restore what was lost. If the smaller sheet is actually what you meant — you deleted test rows on purpose — **Spendsheet → Accept row count** unblocks it. That step is manual by design; a detector that resets itself can't detect anything.
+
+### Alert volume
+
+One email per `kind + connection` per day, and the recipient is `alert_email` in `_config`, or the account owner if that's blank.
+
+A free Google account allows 100 mail recipients a day. A persistent failure checked hourly would burn that in an afternoon and then go silent — and an alarm system that exhausts its own quota is worse than no alarm at all, because by then you believe you have one.
 
 **Failure 4 is the one that quietly ruins these systems.** A green run that silently fetched nothing looks exactly like a healthy one from the outside, and you find out months later when a report looks thin.
 
@@ -65,8 +82,14 @@ Most banks cap unattended fetching at **~4 calls per day per account**, answerin
 
 That leaves exactly one spare, so a single impatient "Sync now" after the nightly run can trip it. Mitigations: `_status` tracks calls per account per day, "Sync now" warns before exceeding, the pending fetch is skippable per account, and a 429 is logged `PARTIAL` and left for tomorrow — **never retried in a loop**, which would burn the penalty window and achieve nothing.
 
-## Alert volume is capped
+## Backups
 
-A free Google account allows 100 mail recipients per day. Alerts are deduplicated by `kind + account` per 24 hours, so a persistent failure sends one email a day rather than one per detector per run.
+**A weekly CSV of `transactions` into Drive**, installed by Install triggers alongside the sync. Folder name is `snapshot_folder` in `_config`; run it on demand with Spendsheet → Snapshot to Drive.
 
-An alarm system that burns its own quota and then goes silent is worse than no alarm at all.
+Version history is not a backup here. A free account keeps **30 days or 100 revisions, whichever comes first** — and a daily sync burns 100 revisions in roughly three months, so discovering in June that something broke in March means it's genuinely gone.
+
+CSV rather than a copy of the spreadsheet, because the point of this project is that the data outlives the tooling: a CSV opens in anything, forever. Every field is quoted and every date written ISO, so no locale and no stray comma can shift a column on the way back in.
+
+**Drive is still Google.** If the account is lost, the snapshots go with it. An occasional File → Download → .xlsx kept somewhere else is the off-Google backup, and it stays a manual step.
+
+**Test the restore.** An untested backup isn't a backup: import a snapshot CSV into a blank sheet and confirm it reads correctly. It takes two minutes and it's the only way to know.

@@ -29,6 +29,7 @@ const SCOPE_FOR = [
   [/\bScriptApp\./, 'script.scriptapp', 'reading the deployment URL and installing triggers'],
   [/\bMailApp\./, 'script.send_mail', 'sending alerts'],
   [/\bDriveApp\./, 'drive.file', 'CSV snapshots'],
+  [/\bSession\./, 'userinfo.email', 'knowing where to send an alert'],
   [/\bSpreadsheetApp\./, 'spreadsheets.currentonly', 'reading and writing the sheet']
 ];
 

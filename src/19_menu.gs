@@ -28,7 +28,9 @@ var MENU_ITEMS = [
   { name: 'Install credentials', fn: 'installCredentials' },
   { name: 'Install triggers', fn: 'installTriggers' },
   { name: 'Show schedule', fn: 'describeTriggers' },
-  { name: 'Health check', fn: 'healthCheck' }
+  { name: 'Health check', fn: 'healthCheck' },
+  { name: 'Accept row count', fn: 'acceptRowCount' },
+  { name: 'Snapshot to Drive', fn: 'snapshotToDrive' }
 ];
 
 var DIAGNOSTIC_ITEMS = [
