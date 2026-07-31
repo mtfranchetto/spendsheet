@@ -18,28 +18,31 @@ const ctx = load();
  * The header line and category list of an actual export, recorded rather than
  * guessed. No transaction data — this is the file's shape, not its contents.
  *
- * The categories are every distinct one in a **full year**: 1,464 rows, 57
- * categories. The list this replaced came from a 20-row sample and had 36 of
- * them, which is the failure mode a sample always has — it is not a smaller
- * version of the data, it is the data minus everything that happens rarely.
- * Salary appears eleven times in a year and was absent from it.
+ * The categories are every distinct one across **five years** of export —
+ * 4,364 rows, Oct 2022 to Jul 2026, 67 categories. Two earlier versions of
+ * this list are why it is recorded from the whole history rather than a
+ * sample: twenty rows gave 36 categories, one year gave 57, and each time the
+ * gap was made of things that happen once or twice a year. `Fines` appears
+ * once in four years. So does a fine.
  */
 const REAL_HEADERS = ['account', 'category', 'currency', 'amount', 'ref_currency_amount',
   'type', 'payment_type', 'note', 'date', 'transfer', 'payee', 'labels'];
 
 const REAL_CATEGORIES = [
   'Active sport, fitness', 'Advisory', 'Alcohol, tobacco', 'Bar, cafe',
-  'Books, audio, subscriptions', 'Charges, Fees', 'Charity, gifts', 'Child Support',
-  'Clothes & Footwear', 'Culture, sport events', 'Drug-store, chemist', 'Education, development',
-  'Electronics, accessories', 'Energy, utilities', 'Financial expenses', 'Food & Drinks', 'Fuel',
-  'Gifts', 'Gifts, joy', 'Groceries', 'Health and beauty', 'Health care, doctor',
-  'Holiday, trips, hotels', 'Home, garden', 'Housing', 'Income', 'Interests, dividends',
-  'Internet', 'Kids', 'Leisure time', 'Life & Entertainment', 'Life events', 'Lottery, gambling',
-  'Maintenance, repairs', 'Missing', 'Mortgage', 'Others', 'Parking', 'Property insurance',
-  'Public transport', 'Refunds (tax, purchase)', 'Rental income', 'Restaurant, fast-food',
-  'Sale', 'Services', 'Shopping', 'Software, apps, games', 'Stationery, tools', 'TV, Streaming',
-  'Taxes', 'Telephony, mobile phone', 'Transfer, withdraw', 'Vehicle', 'Vehicle insurance',
-  'Vehicle maintenance', 'Wage, invoices', 'Wellness, beauty'
+  'Books, audio, subscriptions', 'Charges, Fees', 'Charity, gifts', 'Child Support', 'Cleaning',
+  'Clothes & Footwear', 'Communication, PC', 'Culture, sport events', 'Drug-store, chemist',
+  'Education, development', 'Electronics, accessories', 'Energy, utilities',
+  'Financial expenses', 'Fines', 'Food & Drinks', 'Fuel', 'Gifts', 'Gifts, joy', 'Groceries',
+  'Health and beauty', 'Health care, doctor', 'Hobbies', 'Holiday, trips, hotels',
+  'Home, garden', 'Housing', 'Income', 'Insurances', 'Interests, dividends', 'Internet',
+  'Jewels, accessories', 'Kids', 'Leisure time', 'Life & Entertainment', 'Life events',
+  'Long distance', 'Lottery, gambling', 'Maintenance, repairs', 'Missing', 'Mortgage', 'Others',
+  'Parking', 'Pizza', 'Property insurance', 'Public transport', 'Refunds (tax, purchase)',
+  'Rental income', 'Restaurant, fast-food', 'Sale', 'Services', 'Shopping',
+  'Software, apps, games', 'Stationery, tools', 'TV, Streaming', 'Taxes',
+  'Telephony, mobile phone', 'Transfer, withdraw', 'Transportation', 'Unknown expense',
+  'Vehicle', 'Vehicle insurance', 'Vehicle maintenance', 'Wage, invoices', 'Wellness, beauty'
 ];
 
 /**
@@ -160,6 +163,16 @@ describe('the category map', () => {
     expect(map.get('Food & Drinks')).toEqual(['Food & Drink', 'Other food & drink']);
     expect(map.get('Housing')).toEqual(['Housing', 'Other housing']);
     expect(map.get('Shopping')).toEqual(['Shopping', 'Other shopping']);
+  });
+
+  it('reads Long distance as flights, which is not what the name suggests', () => {
+    // It sits under Transportation in their taxonomy, so it looks like
+    // intercity rail. Every row of it across four years is EasyJet, Ryanair
+    // or British Airways. The only reason that is known is that the rows were
+    // looked at instead of the label, and Transport/Public transport would
+    // have been a defensible, wrong answer nobody would have questioned.
+    const map = new Map(preset(ctx.DEFAULT_CATEGORY_MAP).map((r) => [r[1], r.slice(2)]));
+    expect(map.get('Long distance')).toEqual(['Travel', 'Flights']);
   });
 
   it('keeps insurance out of Health', () => {

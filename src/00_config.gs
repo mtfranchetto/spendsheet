@@ -258,6 +258,7 @@ var DEFAULT_CATEGORIES = [
   ['Bills & Utilities', 'Internet', 'expense', '🌐'],
   ['Bills & Utilities', 'Phone', 'expense', '📱'],
   ['Bills & Utilities', 'Subscriptions', 'expense', '🔁'],
+  ['Bills & Utilities', 'Other bills', 'expense', '🧾'],
   ['Food & Drink', 'Groceries', 'expense', '🛒'],
   ['Food & Drink', 'Restaurants', 'expense', '🍽️'],
   ['Food & Drink', 'Bars & Cafes', 'expense', '☕'],
@@ -269,6 +270,7 @@ var DEFAULT_CATEGORIES = [
   ['Transport', 'Taxi', 'expense', '🚕'],
   ['Transport', 'Tolls & Parking', 'expense', '🅿️'],
   ['Transport', 'Car maintenance', 'expense', '🔧'],
+  ['Transport', 'Other transport', 'expense', '🚗'],
   ['Shopping', 'Clothing', 'expense', '👕'],
   ['Shopping', 'Electronics', 'expense', '💻'],
   ['Shopping', 'Home', 'expense', '🏡'],
@@ -299,6 +301,7 @@ var DEFAULT_CATEGORIES = [
   ['Fees & Taxes', 'Bank fees', 'expense', '🏦'],
   ['Fees & Taxes', 'Taxes', 'expense', '🧾'],
   ['Fees & Taxes', 'Professional fees', 'expense', '📄'],
+  ['Fees & Taxes', 'Fines', 'expense', '🚨'],
   ['Fees & Taxes', 'Interest paid', 'expense', '💸'],
   ['Transfer', 'Between accounts', 'transfer', '🔄'],
   ['Transfer', 'Cash withdrawal', 'transfer', '🏧'],
@@ -489,10 +492,19 @@ var IMPORT_TYPE_EXPENSE = 'Expense';
  * Other/Uncategorised on purpose. They carry no information, and inventing one
  * for them would hide rows that deserve a look in the needs-review queue.
  *
- * Built from a **full year** of a real export — 1,464 rows, 57 distinct
- * categories — after a first pass written against a 20-row sample covered only
- * 36 of them. The 21 it missed were not exotic: they included `Wage, invoices`,
- * which is where a salary lives.
+ * Built from **five years** of a real export — 4,364 rows, Oct 2022 to Jul
+ * 2026, 67 distinct categories. It took three passes to get there and the
+ * lesson each time was the same: a sample is not a smaller version of the
+ * history, it is the history minus everything that happens rarely. Twenty rows
+ * gave 36 categories. One year gave 57, and the 21 it added included
+ * `Wage, invoices`, which is where a salary lives. Four more years added ten
+ * more, of which `Fines` appears exactly once.
+ *
+ * `Long distance` is worth singling out because the obvious reading is wrong.
+ * It sits under Transportation in their taxonomy, so it looks like intercity
+ * rail; every row of it in four years is a budget airline. It maps to
+ * Travel/Flights, and the only reason that is known is that the rows were
+ * looked at rather than the name.
  *
  * Two shapes of mistake the full year exposed, both of which had survived the
  * sample because the sample happened not to contain them:
@@ -508,9 +520,11 @@ var IMPORT_TYPE_EXPENSE = 'Expense';
  *   `Other <parent>` child, which keeps the row out of a total it would
  *   distort while still saying more than "uncategorised".
  *
- * `Cleaning`, `Insurances`, `Pizza` and `Unknown expense` appear in no row of
- * this export. They are kept because they are real BudgetBakers categories and
- * this preset ships to other people, whose exports will contain them.
+ * `Cleaning`, `Insurances`, `Pizza` and `Unknown expense` were kept on the
+ * argument that they are real BudgetBakers categories other people's exports
+ * would contain, having appeared in none of the year the map was rebuilt
+ * against. All four turn up in the other four years. Keeping a row costs
+ * nothing; a missing one costs an import.
  */
 var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Active sport, fitness', 'Health', 'Fitness'],
@@ -523,12 +537,14 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Child Support', 'Income', 'Child support'],
   ['budgetbakers', 'Cleaning', 'Housing', 'Maintenance'],
   ['budgetbakers', 'Clothes & Footwear', 'Shopping', 'Clothing'],
+  ['budgetbakers', 'Communication, PC', 'Bills & Utilities', 'Other bills'],
   ['budgetbakers', 'Culture, sport events', 'Entertainment', 'Cinema & Events'],
   ['budgetbakers', 'Drug-store, chemist', 'Health', 'Pharmacy'],
   ['budgetbakers', 'Education, development', 'Education', 'Courses'],
   ['budgetbakers', 'Electronics, accessories', 'Shopping', 'Electronics'],
   ['budgetbakers', 'Energy, utilities', 'Bills & Utilities', 'Electricity'],
   ['budgetbakers', 'Financial expenses', 'Fees & Taxes', 'Bank fees'],
+  ['budgetbakers', 'Fines', 'Fees & Taxes', 'Fines'],
   ['budgetbakers', 'Food & Drinks', 'Food & Drink', 'Other food & drink'],
   ['budgetbakers', 'Fuel', 'Transport', 'Fuel'],
   ['budgetbakers', 'Gifts', 'Income', 'Gifts received'],
@@ -536,6 +552,7 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Groceries', 'Food & Drink', 'Groceries'],
   ['budgetbakers', 'Health and beauty', 'Health', 'Personal care'],
   ['budgetbakers', 'Health care, doctor', 'Health', 'Doctor'],
+  ['budgetbakers', 'Hobbies', 'Entertainment', 'Hobbies'],
   ['budgetbakers', 'Holiday, trips, hotels', 'Travel', 'Holiday'],
   ['budgetbakers', 'Home, garden', 'Shopping', 'Home'],
   ['budgetbakers', 'Housing', 'Housing', 'Other housing'],
@@ -543,10 +560,12 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Insurances', 'Insurance', 'Other insurance'],
   ['budgetbakers', 'Interests, dividends', 'Income', 'Interest'],
   ['budgetbakers', 'Internet', 'Bills & Utilities', 'Internet'],
+  ['budgetbakers', 'Jewels, accessories', 'Shopping', 'Clothing'],
   ['budgetbakers', 'Kids', 'Family', 'Kids'],
   ['budgetbakers', 'Leisure time', 'Entertainment', 'Hobbies'],
   ['budgetbakers', 'Life & Entertainment', 'Entertainment', 'Hobbies'],
   ['budgetbakers', 'Life events', 'Family', 'Life events'],
+  ['budgetbakers', 'Long distance', 'Travel', 'Flights'],
   ['budgetbakers', 'Lottery, gambling', 'Entertainment', 'Hobbies'],
   ['budgetbakers', 'Maintenance, repairs', 'Housing', 'Maintenance'],
   ['budgetbakers', 'Missing', 'Other', 'Uncategorised'],
@@ -568,6 +587,7 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Taxes', 'Fees & Taxes', 'Taxes'],
   ['budgetbakers', 'Telephony, mobile phone', 'Bills & Utilities', 'Phone'],
   ['budgetbakers', 'Transfer, withdraw', 'Transfer', 'Between accounts'],
+  ['budgetbakers', 'Transportation', 'Transport', 'Other transport'],
   ['budgetbakers', 'Unknown expense', 'Other', 'Uncategorised'],
   ['budgetbakers', 'Vehicle', 'Transport', 'Car maintenance'],
   ['budgetbakers', 'Vehicle insurance', 'Insurance', 'Vehicle'],
