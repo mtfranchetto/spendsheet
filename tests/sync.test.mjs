@@ -466,8 +466,9 @@ describe('concurrency', () => {
   it('refuses a second run rather than letting two appends interleave', () => {
     // Both would read the same "already seen" set before either had written,
     // which is a duplicate no dedup can prevent.
-    const c = load({ properties: { ...CREDS }, fetch: bank({}).fetch, lockHeld: true });
+    const c = load({ properties: { ...CREDS }, fetch: bank({}).fetch });
     c.setup();
+    c.__setLockHeld(true);
 
     expect(() => c.syncAll({})).toThrow(/already running/);
   });

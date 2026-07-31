@@ -14,6 +14,22 @@
 
 /** Entry point. Menu → Setup sheet. */
 function setup() {
+  // Under a lock for the same reason syncAll is: two runs creating and
+  // deleting the same tabs at once is a race, and it is an easy one to start
+  // — setup() takes long enough that clicking the menu item twice feels
+  // reasonable.
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    throw new Error('Setup is already running. Wait for it to finish, then try again.');
+  }
+  try {
+    return runSetup_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runSetup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var report = { created: [], existing: [], seeded: [] };
 
@@ -190,9 +206,13 @@ function localizeFormula(formula, sep) {
  * canonical form, so the worst case is the behaviour we had before.
  */
 function detectArgSeparator_(ss) {
-  var name = '__spendsheet_locale_probe';
-  var sheet = ss.getSheetByName(name);
-  if (!sheet) sheet = ss.insertSheet(name);
+  // Named per execution rather than fixed. Two overlapping setup() runs
+  // sharing one probe is a race that ends with the second deleting a sheet
+  // the first already removed — "A sheet with ID … doesn't exist", thrown
+  // from the cleanup rather than from anything that matters.
+  var name = '__spendsheet_locale_probe_' + Utilities.getUuid().slice(0, 8);
+  var previous = ss.getActiveSheet();
+  var sheet = ss.insertSheet(name);
 
   try {
     var cell = sheet.getRange('A1');
@@ -203,7 +223,28 @@ function detectArgSeparator_(ss) {
     if (value === 1.1) return ';';
     return ',';
   } finally {
-    ss.deleteSheet(sheet);
+    discardProbe_(ss, name, previous);
+  }
+}
+
+/**
+ * Clean up the probe, and never let the cleanup be the thing that fails.
+ *
+ * Re-fetched by name rather than deleted through the reference we are holding,
+ * because that reference is exactly what goes stale. And wrapped, because a
+ * scratch tab that outlives its run is untidy — while a setup() that aborts
+ * over one leaves the spreadsheet half-built.
+ */
+function discardProbe_(ss, name, previous) {
+  try {
+    var sheet = ss.getSheetByName(name);
+    if (sheet) ss.deleteSheet(sheet);
+
+    // insertSheet() activates what it creates, so the book is left pointing at
+    // a sheet that no longer exists unless we put it back.
+    if (previous && ss.getSheetByName(previous.getName())) ss.setActiveSheet(previous);
+  } catch (e) {
+    Logger.log('discardProbe_: ' + e.message);
   }
 }
 

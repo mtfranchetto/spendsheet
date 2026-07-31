@@ -120,3 +120,40 @@ describe('setup()', () => {
     expect(kinds).toEqual(new Set(['income', 'expense', 'transfer']));
   });
 });
+
+describe('running setup twice at once', () => {
+  it('refuses the second rather than racing on the same tabs', () => {
+    // Setup takes long enough that clicking the menu item twice feels
+    // reasonable, and two runs creating and deleting the same sheets is how
+    // the locale probe ended up deleted out from under its own cleanup.
+    const c = load();
+    c.setup();
+    c.__setLockHeld(true);
+
+    expect(() => c.setup()).toThrow(/already running/);
+  });
+
+  it('leaves no locale probe behind', () => {
+    // Named per execution so two runs cannot share one, and cleaned up by
+    // name rather than through a reference that may have gone stale.
+    const c = load();
+    c.setup();
+
+    const strays = c.__spreadsheet.getSheets()
+      .map((s) => s.getName())
+      .filter((name) => name.indexOf('__spendsheet_locale_probe') === 0);
+
+    expect(strays).toEqual([]);
+  });
+
+  it('does not leave the book pointing at a sheet that no longer exists', () => {
+    // insertSheet activates what it creates, so deleting the probe strands
+    // the active sheet — and the next call that touches it fails with
+    // "A sheet with ID ... doesn't exist".
+    const c = load();
+    c.setup();
+
+    const active = c.__spreadsheet.getActiveSheet();
+    expect(c.__spreadsheet.getSheets()).toContain(active);
+  });
+});

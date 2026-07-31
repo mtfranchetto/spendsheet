@@ -555,7 +555,11 @@ export function createGoogleStubs(options = {}) {
   sandbox.__ui = uiCalls;
   sandbox.__triggers = () => triggers;
   sandbox.__driveFiles = driveFiles;
+  /** Take or release the script lock from a test, after the sheet is built. */
+  sandbox.__setLockHeld = (held) => { lockHeld = held; };
   sandbox.__driveFiles = driveFiles;
+  /** Take or release the script lock from a test, after the sheet is built. */
+  sandbox.__setLockHeld = (held) => { lockHeld = held; };
 
   return sandbox;
 }
