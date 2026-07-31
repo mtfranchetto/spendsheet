@@ -22,6 +22,9 @@ const { privateKey } = crypto.generateKeyPairSync('rsa', {
 
 const CREDS = { EB_ENV: 'SANDBOX', EB_SANDBOX_APP_ID: 'app', EB_SANDBOX_KEY: privateKey };
 
+/** The call budget only applies against a real bank — see accountCallAllowance_. */
+const PROD_CREDS = { EB_ENV: 'PRODUCTION', EB_PROD_APP_ID: 'app', EB_PROD_KEY: privateKey };
+
 /** A booked card payment, shaped as the aggregation API returns one. */
 function booked(over) {
   return Object.assign({
@@ -75,8 +78,8 @@ function bank(config) {
 }
 
 /** A built sheet with one active bank account and a scripted provider. */
-function withAccounts(provider, uids = ['acc-1']) {
-  const c = load({ properties: { ...CREDS }, fetch: provider.fetch });
+function withAccounts(provider, uids = ['acc-1'], creds = CREDS) {
+  const c = load({ properties: { ...creds }, fetch: provider.fetch });
   c.setup();
 
   const accounts = c.__spreadsheet.getSheetByName('accounts');
@@ -337,13 +340,26 @@ describe('when a bank breaks', () => {
 });
 
 describe('the daily call budget', () => {
+  const prod = (provider) => withAccounts(provider, ['acc-1'], PROD_CREDS);
+
+  it('does not apply in sandbox, where there is no bank to offend', () => {
+    // Throttling the one environment you deliberately sync over and over in
+    // is friction bought with no safety at all.
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider);
+
+    c.syncNow(); c.syncNow(); c.syncNow();
+
+    expect(provider.calls.length).toBeGreaterThan(4);
+  });
+
   it('spends what is left on transactions rather than on a balance', () => {
     // A full sync is three calls against a typical cap of four, so a second
     // one the same day has to choose. A balance missed today is simply
     // tomorrow's balance; a day of transactions falling out of the rolling
     // window is gone.
     const provider = bank({ booked: [booked()] });
-    const c = withAccounts(provider);
+    const c = prod(provider);
 
     c.syncNow();
     expect(provider.calls).toHaveLength(3);
@@ -357,7 +373,7 @@ describe('the daily call budget', () => {
 
   it('stops before the bank does, and does not call it a failure', () => {
     const provider = bank({ booked: [booked()] });
-    const c = withAccounts(provider);
+    const c = prod(provider);
 
     c.syncNow();
     c.syncNow();
@@ -374,7 +390,7 @@ describe('the daily call budget', () => {
 
   it('starts again the next day', () => {
     const provider = bank({ booked: [booked()] });
-    const c = withAccounts(provider);
+    const c = prod(provider);
     c.syncNow();
 
     // The counter is keyed by date, so a stale one is not a smaller budget.

@@ -177,7 +177,7 @@ function syncAccount_(account, context) {
     pendingRefreshed: false, error: null, skipped: null, calls: 0
   };
 
-  var allowance = configNumber_(context.config, 'max_calls_per_account_per_day');
+  var allowance = accountCallAllowance_(context.config);
   var used = callsUsedToday_(account.uid);
   var remaining = allowance - used;
 
@@ -422,6 +422,20 @@ function recordRun_(summary, config) {
  * Kept in Script Properties rather than a tab: it is machinery with a one-day
  * lifespan, and nothing about it is worth a row you would have to look at.
  */
+/**
+ * How many calls an account gets today.
+ *
+ * The cap exists to avoid a *real bank's* rate-limit penalty, which is
+ * measured in hours. Sandbox is a simulator: there is no ASPSP behind it to
+ * offend and nothing to be locked out of, so applying the same budget there
+ * throttles the one environment where you are deliberately syncing over and
+ * over to see whether something works. That is friction bought with no safety.
+ */
+function accountCallAllowance_(config) {
+  if (ebEnvironment() === EB_ENV.SANDBOX) return Infinity;
+  return configNumber_(config, 'max_calls_per_account_per_day');
+}
+
 function callsUsedToday_(accountUid) {
   var budget = readCallBudget_();
   return budget.counts[accountUid] || 0;
