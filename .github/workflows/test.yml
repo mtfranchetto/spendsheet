@@ -36,3 +36,17 @@ jobs:
             echo "::error::A key file is tracked in git."
             exit 1
           fi
+
+      # The check above only knows about filenames, and a key does not have to
+      # arrive as a .pem to be a key — pasted into a .gs while debugging, or
+      # into a test fixture, it passes cleanly. This looks for the material
+      # itself: a line that is nothing but base64 is what a PEM body is, and
+      # nothing legitimate in this repo has one. Deliberately not a grep for
+      # "BEGIN PRIVATE KEY", which the credentials dialog and the validator
+      # tests both contain as placeholder text.
+      - name: No private key material committed
+        run: |
+          if git ls-files -z | xargs -0 grep -nE '^[A-Za-z0-9+/]{40,}={0,2}$'; then
+            echo "::error::A line of base64 key material is tracked in git."
+            exit 1
+          fi
