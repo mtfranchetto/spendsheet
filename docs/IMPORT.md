@@ -1,6 +1,8 @@
 # Importing history
 
-There is **no import code**, deliberately. Importing your history is something you do once, ever, and the governing rule of this repo is that code exists only for what runs unattended and repeatedly. Loading a CSV is File → Import; moving the result into `transactions` is a paste. Neither is improved by a menu item that can only fail in new ways.
+There is **no CSV parser**, deliberately. Loading a file is File → Import, and the mapping is formulas in `_import_staged` you can read and correct without touching code — which is what makes a wrong guess about a column a spreadsheet edit rather than a release.
+
+One menu item commits the result. That is not a retreat from the governing rule: the review still happens in the sheet, and what got automated is only the paste, which had four independent ways to silently corrupt an append-only tab.
 
 What the repo does build is the tab in between. `_import_staged` is pure formulas: it reads whatever landed in `_import_raw`, maps it through `_import_map` and `_category_map`, and shows you the result **before** any of it becomes history. You see which rows are excluded and why, rather than trusting a log written afterwards. And when the mapping is wrong — it will be, because every export differs by app version and locale — the fix is editing a tab, not editing code.
 
@@ -66,13 +68,26 @@ Excluded rows are blanked across the whole pasteable block, not merely flagged. 
 
 The reason you'll see is **"already covered by the API for this account"**. The cutoff is derived, not configured: for each account it's the oldest API-sourced row already in `transactions`. Nothing to set, nothing to keep current, and it stays correct when you connect a second bank six months later. Rows on or after it are what the sync already has.
 
-**3. Paste, twice.**
+**3. Import it.**
+
+**Spendsheet → Import staged rows.** It counts what will land, breaks it down by account, names the date range, and says how many rows are excluded and why — then asks before writing anything. Nothing moves until you say yes.
+
+It skips rows already in `transactions`, matching on uid, so running it twice imports nothing the second time. That is the one guarantee the manual paste below could never offer.
+
+It also warns about rows whose `account_name` matched nothing in `accounts`. Those would import unattached and nothing downstream would mention it again.
+
+> **Why this has a menu item when the CSV loader deliberately doesn't.** The rule is that one-time operations get documented rather than coded, and this is the same exception `installCredentials()` earns: a procedure that silently corrupts is a trap, not a procedure. The paste was two blocks that had to land on the same row, values-only both times, after filtering, without crossing column P. Four ways to quietly damage a tab that is never rewritten once written. Loading the file and mapping the columns — the parts that were removed on purpose — are still File → Import and formulas you can read.
+
+<details>
+<summary>Doing it by hand instead</summary>
 
 Cell `T1` of `_import_staged` spells out both targets with the row number computed live, so you don't count by eye. It reads something like:
 
 > `Paste values: A2:O → transactions!A417   then   P2:P → transactions!T417`
 
-Two pastes rather than one, because column P of `transactions` holds the `amount_eur` ARRAYFORMULA and a pasted blank would destroy it. **Paste special → Values only**, both times, at the same row.
+Two pastes rather than one, because column P of `transactions` holds the `amount_eur` ARRAYFORMULA and a pasted blank would destroy it. **Paste special → Values only**, both times, at the same row. Filter on `include` first, or the blanked excluded rows paste in as empty rows.
+
+</details>
 
 ## Several files — merge them first
 

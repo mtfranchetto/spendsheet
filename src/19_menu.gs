@@ -19,6 +19,8 @@ var MENU_ITEMS = [
   { name: 'Connect a bank', fn: 'startAuth' },
   { name: 'Refresh accounts', fn: 'refreshAccounts' },
   { separator: true },
+  { name: 'Import staged rows', fn: 'importStagedRows' },
+  { separator: true },
   { name: 'Re-categorise all', fn: 'recategorizeAll' },
   { name: 'Learn from corrections', fn: 'learnFromCorrections' },
   { name: 'Detect recurring', fn: 'detectRecurringMenu' },

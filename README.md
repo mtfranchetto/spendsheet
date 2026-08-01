@@ -70,9 +70,9 @@ Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Menu
 
-Setup sheet · Connect a bank · Sync now · Re-categorise all · Learn from corrections · Detect recurring · Rebuild cashflow · Health check · Run smoke tests · Install triggers
+Setup sheet · Connect a bank · Sync now · Import staged rows · Re-categorise all · Learn from corrections · Detect recurring · Rebuild cashflow · Health check · Run smoke tests · Install triggers
 
-There is deliberately no "Add manual account" (type a row in `accounts`) and no "Import CSV" (File → Import, then paste-values). Both are documented in [`docs/IMPORT.md`](docs/IMPORT.md).
+There is deliberately no "Add manual account" — you type a row in `accounts` — and no CSV importer: **File → Import** loads the file, and the mapping is formulas you can read and correct in `_import_staged`. *Import staged rows* only commits what you have already reviewed there, and it exists because that step was two pastes that had to land on the same row without crossing the one column holding a formula. Both are documented in [`docs/IMPORT.md`](docs/IMPORT.md).
 
 ## ⚠️ Never commit your data
 

@@ -342,3 +342,181 @@ function stagedInstructionsFormula() {
     '&"   (' + last + ' is the last code-owned column; never paste over ' +
     colOf(TX_COLUMNS, 'amount_eur') + ')"';
 }
+
+// ---------------------------------------------------------------------------
+// Committing the staged rows
+// ---------------------------------------------------------------------------
+
+/**
+ * Menu → Import staged rows.
+ *
+ * The repo's rule is that one-time human operations get documented rather
+ * than automated, and the CSV importer was removed under it. This is not that
+ * importer: `File → Import` still loads the file, the mapping is still
+ * formulas you can read, and you still review `_import_staged` before
+ * anything moves. What this replaces is only the paste.
+ *
+ * That paste was worth replacing. It is two blocks that must land on the same
+ * row, values-only both times, after filtering out the excluded rows, without
+ * touching the one column holding an ARRAYFORMULA — four ways to quietly
+ * corrupt a tab that is never rewritten once written. Same reasoning as
+ * `installCredentials()`: a procedure that silently corrupts is a trap.
+ *
+ * It also gains something the paste could not have. Uids here are
+ * `csv:<preset>:<batch>#<row>`, so a row already imported is recognisable,
+ * and running this twice imports nothing the second time. A double paste has
+ * no such defence.
+ */
+function importStagedRows() {
+  var ui = SpreadsheetApp.getUi();
+  var plan = planStagedImport_();
+
+  if (plan.error) {
+    ui.alert('Import staged rows', plan.error, ui.ButtonSet.OK);
+    return plan;
+  }
+
+  var answer = ui.alert('Import staged rows', describeStagedPlan_(plan), ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Nothing was imported.', 'Cancelled', 5);
+    return plan;
+  }
+
+  var result = commitStagedImport_(plan);
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    result.imported + ' rows added at row ' + result.row + '.', 'Imported', 15);
+  return result;
+}
+
+/**
+ * What an import would do, without doing any of it.
+ *
+ * Separated from the commit so the confirmation describes the same work that
+ * will run, rather than a second guess at it.
+ */
+function planStagedImport_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var staged = ss.getSheetByName(TABS.IMPORT_STAGED);
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  if (!staged || !tx) return { error: 'Run Setup sheet first — a tab is missing.' };
+
+  var records = readRecords_(staged, STAGED_COLUMNS, colIndex_(STAGED_COLUMNS, 'uid'));
+  var included = records.filter(function (row) { return isTruthyCell_(row.include); });
+  if (!included.length) {
+    return {
+      error: 'No rows to import.\n\nEither _import_raw is empty, or every row is ' +
+        'excluded — column ' + colOf(STAGED_COLUMNS, 'why') + ' gives the reason for each.'
+    };
+  }
+
+  var seen = {};
+  readColumn_(tx, colIndex_(TX_COLUMNS, 'uid')).forEach(function (uid) {
+    if (uid) seen[String(uid)] = true;
+  });
+
+  var fresh = included.filter(function (row) { return !seen[String(row.uid)]; });
+  var already = included.length - fresh.length;
+
+  if (!fresh.length) {
+    return {
+      error: 'All ' + included.length + ' rows are already in ' + TABS.TRANSACTIONS + '.\n\n' +
+        'To import a second file, change import_batch in ' + TABS.CONFIG +
+        ' — the uid is built from it, so reusing it makes every row look imported.'
+    };
+  }
+
+  var missingAccount = fresh.filter(function (row) { return !row.account_id; }).length;
+
+  return {
+    rows: fresh,
+    excluded: records.length - included.length,
+    already: already,
+    missingAccount: missingAccount,
+    accounts: countStagedBy_(fresh, 'account_name'),
+    range: stagedDateRange_(fresh)
+  };
+}
+
+/** Group a column into { value: count }, for a summary that names names. */
+function countStagedBy_(rows, field) {
+  var counts = {};
+  rows.forEach(function (row) {
+    var key = row[field] === '' || row[field] === null || row[field] === undefined
+      ? '(none)' : String(row[field]);
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return counts;
+}
+
+function stagedDateRange_(rows) {
+  var times = rows
+    .map(function (row) { return row.booking_date instanceof Date ? row.booking_date.getTime() : null; })
+    .filter(function (t) { return t !== null; });
+  if (!times.length) return null;
+  return { from: new Date(Math.min.apply(null, times)), to: new Date(Math.max.apply(null, times)) };
+}
+
+/**
+ * The confirmation text.
+ *
+ * Says what will change and what will not, because the thing being asked
+ * about appends to a tab that is never rewritten — there is no undo beyond
+ * deleting the rows again.
+ */
+function describeStagedPlan_(plan) {
+  var lines = ['Add ' + plan.rows.length + ' rows to ' + TABS.TRANSACTIONS + '.'];
+
+  if (plan.range) {
+    lines.push('Dates ' + dateKey(plan.range.from) + ' to ' + dateKey(plan.range.to) + '.');
+  }
+
+  lines.push('');
+  Object.keys(plan.accounts).sort().forEach(function (name) {
+    lines.push('  ' + name + ': ' + plan.accounts[name]);
+  });
+  lines.push('');
+
+  if (plan.excluded) {
+    lines.push(plan.excluded + ' rows excluded — see column ' +
+      colOf(STAGED_COLUMNS, 'why') + '. They are not imported.');
+  }
+  if (plan.already) {
+    lines.push(plan.already + ' rows are already in ' + TABS.TRANSACTIONS + ' and will be skipped.');
+  }
+  if (plan.missingAccount) {
+    lines.push('⚠ ' + plan.missingAccount + ' rows have no account_id — their account name ' +
+      'matches no row in ' + TABS.ACCOUNTS + '. Fix that first, or they import unattached.');
+  }
+
+  lines.push('');
+  lines.push('Rows are appended and never rewritten, so undoing this means deleting them.');
+  lines.push('');
+  lines.push('Continue?');
+  return lines.join('\n');
+}
+
+/**
+ * Two writes, one row.
+ *
+ * `category_override` sits in column T of `transactions` while the code block
+ * ends at O, and P between them holds the `amount_eur` ARRAYFORMULA. Writing
+ * one wide block would overwrite it, so the gap is stepped over rather than
+ * filled — which is also why both writes derive their row from the same
+ * `appendRows_` result instead of each finding it again.
+ */
+function commitStagedImport_(plan) {
+  var tx = sheetOrThrow_(TABS.TRANSACTIONS);
+  var width = TX_COLUMNS_CODE.length;
+
+  var block = plan.rows.map(function (record) {
+    return TX_COLUMNS_CODE.map(function (name) { return record[name]; });
+  });
+
+  var placed = appendRows_(tx, colIndex_(TX_COLUMNS, 'uid'), block);
+
+  var categories = plan.rows.map(function (record) { return [record.category_override || '']; });
+  tx.getRange(placed.row, colIndex_(TX_COLUMNS, 'category_override'), categories.length, 1)
+    .setValues(categories);
+
+  return { imported: placed.count, row: placed.row, width: width, plan: plan };
+}

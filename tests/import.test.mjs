@@ -426,3 +426,119 @@ describe('the staged tab', () => {
       .toBe(c.DEFAULT_CATEGORY_MAP.length);
   });
 });
+
+/**
+ * Committing the staged rows.
+ *
+ * The formulas above decide *what* imports; this decides what lands in
+ * `transactions`. The two failure modes worth pinning are the ones the manual
+ * paste could not defend against: a block wide enough to cross the
+ * `amount_eur` ARRAYFORMULA, and a second run duplicating the first.
+ */
+describe('importing the staged rows', () => {
+  /** A staged tab with `n` importable rows, bypassing the formulas. */
+  function staged(c, rows) {
+    const sheet = c.__spreadsheet.getSheetByName('_import_staged');
+    const width = c.STAGED_COLUMNS.length;
+    const values = rows.map((row) =>
+      c.STAGED_COLUMNS.map((name) => (name in row ? row[name] : '')));
+    sheet.getRange(2, 1, values.length, width).setValues(values);
+    return sheet;
+  }
+
+  function row(i, over = {}) {
+    return {
+      uid: `csv:budgetbakers:b1#${i}`,
+      account_id: 'revolut',
+      account_name: 'Revolut',
+      booking_date: new Date(2024, 0, i),
+      amount: -10 - i,
+      currency: 'EUR',
+      description: `Row ${i}`,
+      source: 'csv:budgetbakers',
+      category_override: 'Food & Drink',
+      include: true,
+      ...over
+    };
+  }
+
+  it('appends the rows and files the category in the column that owns it', () => {
+    const c = load();
+    c.setup();
+    staged(c, [row(2), row(3)]);
+
+    const result = c.importStagedRows();
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+
+    expect(result.imported).toBe(2);
+    expect(tx.getRange('A2').getValue()).toBe('csv:budgetbakers:b1#2');
+    expect(tx.getRange(2, c.colIndex_(c.TX_COLUMNS, 'category_override')).getValue())
+      .toBe('Food & Drink');
+  });
+
+  it('never writes across amount_eur, which is a formula it would destroy', () => {
+    const c = load();
+    c.setup();
+    const before = c.__spreadsheet.getSheetByName('transactions')
+      .getRange(2, c.colIndex_(c.TX_COLUMNS, 'amount_eur')).getFormula();
+    expect(before).toContain('ARRAYFORMULA');
+
+    staged(c, [row(2)]);
+    c.importStagedRows();
+
+    expect(c.__spreadsheet.getSheetByName('transactions')
+      .getRange(2, c.colIndex_(c.TX_COLUMNS, 'amount_eur')).getFormula()).toBe(before);
+  });
+
+  it('imports nothing on a second run, which a double paste could not manage', () => {
+    const c = load();
+    c.setup();
+    staged(c, [row(2), row(3)]);
+
+    expect(c.importStagedRows().imported).toBe(2);
+    const again = c.importStagedRows();
+
+    expect(again.imported).toBeUndefined();
+    expect(again.error).toMatch(/already in transactions/);
+    expect(c.lastRecordRow_(c.__spreadsheet.getSheetByName('transactions'), 1)).toBe(3);
+  });
+
+  it('leaves excluded rows where they are', () => {
+    const c = load();
+    c.setup();
+    staged(c, [row(2), row(3, { include: false, why: 'already covered by the API' })]);
+
+    expect(c.importStagedRows().imported).toBe(1);
+  });
+
+  it('imports nothing at all when the answer is no', () => {
+    const c = load({ alertResponse: 'NO' });
+    c.setup();
+    staged(c, [row(2), row(3)]);
+
+    c.importStagedRows();
+    expect(c.lastRecordRow_(c.__spreadsheet.getSheetByName('transactions'), 1)).toBe(1);
+  });
+
+  it('warns about rows whose account name matched nothing', () => {
+    // They would import unattached, and nothing downstream would say so.
+    const c = load();
+    c.setup();
+    staged(c, [row(2, { account_id: '', account_name: 'Sara' })]);
+
+    const plan = c.planStagedImport_();
+    expect(plan.missingAccount).toBe(1);
+    expect(c.describeStagedPlan_(plan)).toMatch(/no account_id/);
+  });
+
+  it('says which batch to change when every row looks imported', () => {
+    // The uid carries import_batch, so reusing it makes a second file look
+    // like the first one all over again.
+    const c = load();
+    c.setup();
+    staged(c, [row(2)]);
+    c.importStagedRows();
+
+    expect(c.planStagedImport_().error).toMatch(/import_batch/);
+  });
+});

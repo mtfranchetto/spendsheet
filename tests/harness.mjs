@@ -202,9 +202,20 @@ class FakeSheet {
   record(kind, detail) { this.calls.push({ kind, ...detail }); }
   _key(r, c) { return `${r},${c}`; }
   _get(r, c) { const v = this.cells.get(this._key(r, c)); return v === undefined ? '' : v; }
+  /**
+   * Writing a value destroys any formula in that cell, exactly as in Sheets —
+   * including when the value is blank, which is the case that matters. A
+   * paste or a setValues one column too wide is how the `amount_eur`
+   * ARRAYFORMULA gets silently deleted, and a fake that kept the formula
+   * alive underneath the value would call that write harmless. Being more
+   * forgiving than the real thing is the worst direction for a double to be
+   * wrong in.
+   */
   _set(r, c, v) {
-    if (v === '' || v === null || v === undefined) this.cells.delete(this._key(r, c));
-    else this.cells.set(this._key(r, c), v);
+    const key = this._key(r, c);
+    this.formulas.delete(key);
+    if (v === '' || v === null || v === undefined) this.cells.delete(key);
+    else this.cells.set(key, v);
   }
 
   getName() { return this.name; }
@@ -402,7 +413,15 @@ export function createGoogleStubs(options = {}) {
           };
           return menu;
         },
-        alert: (msg) => uiCalls.push({ alert: msg }),
+        // Real signature: alert(title, prompt, buttons) returns the Button
+        // pressed. `alertResponse` decides which, so a test can take either
+        // branch of a confirmation without a human.
+        alert: (...args) => {
+          uiCalls.push({ alert: args[0], body: args.length > 1 ? args[1] : '' });
+          return options.alertResponse || 'YES';
+        },
+        ButtonSet: { OK: 'OK', OK_CANCEL: 'OK_CANCEL', YES_NO: 'YES_NO', YES_NO_CANCEL: 'YES_NO_CANCEL' },
+        Button: { OK: 'OK', CANCEL: 'CANCEL', YES: 'YES', NO: 'NO' },
         prompt: (msg) => {
           uiCalls.push({ prompt: msg });
           return { getResponseText: () => (options.promptResponses || {})[msg] || '', getSelectedButton: () => 'OK' };
