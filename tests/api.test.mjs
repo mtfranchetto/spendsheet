@@ -240,6 +240,37 @@ describe('saveCredentials', () => {
   });
 });
 
+describe('the credentials dialog', () => {
+  it('escapes the pinned URL rather than trusting the validator that stored it', () => {
+    // validateRedirectUrl gates what can be pinned, so this cannot fire
+    // today. It is escaped because the guard and the render are far enough
+    // apart that relaxing one would not obviously break the other.
+    const c = load({ properties: { EB_REDIRECT_URL: '"><img src=x onerror=alert(1)>' } });
+    const html = c.credentialsFormHtml_();
+
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&quot;&gt;&lt;img');
+  });
+
+  it('escapes the URL the runtime guessed', () => {
+    const c = load();
+    c.ScriptApp.getService = () => ({ getUrl: () => '</code><script>alert(1)</script>' });
+    const html = c.credentialsFormHtml_();
+
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;/code&gt;&lt;script&gt;');
+  });
+
+  it('still renders the pinned URL as something you can read and compare', () => {
+    // The whole point of showing it is comparing it by eye against what is
+    // registered with Enable Banking — escaping must not mangle a real one.
+    const url = 'https://script.google.com/macros/s/AKfycb-x_9/exec';
+    const html = load({ properties: { EB_REDIRECT_URL: url } }).credentialsFormHtml_();
+
+    expect(html).toContain('value="' + url + '"');
+  });
+});
+
 describe('endpoints', () => {
   it('lists banks, filtered by country', () => {
     const c = withApi(ok({ aspsps: [{ name: 'Mock ASPSP', country: 'FI' }] }));

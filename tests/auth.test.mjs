@@ -70,8 +70,9 @@ describe('validateAuthState', () => {
   const TTL = 1000;
   const stored = { state: 'abc', createdAt: NOW };
 
-  it('accepts the nonce it issued', () => {
-    expect(ctx.validateAuthState(stored, 'abc', NOW + 500, TTL)).toEqual({ ok: true, reason: null });
+  it('accepts the nonce it issued, and marks it spent', () => {
+    expect(ctx.validateAuthState(stored, 'abc', NOW + 500, TTL))
+      .toEqual({ ok: true, reason: null, consume: true });
   });
 
   it('rejects a callback for a flow that was never started', () => {
@@ -95,6 +96,22 @@ describe('validateAuthState', () => {
   it('rejects a record with no issue time rather than treating it as fresh', () => {
     expect(ctx.validateAuthState({ state: 'abc' }, 'abc', NOW, TTL).ok).toBe(false);
     expect(ctx.validateAuthState({ state: 'abc', createdAt: 0 }, 'abc', NOW, TTL).ok).toBe(false);
+  });
+
+  it('does not spend the nonce on a state someone else presented', () => {
+    // The endpoint is public and unauthenticated by necessity. Consuming the
+    // nonce here would let anyone who knows the URL cancel an authorisation
+    // in progress, and buys only a limit on guessing 244 bits.
+    expect(ctx.validateAuthState(stored, 'wrong', NOW, TTL).consume).toBe(false);
+    expect(ctx.validateAuthState(stored, '', NOW, TTL).consume).toBe(false);
+    expect(ctx.validateAuthState(null, 'abc', NOW, TTL).consume).toBe(false);
+  });
+
+  it('does spend a nonce that is genuinely used up', () => {
+    // Expired or corrupt is not "someone else's callback" — it is ours, and
+    // it is finished. Leaving it would keep a dead record alive for its TTL.
+    expect(ctx.validateAuthState(stored, 'abc', NOW + TTL + 1, TTL).consume).toBe(true);
+    expect(ctx.validateAuthState({ state: 'abc' }, 'abc', NOW, TTL).consume).toBe(true);
   });
 });
 
@@ -262,10 +279,28 @@ describe('doGet', () => {
     expect(c.__spreadsheet.getSheetByName('_status').getRange('A2').getValue()).toBe('');
   });
 
-  it('burns the nonce on a failed attempt, so guessing gets one try per flow', () => {
+  it('keeps the nonce when the state was not ours, so a stranger cannot cancel a login', () => {
+    // This endpoint is reachable by anyone. If a mismatched callback burned
+    // the nonce, a single crafted request sent while you are on your bank's
+    // SCA screen would end the flow, and all you would see is that the link
+    // is no longer valid.
     const c = startedFlow(sessionResponse);
     c.doGet({ parameter: { state: 'forged', code: 'x' } });
 
+    expect(JSON.parse(c.__properties.get('EB_AUTH_STATE')).state).toBe('good-nonce');
+
+    // And the real callback still completes afterwards.
+    const html = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
+    expect(html).toContain('Connected');
+  });
+
+  it('burns the nonce once it expires, rather than leaving a dead record', () => {
+    const c = connected(sessionResponse);
+    c.PropertiesService.getScriptProperties().setProperty('EB_AUTH_STATE', JSON.stringify({
+      state: 'stale-nonce', aspspName: 'Mock ASPSP', country: 'FI', createdAt: 1
+    }));
+
+    c.doGet({ parameter: { state: 'stale-nonce', code: 'x' } });
     expect(c.__properties.get('EB_AUTH_STATE')).toBeUndefined();
   });
 
@@ -302,6 +337,75 @@ describe('doGet', () => {
 
     expect(html).toContain('Not connected');
     expect(html).not.toContain('gateway error');
+  });
+
+  it('renders the bank error as text, never as markup', () => {
+    // The page is `ANYONE_ANONYMOUS` — it has to be, the bank's redirect
+    // carries no Google session — so this parameter is attacker-supplied by
+    // anyone who knows the URL. Concatenated in raw it rendered as markup on
+    // a Google origin, from where a script can reach `google.script.run` and
+    // call this project's functions as the deploying user.
+    const c = startedFlow(sessionResponse);
+    const payload = '<img src=x onerror="alert(1)">';
+    const html = c.doGet({ parameter: { error: payload } }).getContent();
+
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('onerror="');
+    expect(html).toContain('&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+  });
+
+  it('closes no tag it did not open, whatever the parameter contains', () => {
+    const c = startedFlow(sessionResponse);
+    const html = c.doGet({ parameter: { error: '</p></div><script>fetch("//evil")</script>' } })
+      .getContent();
+
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('fetch("//evil")');
+    // The payload's own tags arrive inert, as characters on the page.
+    expect(html).toContain('&lt;/p&gt;&lt;/div&gt;&lt;script&gt;');
+  });
+
+  it('escapes what the provider called itself on the success page', () => {
+    // Second-hand rather than direct, but it is still a string from someone
+    // else's API landing in our HTML.
+    const c = startedFlow(() => ({
+      code: 200,
+      body: JSON.stringify({ ...SESSION, aspsp: { name: '<b>Bank</b>', country: 'IT' } })
+    }));
+    const html = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
+
+    expect(html).toContain('Connected');
+    expect(html).not.toContain('<b>Bank</b>');
+    expect(html).toContain('&lt;b&gt;Bank&lt;/b&gt;');
+  });
+});
+
+describe('the bank picker dialog', () => {
+  const html = () => load().bankPickerHtml_();
+
+  it('escapes the API-supplied name and country before writing them to innerHTML', () => {
+    // The names come from Enable Banking rather than from an attacker, and
+    // that is not something this dialog can verify — so it escapes rather
+    // than trusting a third party to keep sending well-behaved strings.
+    expect(html()).toContain('esc(b.name)');
+    expect(html()).toContain('esc(b.country||"")');
+    // Only the innerHTML path matters — "Contacting "+b.name goes through
+    // textContent, which is already inert.
+    expect(html()).not.toContain('"<span>"+b.name');
+  });
+
+  it('escapes the authorisation URL and refuses one that is not https', () => {
+    // Escaping keeps the URL inside the href; the scheme test is what stops
+    // it being a javascript: link once it is safely in there.
+    expect(html()).toContain('esc(r.url)');
+    expect(html()).toContain('esc(r.aspsp)');
+    expect(html()).toMatch(/\^https:/);
+  });
+
+  it('defines the escaper it calls', () => {
+    // A dialog that calls esc() without defining it fails at the point a bank
+    // list arrives, which is not where anyone would look.
+    expect(html()).toMatch(/function esc\(/);
   });
 });
 

@@ -187,7 +187,10 @@ function credentialsFormHtml_() {
     '</select>',
     '<div class="hint">Each environment is a separate registration with its own ID and key. Saving one does not overwrite the other.</div>',
     '<label for="redirect">Redirect URL</label>',
-    '<input id="redirect" value="' + pinned + '" placeholder="https://script.google.com/macros/s/…/exec">',
+    // Escaped even though validateRedirectUrl gates what can be stored: the
+    // guard and the render are far enough apart that a later relaxation of
+    // one would not obviously break the other.
+    '<input id="redirect" value="' + escapeHtml_(pinned) + '" placeholder="https://script.google.com/macros/s/…/exec">',
     // Deliberately NOT pre-filled with the detected value: it can name a
     // deployment that has been archived, and a wrong value sitting next to a
     // "pin" button is an invitation to pin it.
@@ -200,7 +203,7 @@ function credentialsFormHtml_() {
     '<div class="hint">Copy this from <b>Deploy &rarr; Manage deployments &rarr; Web app &rarr; URL</b>, ' +
     'and register the same string with Enable Banking.' +
     (detected
-      ? ' The runtime guesses <code>' + detected + '</code>, which is right only if it matches your ' +
+      ? ' The runtime guesses <code>' + escapeHtml_(detected) + '</code>, which is right only if it matches your ' +
         '<b>active</b> deployment — archived ones linger there.'
       : '') + '</div>',
     '<label for="appId">Application ID</label>',

@@ -233,9 +233,10 @@ function doGet(e) {
     var stored = readAuthState_();
     var check = validateAuthState(stored, params.state, Date.now(), AUTH_STATE_TTL_MS);
     if (!check.ok) {
-      // Consumed regardless, so a rejected attempt cannot be retried against
-      // a still-live nonce.
-      clearAuthState_();
+      // Only when the nonce is genuinely spent — see validateAuthState. A
+      // mismatch leaves it alone, because this endpoint is public and
+      // anything else lets a stranger cancel your consent mid-flight.
+      if (check.consume) clearAuthState_();
       return authPage_('Not connected',
         'This authorisation link is no longer valid. Start again from Spendsheet → Connect a bank.');
     }
@@ -255,9 +256,9 @@ function doGet(e) {
     // that is guaranteed to be read.
     return authPage_('Connected',
       summary.accountCount + ' account' + (summary.accountCount === 1 ? '' : 's') +
-      ' linked at ' + summary.provider + '.<br><br><b>Run Spendsheet → Sync now within the ' +
-      'hour</b> to capture your full history — after that only the last ~90 days are ' +
-      'reachable without connecting again.');
+      ' linked at ' + summary.provider + '.',
+      'Run Spendsheet → Sync now within the hour to capture your full history — after ' +
+      'that only the last ~90 days are reachable without connecting again.');
   } catch (err) {
     clearAuthState_();
     return authPage_('Not connected', 'Something went wrong completing the connection.');
@@ -274,29 +275,63 @@ function clearAuthState_() {
 }
 
 /**
- * Is this callback one we started?
+ * Is this callback one we started, and is the stored nonce spent either way?
  *
  * Pure, and separated from doGet precisely because it is the security
  * boundary — the part worth being able to test exhaustively without a
- * spreadsheet or a network in the way.
+ * spreadsheet or a network in the way. `consume` is decided here rather than
+ * in doGet for the same reason: it is a security decision, and it is only
+ * testable while it lives in a function that takes no services.
+ *
+ * The rule is that a nonce is consumed when it has been *used* — matched, or
+ * found expired or corrupt — and never merely because someone presented the
+ * wrong one. Clearing on mismatch looks prudent and is the opposite: the
+ * endpoint is public and unauthenticated by necessity, so it hands anyone who
+ * knows the URL a way to cancel an authorisation you are in the middle of,
+ * with the sheet reporting only that the link is no longer valid. What it
+ * buys in exchange is a limit on guessing a 244-bit nonce, which was never
+ * reachable by guessing.
  */
 function validateAuthState(stored, received, nowMs, ttlMs) {
-  if (!stored || !stored.state) return { ok: false, reason: 'no authorization in progress' };
-  if (!received) return { ok: false, reason: 'no state returned' };
-  if (String(received) !== String(stored.state)) return { ok: false, reason: 'state mismatch' };
-  if (!(stored.createdAt > 0)) return { ok: false, reason: 'malformed state record' };
-  if (nowMs - stored.createdAt > ttlMs) return { ok: false, reason: 'authorization expired' };
-  return { ok: true, reason: null };
+  if (!stored || !stored.state) return authStateReject_('no authorization in progress', false);
+  if (!received) return authStateReject_('no state returned', false);
+  if (String(received) !== String(stored.state)) return authStateReject_('state mismatch', false);
+  if (!(stored.createdAt > 0)) return authStateReject_('malformed state record', true);
+  if (nowMs - stored.createdAt > ttlMs) return authStateReject_('authorization expired', true);
+  return { ok: true, reason: null, consume: true };
 }
 
-function authPage_(title, message) {
+function authStateReject_(reason, consume) {
+  return { ok: false, reason: reason, consume: consume };
+}
+
+/**
+ * The callback page.
+ *
+ * **Every argument is escaped, without exception.** This is the one part of
+ * the project a stranger can reach, and one of the values that reaches it —
+ * the bank's `error` parameter — arrives on the query string. Concatenated in
+ * raw, `?error=<script>…` rendered as markup on a Google origin, where a
+ * script served by this project can reach `google.script.run` and invoke its
+ * functions as the deploying user. Reflected markup on this page is not a
+ * cosmetic bug.
+ *
+ * Which is why the emphasis the connected page wants is a third *parameter*
+ * rather than tags a caller passes through in `message`. There is no argument
+ * here that can carry markup, so no future call site has to remember to
+ * escape — the same reasoning as `localizeFormula`, and for the same reason:
+ * a rule that has to be remembered at every call site is a rule that will be
+ * forgotten at one of them.
+ */
+function authPage_(title, message, note) {
   var ok = title === 'Connected';
   return HtmlService.createHtmlOutput(
     '<div style="font:15px/1.6 -apple-system,BlinkMacSystemFont,Roboto,sans-serif;' +
     'max-width:420px;margin:80px auto;padding:0 24px;text-align:center;color:#202124">' +
     '<div style="font-size:44px">' + (ok ? '&#9989;' : '&#9888;&#65039;') + '</div>' +
-    '<h1 style="font-size:20px;margin:16px 0 8px">' + title + '</h1>' +
-    '<p style="color:#5f6368">' + message + '</p>' +
+    '<h1 style="font-size:20px;margin:16px 0 8px">' + escapeHtml_(title) + '</h1>' +
+    '<p style="color:#5f6368">' + escapeHtml_(message) + '</p>' +
+    (note ? '<p style="color:#5f6368"><b>' + escapeHtml_(note) + '</b></p>' : '') +
     '</div>'
   ).setTitle(title + ' — spendsheet');
 }
@@ -329,6 +364,12 @@ function bankPickerHtml_() {
     '<div class="msg" id="msg"></div>',
     '<script>',
     ' var banks=[], LIMIT=500;',
+    // Bank names and the authorisation URL come from the API, and both are
+    // written into innerHTML below. Neither is attacker-controlled today, and
+    // that is not a property this dialog can check — so it escapes them
+    // rather than trusting a third party to keep sending well-behaved names.
+    ' function esc(s){return String(s==null?"":s).replace(/[&<>"\']/g,function(c){',
+    '   return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","\'":"&#39;"}[c];});}',
     ' google.script.run.withSuccessHandler(function(b){banks=b;render();})',
     '   .withFailureHandler(fail).listBanks();',
     ' function fail(e){document.getElementById("msg").className="msg err";',
@@ -344,7 +385,7 @@ function bankPickerHtml_() {
     '       : shown.length+" of "+banks.length+" match";',
     '   document.getElementById("list").innerHTML = shown.length',
     '     ? shown.slice(0,LIMIT).map(function(b){return "<li onclick=\\"pick("+banks.indexOf(b)+")\\">"+',
-    '         "<span>"+b.name+"</span><span class=\\"c\\">"+(b.country||"")+"</span></li>"}).join("")+',
+    '         "<span>"+esc(b.name)+"</span><span class=\\"c\\">"+esc(b.country||"")+"</span></li>"}).join("")+',
     '         (shown.length>LIMIT ? "<li class=\\"c\\">…and "+(shown.length-LIMIT)+" more — narrow your search</li>" : "")',
     '     : "<li>Not in this list. "+(banks.length?"":"None loaded.")+"</li>";',
     ' }',
@@ -352,8 +393,16 @@ function bankPickerHtml_() {
     '   var b=banks[i], m=document.getElementById("msg");',
     '   m.className="msg"; m.textContent="Contacting "+b.name+"…";',
     '   google.script.run.withSuccessHandler(function(r){',
-    '     m.innerHTML="Now sign in to <b>"+r.aspsp+"</b> to approve access."+',
-    '       "<br><a class=\\"go\\" href=\\""+r.url+"\\" target=\\"_blank\\">Open '  + "'" + 'my bank'  + "'" + '</a>";',
+    // Escaping keeps the URL inside the attribute; the scheme test is what
+    // stops it being a javascript: link once it is there. An authorisation
+    // URL is always https, so anything else is a reason to stop rather than
+    // something to render and hope about.
+    '     if(!/^https:\\/\\//.test(String(r.url||""))){',
+    '       m.className="msg err";',
+    '       m.textContent="The API returned an authorisation URL that is not https. Not opening it.";',
+    '       return;}',
+    '     m.innerHTML="Now sign in to <b>"+esc(r.aspsp)+"</b> to approve access."+',
+    '       "<br><a class=\\"go\\" href=\\""+esc(r.url)+"\\" target=\\"_blank\\">Open '  + "'" + 'my bank'  + "'" + '</a>";',
     '   }).withFailureHandler(fail).beginAuthorization(b.name,b.country,(b.psuTypes||[])[0]||"personal");',
     ' }',
     '</script>'

@@ -29,6 +29,36 @@ describe('columnLetter', () => {
   });
 });
 
+describe('escapeHtml_', () => {
+  it('neutralises every character that can start markup or leave an attribute', () => {
+    expect(ctx.escapeHtml_('<script>alert(1)</script>'))
+      .toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(ctx.escapeHtml_('" onerror="alert(1)'))
+      .toBe('&quot; onerror=&quot;alert(1)');
+    expect(ctx.escapeHtml_("' onload='x")).toBe('&#39; onload=&#39;x');
+  });
+
+  it('escapes the ampersand first, so nothing is escaped twice', () => {
+    // Any other order turns `<` into `&amp;lt;` — which renders as visible
+    // gibberish, and is the shape of bug that gets "fixed" by deleting the
+    // escaping that was working.
+    expect(ctx.escapeHtml_('<')).toBe('&lt;');
+    expect(ctx.escapeHtml_('&lt;')).toBe('&amp;lt;');
+    expect(ctx.escapeHtml_('a & b < c')).toBe('a &amp; b &lt; c');
+  });
+
+  it('renders a blank for the values a missing field actually arrives as', () => {
+    expect(ctx.escapeHtml_('')).toBe('');
+    expect(ctx.escapeHtml_(null)).toBe('');
+    expect(ctx.escapeHtml_(undefined)).toBe('');
+  });
+
+  it('leaves ordinary text exactly as it was', () => {
+    expect(ctx.escapeHtml_('Banca Popolare di Sondrio')).toBe('Banca Popolare di Sondrio');
+    expect(ctx.escapeHtml_(42)).toBe('42');
+  });
+});
+
 describe('colOf', () => {
   it('locates the documented columns', () => {
     expect(ctx.colOf(ctx.TX_COLUMNS, 'uid')).toBe('A');

@@ -6,7 +6,7 @@
  * file. That is also why the files are numbered — load order is explicit
  * rather than accidental, and this one has to be first.
  *
- * Nothing in this file touches SpreadsheetApp. It is pure data plus two
+ * Nothing in this file touches SpreadsheetApp. It is pure data plus three
  * pure helpers, so the test harness can load it on its own.
  */
 
@@ -614,4 +614,33 @@ function colOf(headers, name) {
   var i = headers.indexOf(name);
   if (i === -1) throw new Error('colOf: no column named "' + name + '"');
   return columnLetter(i + 1);
+}
+
+/**
+ * A value as text rather than as markup.
+ *
+ * This project builds three HTML pages by string concatenation — the callback
+ * page in 05_auth.gs and the two dialogs — and one of them, `doGet`, is
+ * reachable by anyone on the internet. It has to be: the bank's redirect
+ * arrives with no Google session attached, so the web app is deployed
+ * `ANYONE_ANONYMOUS`. Interpolating a query parameter into that page raw let
+ * `?error=<script>…` render as markup on a Google origin, from where a script
+ * can reach `google.script.run` and call this project's functions as the
+ * deploying user — the account holding the bank credentials.
+ *
+ * Lives here rather than next to the pages that need it because it is used
+ * from 02 and 05, and nothing lower may depend on anything higher.
+ *
+ * `&` is replaced first. Any other order re-escapes the ampersands the later
+ * replacements just introduced, turning `<` into `&amp;lt;` — visible, but the
+ * wrong kind of visible, and the sort of bug that gets "fixed" by removing the
+ * escaping.
+ */
+function escapeHtml_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
