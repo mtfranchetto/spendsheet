@@ -158,13 +158,30 @@ function importCutoffTable_() {
     ' label min(' + date + ') \'\'",0)';
 }
 
-/** account_id for a row, matched on the account name you gave it. */
+/**
+ * account_id for a row, matched on the account name you gave it.
+ *
+ * `XLOOKUP` rather than `INDEX(…,MATCH(…))`, which is what this was and which
+ * silently produced an empty column. **INDEX does not vectorise**: handed an
+ * array of row numbers inside an ARRAYFORMULA it takes the first and discards
+ * the rest, so one row's answer became every row's — and when that row missed,
+ * the whole column went blank while the names it was matching sat there
+ * looking correct.
+ *
+ * Not VLOOKUP, because `account_id` sits to the *left* of `name` and VLOOKUP
+ * only reads rightwards. The usual fix is an array literal `{name,id}`, but
+ * `localizeFormula` rewrites every unquoted comma to the locale separator,
+ * which turns two columns into two stacked rows. XLOOKUP takes its ranges as
+ * ordinary arguments and so survives that untouched.
+ */
 function importAccountIdExpr_() {
   var accounts = TABS.ACCOUNTS;
-  return 'IFERROR(INDEX(' + accounts + '!$' + colOf(ACCOUNT_COLUMNS, 'account_id') + '$2:$' +
-    colOf(ACCOUNT_COLUMNS, 'account_id') + ',MATCH(' + importRawColumn_('account_name') + ',' +
-    accounts + '!$' + colOf(ACCOUNT_COLUMNS, 'name') + '$2:$' +
-    colOf(ACCOUNT_COLUMNS, 'name') + ',0)),"")';
+  var name = colOf(ACCOUNT_COLUMNS, 'name');
+  var id = colOf(ACCOUNT_COLUMNS, 'account_id');
+
+  return 'XLOOKUP(' + importRawColumn_('account_name') + ',' +
+    accounts + '!$' + name + '$2:$' + name + ',' +
+    accounts + '!$' + id + '$2:$' + id + ',"")';
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +303,11 @@ function stagedCategoryExpression(field) {
   var values = 'FILTER(' + map + '!$' + colOf(CATEGORY_MAP_COLUMNS, field) + '$2:$' +
     colOf(CATEGORY_MAP_COLUMNS, field) + ',' + map + '!$A$2:$A=' + preset + ')';
 
-  return 'IFERROR(INDEX(' + values + ',MATCH(' + importRawColumn_('category_override') + ',' +
-    sources + ',0)),"")';
+  // XLOOKUP for the same reason as importAccountIdExpr_: INDEX takes the
+  // first row of an array and drops the rest, which is one wrong answer
+  // repeated rather than an error anybody would notice.
+  return 'XLOOKUP(' + importRawColumn_('category_override') + ',' +
+    sources + ',' + values + ',"")';
 }
 
 /**

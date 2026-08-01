@@ -225,6 +225,44 @@ function topLevelArgs(call) {
   return args;
 }
 
+
+/**
+ * Every `INDEX(...)` whose *row* argument is a `MATCH(...)` on a per-row key.
+ *
+ * That shape does not vectorise. Inside an ARRAYFORMULA, INDEX handed an
+ * array of row numbers keeps the first and discards the rest, so one row's
+ * answer silently becomes the whole column's — and when that row happens to
+ * miss, the column is simply empty.
+ *
+ * Two lookalikes are deliberately not flagged. `INDEX(range,0,MATCH(...))`
+ * picks a whole column, and a MATCH on a quoted literal — how the column
+ * preset resolves a header name — has a scalar key, evaluates once, and is
+ * exactly what INDEX is for.
+ */
+function indexRowFromMatch(formula) {
+  const hits = [];
+  for (let i = 0; i < formula.length; i++) {
+    if (!formula.startsWith('INDEX(', i)) continue;
+
+    let depth = 0, j = i + 'INDEX'.length, inString = false;
+    for (; j < formula.length; j++) {
+      const ch = formula[j];
+      if (ch === '"') inString = !inString;
+      if (inString) continue;
+      if (ch === '(') depth++;
+      else if (ch === ')' && --depth === 0) break;
+    }
+
+    const args = topLevelArgs(formula.slice(i, j + 1));
+    const row = args.length >= 2 ? args[1].trim() : '';
+    if (!row.startsWith('MATCH(')) continue;
+
+    const key = topLevelArgs(row)[0].trim();
+    if (!key.startsWith('"')) hits.push(row.slice(0, 60));
+  }
+  return hits;
+}
+
 /**
  * Whether an expression evaluates to a boolean rather than a number.
  *
@@ -274,6 +312,26 @@ describe('the staged formulas', () => {
     const columns = formulas.map((entry) => entry.column);
     ['uid', 'account_id', 'booking_date', 'amount', 'description', 'source', 'category_override']
       .forEach((column) => expect(columns).toContain(column));
+  });
+
+
+  it('looks up per-row values with something that vectorises', () => {
+    // The bug this pins emptied account_id across every row while the names
+    // it matched on sat in the next column looking perfectly correct. It
+    // shipped green: nothing in a string test notices that INDEX quietly
+    // keeps only the first of the row numbers handed to it.
+    formulas.forEach(({ column, formula }) => {
+      expect(indexRowFromMatch(formula), `${column} uses INDEX(...,MATCH(...))`).toEqual([]);
+    });
+  });
+
+  it('reads the account id from a column left of the one it matches on', () => {
+    // VLOOKUP cannot: account_id is column A and name is column B. An array
+    // literal could, but localizeFormula rewrites its comma and turns two
+    // columns into two rows.
+    const accountId = formulas.filter((e) => e.column === 'account_id')[0].formula;
+    expect(accountId).toContain('XLOOKUP(');
+    expect(accountId).not.toContain('{');
   });
 
   it('makes include a boolean, because every other column compares it to TRUE', () => {
