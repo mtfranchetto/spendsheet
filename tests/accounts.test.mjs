@@ -182,7 +182,7 @@ describe('append position', () => {
 
     expect(accounts.getRange('A2').getValue()).toBe('acc-1');
     expect(accounts.getRange('A3').getValue()).toBe('acc-2');
-    expect(c.__spreadsheet.getSheetByName('_status').getRange('A2').getValue()).toBe('sess-42');
+    expect(c.__spreadsheet.getSheetByName('_status').getRange('C2').getValue()).toBe('sess-42');
   });
 });
 
@@ -238,8 +238,47 @@ describe('recordConnection', () => {
     c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
 
     const status = c.__spreadsheet.getSheetByName('_status');
-    expect(status.getRange('A2').getValue()).toBe('sess-42');
-    expect(c.__spreadsheet.getSheetByName('accounts').getRange('P2').getValue()).toBe('sess-42');
+    expect(status.getRange('C2').getValue()).toBe('sess-42');
+
+    // The connection is keyed on the bank, not on the handle, so this stays
+    // put when the handle is replaced.
+    expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
+    expect(c.__spreadsheet.getSheetByName('accounts').getRange('P2').getValue()).toBe('mock-aspsp-it');
+  });
+
+  it('keeps one row across a reconnect that mints a new session', () => {
+    // The bug this pins: keyed on session_id, a reconnect could not find its
+    // own row, so it left the old one behind carrying a dead session and a
+    // past valid_until — which is exactly what the expiry detector alerts on.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+
+    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection({ ...SESSION, session_id: 'sess-99' }, 'Mock ASPSP');
+
+    const status = c.__spreadsheet.getSheetByName('_status');
+    expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
+    expect(status.getRange('C2').getValue()).toBe('sess-99');
+    expect(status.getRange('A3').getValue()).toBe('');
+  });
+
+  it('gives a second login at the same bank its own connection', () => {
+    // Same ASPSP name, no account in common. Deriving the key from the bank
+    // alone would hand this the first connection's row and overwrite a live
+    // session, stranding the accounts it covered.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+
+    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection({
+      ...SESSION,
+      session_id: 'sess-77',
+      accounts: ['acc-9'],
+      accounts_data: [{ uid: 'acc-9', name: 'Joint', currency: 'EUR' }]
+    }, 'Mock ASPSP');
+
+    const status = c.__spreadsheet.getSheetByName('_status');
+    expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
+    expect(status.getRange('A3').getValue()).toBe('mock-aspsp-it-2');
+    expect(status.getRange('C2').getValue()).toBe('sess-42');
   });
 
   it('updates the one status row rather than growing a new one each refresh', () => {
@@ -258,11 +297,12 @@ describe('recordConnection', () => {
   });
 
   it('refuses to write a status row with no key at all', () => {
+    // Unreachable through recordConnection, which always has a provider name
+    // to fall back on — but an unkeyed upsert appends a new row every run
+    // while looking like a successful update, so the primitive says no.
     const c = connected(() => ({ code: 200, body: '{}' }));
-    const noId = { ...SESSION };
-    delete noId.session_id;
-
-    expect(() => c.recordConnection(noId, 'Mock ASPSP')).toThrow(/connection_id/);
+    expect(() => c.upsertStatusRow_({ provider: 'Mock ASPSP', connection_id: '' }))
+      .toThrow(/connection_id/);
   });
 
   it('keeps a name you gave an account when the bank is reconnected', () => {
@@ -381,7 +421,7 @@ describe('connection_id', () => {
     c.recordConnection(SESSION, 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
-    expect(accounts.getRange('P2').getValue()).toBe('sess-42');
-    expect(c.listSyncableAccounts_()[0].connectionId).toBe('sess-42');
+    expect(accounts.getRange('P2').getValue()).toBe('mock-aspsp-it');
+    expect(c.listSyncableAccounts_()[0].connectionId).toBe('mock-aspsp-it');
   });
 });

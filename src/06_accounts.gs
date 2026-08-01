@@ -22,17 +22,20 @@
 /**
  * Write the session to _status and its accounts to the accounts tab.
  *
- * `fallbackId` exists because the two ways in disagree about the response.
- * `POST /sessions` echoes the id it just minted; `GET /sessions/{id}` does
- * not, having been handed it in the path. So a refresh derived an empty
- * connection id from a perfectly good session — and since an empty key can
- * match no row, every refresh appended another blank-keyed `_status` row
- * instead of updating the one it meant to.
+ * `fallbackSessionId` exists because the two ways in disagree about the
+ * response. `POST /sessions` echoes the id it just minted; `GET /sessions/{id}`
+ * does not, having been handed it in the path. So a refresh derived an empty
+ * id from a perfectly good session — and since an empty key can match no row,
+ * every refresh appended another blank-keyed `_status` row instead of
+ * updating the one it meant to.
  */
-function recordConnection(session, fallbackProvider, fallbackId) {
+function recordConnection(session, fallbackProvider, fallbackSessionId) {
   var accounts = extractAccounts(session);
   var provider = (session.aspsp && session.aspsp.name) || fallbackProvider || 'unknown';
-  var connectionId = sessionId(session) || fallbackId || '';
+  var session_id = sessionId(session) || fallbackSessionId || '';
+  var connectionId = resolveConnectionId_(session, provider, accounts.map(function (a) {
+    return a.uid;
+  }));
 
   // A session with no readable accounts means our idea of the response shape
   // is wrong. Keeping the raw response is the difference between a fixable
@@ -44,7 +47,7 @@ function recordConnection(session, fallbackProvider, fallbackId) {
       session);
   }
 
-  upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date(), connectionId));
+  upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date(), session_id, connectionId));
   var result = upsertAccounts_(enrichAccounts_(accounts), provider, connectionId);
 
   return {
@@ -395,11 +398,75 @@ function truncateForCell_(text) {
  * Only the columns code owns — `state` and `days_left` are formulas, so they
  * are left alone here and stay truthful between syncs.
  */
-function mapSessionToStatusRow(session, provider, now, fallbackId) {
+/**
+ * The durable identity of a bank link.
+ *
+ * `session_id` is the API handle, and it is replaced every time you redo SCA.
+ * Keying `_status` on it meant a reconnect could not find the row it was
+ * meant to update, so it wrote a second one — leaving behind a row with a
+ * dead session and a `valid_until` in the past, which is precisely what the
+ * consent-expiry detector looks for. It would then have alerted every day,
+ * forever, about a bank that was working perfectly.
+ *
+ * Two rules, in this order:
+ *
+ * 1. **An overlap wins.** If any account this session exposes is already
+ *    filed under a connection, that is the same connection reauthorised, and
+ *    it keeps its id — including an id from before this rule existed, which
+ *    is what stops an existing sheet needing a migration.
+ * 2. **Otherwise derive from the bank**, and take the next free suffix if
+ *    that name is taken. Deriving alone would be wrong: two separate logins
+ *    at one bank produce the same name, and the second would silently
+ *    inherit the first's row and overwrite its session. No account in
+ *    common means a different connection, whatever it is called.
+ */
+function resolveConnectionId_(session, provider, accountUids) {
+  var covered = {};
+  readRecords_(sheetOrThrow_(TABS.ACCOUNTS), ACCOUNT_COLUMNS).forEach(function (row) {
+    if (!row.account_id || !row.connection_id) return;
+    var id = String(row.connection_id);
+    covered[id] = covered[id] || {};
+    covered[id][String(row.account_id)] = true;
+  });
+
+  var wanted = (accountUids || []).map(String);
+  var reuse = '';
+  Object.keys(covered).forEach(function (id) {
+    if (reuse) return;
+    var hit = wanted.some(function (uid) { return covered[id][uid]; });
+    if (hit) reuse = id;
+  });
+  if (reuse) return reuse;
+
+  var aspsp = (session && session.aspsp) || {};
+  var base = connectionSlug_(aspsp.name) || connectionSlug_(provider);
+  if (!base) return '';
+
+  var country = connectionSlug_(aspsp.country);
+  if (country) base += '-' + country;
+
+  var taken = {};
+  readColumn_(sheetOrThrow_(TABS.STATUS), colIndex_(STATUS_COLUMNS, 'connection_id'))
+    .forEach(function (id) { if (id) taken[String(id)] = true; });
+
+  if (!taken[base]) return base;
+  for (var n = 2; n <= MAX_PLAUSIBLE_ACCOUNTS; n++) {
+    if (!taken[base + '-' + n]) return base + '-' + n;
+  }
+  return base;
+}
+
+/** A bank name as a key: lowercase, no punctuation, no leading or trailing dash. */
+function connectionSlug_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function mapSessionToStatusRow(session, provider, now, fallbackSessionId, connectionId) {
   var validUntil = (session.access && session.access.valid_until) || session.valid_until || '';
-  var id = sessionId(session) || fallbackId || '';
+  var id = sessionId(session) || fallbackSessionId || '';
   return {
-    connection_id: id,
+    connection_id: connectionId || id,
     provider: provider,
     session_id: id,
     valid_until: validUntil ? new Date(validUntil) : '',

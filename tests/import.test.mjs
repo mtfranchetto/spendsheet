@@ -260,9 +260,9 @@ function danglingSheetRefs(formula) {
   tabs.forEach((tab) => {
     rest = rest.replace(new RegExp(escape(tab) + '(?![\\w!])', 'g'), () => {
       found.push(tab);
-      return ' ';
+      return '\u0000';
     });
-    rest = rest.split(tab + '!').join(' !');
+    rest = rest.split(tab + '!').join('\u0000!');
   });
   return found;
 }

@@ -138,6 +138,10 @@ So pending never enters the history. When a transaction settles it arrives in th
 
 `connection_id` is at the end rather than next to `provider` on purpose: inserting a column mid-schema renames the headers without moving the data underneath them. Appending to the right is always safe; inserting never is.
 
+**`connection_id` is not the session id**, though it used to be. A session is the API handle and is replaced every time you redo SCA; a connection is the bank link itself and outlives any particular session. It reads like `revolut-it` — the bank, slugified — and a second login at the same bank gets `revolut-it-2`.
+
+Keying on the session id meant a reconnect couldn't find its own row and wrote a second one, leaving a row behind with a dead session and a `valid_until` in the past. That is exactly what the consent-expiry detector looks for, so it would have alerted daily, forever, about a bank that was working. Which id a connection ends up with is decided by `resolveConnectionId_`: **an account already filed under a connection wins**, so re-authorising keeps whatever id that connection already had — including a session-id-shaped one from before this rule existed, which is why an existing sheet needs no migration.
+
 Three balance columns rather than one is what lets you **add a manual account by typing a row** — no script, no menu item. `balance` is a single `ARRAYFORMULA` written once by `setup()` covering every row you'll ever add:
 
 ```

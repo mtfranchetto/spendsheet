@@ -251,7 +251,8 @@ describe('doGet', () => {
     expect(html).toContain('2 accounts');
 
     const status = c.__spreadsheet.getSheetByName('_status');
-    expect(status.getRange('A2').getValue()).toBe('sess-42');
+    expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
+    expect(status.getRange('C2').getValue()).toBe('sess-42');
     expect(status.getRange('B2').getValue()).toBe('Mock ASPSP');
     expect(status.getRange('I2').getValue()).toBe(2);
   });
