@@ -27,7 +27,7 @@ But it cannot tell you what **your** banks do. Sandbox proves the code paths; pr
 |---|---|---|
 | Mock ASPSP (sandbox) | probed 2026-07-30 | see below |
 | Revolut | not yet probed | has an Enable Banking connector |
-| Fineco | not yet probed | behind CBI Globe |
+| Fineco | probed 2026-08-01 | reachable as **FinecoBank**; four currency sub-accounts, see below |
 | illimity | not yet probed | see below |
 
 ## Mock ASPSP — sandbox, probed 2026-07-30
@@ -76,3 +76,29 @@ consistently populated.
 **Consent validity** was accepted at the full 180 days requested.
 
 **illimity is on a clock.** Banca Ifis took it to 92.5% and delisted it in September 2025, with full integration completing in autumn 2026. Its connector will move or disappear. Provider identity is one field in `accounts` and `_status`, so migrating is a config edit — and the transaction history is unaffected either way. This is the concrete case for the connector being treated as disposable.
+
+
+## Fineco — production restricted, probed 2026-08-01
+
+Appears as **FinecoBank**. Reachable directly; no CBI Globe intermediary was involved in picking it from the list.
+
+### One IBAN, four accounts
+
+The headline finding, and it settles the open non-EUR question — for Fineco rather than Revolut, which is not where it was expected:
+
+| `account_id` | currency | IBAN |
+|---|---|---|
+| `00000000-0000-4000-8000-000000000001` | EUR | `IT60…3456` |
+| `00000000-0000-4000-8000-000000000002` | CHF | `IT60…3456` |
+| `00000000-0000-4000-8000-000000000003` | GBP | `IT60…3456` |
+| `00000000-0000-4000-8000-000000000004` | USD | `IT60…3456` |
+
+Fineco exposes each currency pocket as its own account resource. **All four share one IBAN and all four are named `ROSSI MARIO`** — the holder, not the account — so neither `name` nor `iban_masked` distinguishes them. `currency` is the only field that does.
+
+Two consequences worth knowing before you connect it:
+
+**Rename them, or the import can't find them.** `_import_staged` joins `_import_raw` to `accounts` on the account *name*, and four identically named rows resolve to whichever comes first. Give them distinct names — `Fineco EUR`, `Fineco CHF` and so on — matching what your export calls them. A name you type is never overwritten; `upsertAccounts_` only replaces its own `"<provider> account"` placeholder.
+
+**Set `include_in_net_worth` FALSE on the non-EUR three.** `balance` is `balance_api` unconverted, so a CHF balance would be summed as though it were euros. Transactions are already safe — `amount_eur` is deliberately blank for any row whose currency isn't the base one, so reports skip them rather than adding them up wrongly — but the balance column has no such guard.
+
+If the foreign-currency pockets are empty or unused, setting `active` FALSE as well stops syncing them entirely. That is three fewer accounts against a rate limit budgeted at roughly four unattended calls per account per day, where one full sync of one account is three.
