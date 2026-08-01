@@ -30,9 +30,32 @@ There's no bulk import in the editor, and drag-and-drop does nothing. If you'd r
 
 Reload the spreadsheet — `onOpen()` is a simple trigger, so the menu only appears on a fresh load, not when you save the script.
 
-**Spendsheet → Setup sheet.** You'll be asked to authorize the scopes in the manifest the first time. It builds 19 tabs, seeded and formatted.
+**Spendsheet → Setup sheet.** It builds 19 tabs, seeded and formatted.
 
-It's safe to re-run at any point — see [what a re-run does](SHEET-SCHEMA.md#customising-it-and-what-setup-does-on-a-re-run).
+The first run asks you to authorize it, and **Google shows you two warning screens on the way**. Both are expected. They are documented here rather than left as a surprise, because the second one is designed to look like the interstitial you get on a site with a broken certificate, and hitting it in the first five minutes of a finance tool reads as "something is wrong".
+
+**Screen 1 — "Google hasn't verified this app".** The *Advanced* link is collapsed by default; open it and choose **Go to Spendsheet (unsafe)**.
+
+Nothing is wrong. *Unverified* means nobody submitted this script to Google's OAuth review — not that Google found a problem. The script is a file in your own Drive, running as you, and you pasted every line of it yourself.
+
+It cannot be switched off for a personal account. Verification requires a Google Cloud project, **a domain you own and have verified**, the privacy policy hosted on that domain (a GitHub URL is not accepted), a demo video, per-scope justification, and a review that runs for weeks. For a spreadsheet only you will ever open, that is the wrong trade. The one real exception: on a Google Workspace domain you control, publishing the app as *Internal* removes the warning with no review — irrelevant on a consumer account.
+
+**Screen 2 — the permission list.** Read it; it should match [`src/appsscript.json`](../src/appsscript.json) exactly, and two of those scopes are narrower than they look:
+
+| Asked for | Not asked for |
+|---|---|
+| `drive.file` — only files this script itself creates | `drive` — everything in your Drive |
+| `spreadsheets.currentonly` — this sheet | `spreadsheets` — every sheet you own |
+
+That distinction is why you get an *Advanced* link at all. Both are *sensitive* scopes; neither is **restricted** — the tier holding full Drive and Gmail — and unverified apps asking for restricted scopes are hard-blocked on some account types with no way through, quite apart from the CASA security assessment that verifying one costs.
+
+You see this once. It won't return unless the scope list changes, and `tests/manifest.test.mjs` fails CI on a scope that nothing in `src/` calls, so it can't grow quietly.
+
+> **If you ever attach a standard Google Cloud project** — not needed for any of this, but people do it for Cloud Logging — go to its OAuth consent screen and set **Publishing status → In production**, unverified though it is.
+>
+> Left on **Testing**, Google issues refresh tokens that **expire after 7 days**. Your daily sync would stop about a week later. `selfCheck()` would email you that it hadn't run, which is the monitoring working correctly on an outage that didn't need to happen. *In production* keeps the same one-time warning and issues tokens that don't expire.
+
+It's safe to re-run `setup()` at any point — see [what a re-run does](SHEET-SCHEMA.md#customising-it-and-what-setup-does-on-a-re-run).
 
 ### 4. Deploy the web app
 
@@ -80,9 +103,20 @@ If all four pass, your key and application ID are right and the API accepts your
 
 > Phase 3. Not built yet.
 
-The shape of it: register a **second** application with environment *Production*, connect a real bank, and let that connection move the app from *Inactive* to **Restricted**.
+The shape of it: register a **second** application with environment *Production*, activate it, and connect your banks.
 
-Two things worth knowing in advance:
+**Activate it from Enable Banking's console, not from here.** A newly registered production application is *Inactive*, and an Inactive application cannot call the API at all — including `GET /aspsps`, which is the first thing **Connect a bank** does to populate its list. So the Sheet cannot bootstrap this itself; you get:
+
+```
+EnableBankingError: The application is still Inactive. (HTTP 403 on /aspsps)
+  — Application is not active
+```
+
+In the console, choose **Activate by linking accounts** — *not* "Request activation", which starts the path to *Active* and wants a signed contract. Link the accounts you intend to sync; that moves the application to **Restricted** permanently.
+
+**Then still connect each bank from the Sheet.** The console's linking whitelists accounts; it does not create a session this spreadsheet owns. Only `doGet` → `ebCreateSession` writes a session id into `_status`, and that id is the handle every later sync reads. The two steps do different jobs and you need both.
+
+Three more things worth knowing in advance:
 
 **Restricted is the destination, not a waypoint.** The lifecycle is Inactive → Restricted → Active, but *Active* requires a signed commercial contract and company KYB. Restricted — reached by linking your own accounts — is the terminal state for personal use, and it's the free tier. Authorization works normally; data retrieval is limited to the accounts you linked. That's a feature here, not a limitation.
 
