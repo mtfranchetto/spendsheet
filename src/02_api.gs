@@ -43,6 +43,7 @@ var EB_ERROR = {
   EXPIRED_SESSION: 'EXPIRED_SESSION',
   ASPSP_RATE_LIMIT_EXCEEDED: 'ASPSP_RATE_LIMIT_EXCEEDED',
   FORBIDDEN: 'FORBIDDEN',
+  APP_NOT_ACTIVE: 'APP_NOT_ACTIVE',
   NOT_FOUND: 'NOT_FOUND',
   INVALID_REQUEST: 'INVALID_REQUEST',
   PROVIDER_ERROR: 'PROVIDER_ERROR',
@@ -306,7 +307,19 @@ function classifyEbError(status, bodyText) {
   }
 
   if (status === 401) return EB_ERROR.AUTH_FAILED;
-  if (status === 403) return EB_ERROR.FORBIDDEN;
+
+  // A 403 has two quite different causes and opposite remedies. An account
+  // outside the whitelist is a per-account problem; an application still in
+  // Inactive is an app-level one that no amount of reconnecting will fix.
+  // Only the body distinguishes them, so read it before falling back.
+  if (status === 403) {
+    var text = (bodyText || '').toUpperCase();
+    if (text.indexOf('NOT ACTIVE') !== -1 || text.indexOf('NOT_ACTIVE') !== -1) {
+      return EB_ERROR.APP_NOT_ACTIVE;
+    }
+    return EB_ERROR.FORBIDDEN;
+  }
+
   if (status === 404) return EB_ERROR.NOT_FOUND;
   if (status === 422 || status === 400) return EB_ERROR.INVALID_REQUEST;
   if (status === 429) return EB_ERROR.ASPSP_RATE_LIMIT_EXCEEDED;
@@ -337,6 +350,8 @@ function describeEbError(code) {
       return 'The bank refused further requests today. This resets on its own; the next scheduled sync will pick it up.';
     case EB_ERROR.FORBIDDEN:
       return 'Access denied. On a restricted production app this usually means the account was not among the ones you linked.';
+    case EB_ERROR.APP_NOT_ACTIVE:
+      return 'The application is still Inactive. In the Enable Banking console, use "Activate by linking accounts" to link your own accounts — that moves it to Restricted, which is the free tier. Then connect the bank from here.';
     case EB_ERROR.NOT_FOUND:
       return 'The session or account no longer exists. Reconnect the bank.';
     case EB_ERROR.INVALID_REQUEST:

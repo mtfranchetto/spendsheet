@@ -91,6 +91,23 @@ describe('classifyEbError', () => {
     expect(ctx.classifyEbError(400, JSON.stringify({ error: 'session has expired' }))).toBe('EXPIRED_SESSION');
   });
 
+  it('separates an inactive application from an unlinked account', () => {
+    // Both arrive as 403 and the remedies are opposite: one is a console
+    // step, the other is reconnecting the bank. Sending someone to reconnect
+    // an account on an Inactive app is a loop they cannot escape.
+    expect(ctx.classifyEbError(403, JSON.stringify({ message: 'Application is not active' })))
+      .toBe('APP_NOT_ACTIVE');
+    expect(ctx.classifyEbError(403, 'application is not active')).toBe('APP_NOT_ACTIVE');
+    expect(ctx.classifyEbError(403, JSON.stringify({ code: 'APP_NOT_ACTIVE' }))).toBe('APP_NOT_ACTIVE');
+    expect(ctx.classifyEbError(403, JSON.stringify({ message: 'account not linked' }))).toBe('FORBIDDEN');
+  });
+
+  it('tells you where to go for an inactive application', () => {
+    // The guidance names the console button, because the failure happens on
+    // /aspsps — before any account exists to be at fault.
+    expect(ctx.describeEbError('APP_NOT_ACTIVE')).toMatch(/Activate by linking accounts/);
+  });
+
   it('recognises a rate limit however it is spelled', () => {
     expect(ctx.classifyEbError(400, JSON.stringify({ code: 'ASPSP_RATE_LIMIT_EXCEEDED' })))
       .toBe('ASPSP_RATE_LIMIT_EXCEEDED');
