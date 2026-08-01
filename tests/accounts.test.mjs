@@ -228,6 +228,43 @@ describe('recordConnection', () => {
     expect(accounts.getRange('B2').getValue()).toBe('Fineco mock');
   });
 
+  it('takes the connection id from the caller when the response omits it', () => {
+    // POST /sessions echoes the id it minted; GET /sessions/{id} does not,
+    // having been given it in the path. A refresh reads the second shape.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const noId = { ...SESSION };
+    delete noId.session_id;
+
+    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
+
+    const status = c.__spreadsheet.getSheetByName('_status');
+    expect(status.getRange('A2').getValue()).toBe('sess-42');
+    expect(c.__spreadsheet.getSheetByName('accounts').getRange('P2').getValue()).toBe('sess-42');
+  });
+
+  it('updates the one status row rather than growing a new one each refresh', () => {
+    // The bug this pins: an empty key matches nothing, so every refresh
+    // appended a fresh unkeyed row while reporting success.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const noId = { ...SESSION };
+    delete noId.session_id;
+
+    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
+    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
+    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
+
+    const status = c.__spreadsheet.getSheetByName('_status');
+    expect(status.getRange('A3').getValue()).toBe('');
+  });
+
+  it('refuses to write a status row with no key at all', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const noId = { ...SESSION };
+    delete noId.session_id;
+
+    expect(() => c.recordConnection(noId, 'Mock ASPSP')).toThrow(/connection_id/);
+  });
+
   it('keeps a name you gave an account when the bank is reconnected', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
     c.recordConnection(SESSION, 'Mock ASPSP');

@@ -19,11 +19,20 @@
 // Recording a connection
 // ---------------------------------------------------------------------------
 
-/** Write the session to _status and its accounts to the accounts tab. */
-function recordConnection(session, fallbackProvider) {
+/**
+ * Write the session to _status and its accounts to the accounts tab.
+ *
+ * `fallbackId` exists because the two ways in disagree about the response.
+ * `POST /sessions` echoes the id it just minted; `GET /sessions/{id}` does
+ * not, having been handed it in the path. So a refresh derived an empty
+ * connection id from a perfectly good session — and since an empty key can
+ * match no row, every refresh appended another blank-keyed `_status` row
+ * instead of updating the one it meant to.
+ */
+function recordConnection(session, fallbackProvider, fallbackId) {
   var accounts = extractAccounts(session);
   var provider = (session.aspsp && session.aspsp.name) || fallbackProvider || 'unknown';
-  var connectionId = sessionId(session);
+  var connectionId = sessionId(session) || fallbackId || '';
 
   // A session with no readable accounts means our idea of the response shape
   // is wrong. Keeping the raw response is the difference between a fixable
@@ -35,7 +44,7 @@ function recordConnection(session, fallbackProvider) {
       session);
   }
 
-  upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date()));
+  upsertStatusRow_(mapSessionToStatusRow(session, provider, new Date(), connectionId));
   var result = upsertAccounts_(enrichAccounts_(accounts), provider, connectionId);
 
   return {
@@ -252,7 +261,7 @@ function refreshAccounts() {
 
   ids.forEach(function (id) {
     try {
-      var summary = recordConnection(ebGetSession(id));
+      var summary = recordConnection(ebGetSession(id), null, id);
       total += summary.accountCount;
       trace.push({ sessionId: id, summary: summary });
     } catch (e) {
@@ -386,12 +395,13 @@ function truncateForCell_(text) {
  * Only the columns code owns — `state` and `days_left` are formulas, so they
  * are left alone here and stay truthful between syncs.
  */
-function mapSessionToStatusRow(session, provider, now) {
+function mapSessionToStatusRow(session, provider, now, fallbackId) {
   var validUntil = (session.access && session.access.valid_until) || session.valid_until || '';
+  var id = sessionId(session) || fallbackId || '';
   return {
-    connection_id: sessionId(session),
+    connection_id: id,
     provider: provider,
-    session_id: sessionId(session),
+    session_id: id,
     valid_until: validUntil ? new Date(validUntil) : '',
     last_success: now,
     last_error: '',
@@ -402,6 +412,15 @@ function mapSessionToStatusRow(session, provider, now) {
 function upsertStatusRow_(row) {
   var sheet = sheetOrThrow_(TABS.STATUS);
   var idColumn = colIndex_(STATUS_COLUMNS, 'connection_id');
+
+  // An upsert with no key is not an upsert. `findRowByValue_` matches nothing
+  // on a blank, so this would append a fresh unkeyed row every single run
+  // while looking exactly like a successful update. Fail loudly instead.
+  if (!row.connection_id) {
+    throw new Error('Refusing to write a _status row with no connection_id: ' +
+      'the session response carried no id and no fallback was passed.');
+  }
+
   var existing = findRowByValue_(sheet, idColumn, row.connection_id);
   var target = existing || nextEmptyRow_(sheet, idColumn);
 
