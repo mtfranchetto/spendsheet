@@ -112,7 +112,7 @@ git config user.email "3091286+mtfranchetto@users.noreply.github.com"
 git config user.name  "Mattia Franchetto"
 ```
 
-That keeps both your personal address and `@yourcompany.com` out of the permanent commit history of a repo that's going public. Commits still attribute correctly to your GitHub account.
+That keeps both your personal and your work address out of the permanent commit history of a repo that's going public. Commits still attribute correctly to your GitHub account.
 
 **The repo is private, and that blocks phase 3.** Enable Banking's *production* registration requires a privacy policy URL and a ToS URL — we planned to point those at `PRIVACY.md`/`TERMS.md` in this repo, but those URLs 404 for anyone while it's private. So: **flip the repo public before phase 3**, or host those two files separately (a public gist works). Nothing before phase 3 is blocked, and sandbox registration doesn't ask for them at all — so this can wait until you're convinced the thing works, which was the point of the sandbox-first split.
 
