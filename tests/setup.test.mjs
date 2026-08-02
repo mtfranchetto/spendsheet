@@ -244,3 +244,70 @@ describe('upgrading an existing sheet', () => {
     expect(c.readColumn_(rules, 1)).toHaveLength(3);
   });
 });
+
+
+/**
+ * Money formats.
+ *
+ * The interesting assertion is the negative one: a column whose currency
+ * varies per row must not name a currency, because a CHF figure rendered
+ * with a euro sign is a wrong number that looks right.
+ */
+describe('currency formatting', () => {
+  const formatsFor = (c, tab) =>
+    c.__spreadsheet.getSheetByName(tab).calls.filter((call) => call.kind === 'numberFormat');
+
+  it('names the currency on amount_eur, which is base currency by construction', () => {
+    const c = load();
+    c.setup();
+
+    const eur = c.colIndex_(c.TX_COLUMNS, 'amount_eur');
+    const applied = formatsFor(c, 'transactions')
+      .filter((call) => call.a1.startsWith(`2,${eur},`));
+
+    expect(applied.length).toBeGreaterThan(0);
+    expect(applied[applied.length - 1].pattern).toContain('€');
+  });
+
+  it('leaves amount unqualified, because the bank chose its currency', () => {
+    // Fineco alone supplies CHF, GBP and USD rows on the same tab.
+    const c = load();
+    c.setup();
+
+    const amount = c.colIndex_(c.TX_COLUMNS, 'amount');
+    const applied = formatsFor(c, 'transactions')
+      .filter((call) => call.a1.startsWith(`2,${amount},`));
+
+    expect(applied.length).toBeGreaterThan(0);
+    applied.forEach((call) => expect(call.pattern).not.toContain('€'));
+  });
+
+  it('shows an account balance in that account own currency', () => {
+    const c = load();
+    c.setup();
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    accounts.getRange('A2').setValue('acc-chf');
+    accounts.getRange('F2').setValue('CHF');
+    accounts.getRange('A3').setValue('acc-eur');
+    accounts.getRange('F3').setValue('EUR');
+    c.setup();
+
+    const balance = c.colIndex_(c.ACCOUNT_COLUMNS, 'balance');
+    const at = (row) => accounts.calls
+      .filter((call) => call.kind === 'numberFormat' && call.a1 === `${row},${balance},1,1`)
+      .pop();
+
+    expect(at(2).pattern).toContain('CHF');
+    expect(at(3).pattern).toContain('€');
+  });
+
+  it('follows base_currency rather than hardcoding the euro', () => {
+    const c = load();
+    c.setup();
+    c.__spreadsheet.getSheetByName('_config').getRange('B2').setValue('x');
+
+    expect(c.currencyFormat_('GBP')).toContain('£');
+    expect(c.currencyFormat_('SEK')).toContain('SEK');
+  });
+});

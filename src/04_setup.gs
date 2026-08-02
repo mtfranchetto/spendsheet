@@ -479,9 +479,32 @@ function configLookup_(key, fallbackLiteral) {
 // Presentation
 // ---------------------------------------------------------------------------
 
+/**
+ * Which columns carry a currency symbol, and which must not.
+ *
+ * Only a column guaranteed to be in one currency can name it. `amount_eur`
+ * qualifies by construction — its formula is blank whenever the row's
+ * currency isn't the base one, which is the whole reason that column exists.
+ * `cash_entry.amount` qualifies because cash entries have no currency field
+ * at all.
+ *
+ * `transactions.amount` does **not**. It is the figure the bank sent, in the
+ * bank's currency, and Fineco alone supplies CHF, GBP and USD rows. Stamping
+ * € on it would render a foreign amount as euros — a wrong number that reads
+ * as a right one, which is the failure this project spends most of its effort
+ * avoiding. Column H says what currency it is; the format must not contradict
+ * it.
+ */
+function currencyFormat_(code) {
+  var symbols = { EUR: '€', GBP: '£', USD: '$' };
+  var symbol = symbols[String(code || '').toUpperCase()] || String(code || '').toUpperCase();
+  return symbol ? '#,##0.00 "' + symbol + '"' : '#,##0.00';
+}
+
 function applyFormats_(ss) {
   var dateCols = ['booking_date', 'value_date', 'transaction_date'];
-  var moneyCols = ['amount', 'amount_eur'];
+  var base = readConfig_();
+  var baseFormat = currencyFormat_(base.base_currency || 'EUR');
 
   [TABS.TRANSACTIONS, TABS.PENDING].forEach(function (name) {
     var sh = ss.getSheetByName(name);
@@ -489,9 +512,12 @@ function applyFormats_(ss) {
     dateCols.forEach(function (c) {
       if (headers.indexOf(c) !== -1) formatColumn_(sh, colOf(headers, c), 'yyyy-mm-dd');
     });
-    moneyCols.forEach(function (c) {
-      if (headers.indexOf(c) !== -1) formatColumn_(sh, colOf(headers, c), '#,##0.00');
-    });
+
+    // Unqualified: the row's own currency, whatever that is.
+    if (headers.indexOf('amount') !== -1) formatColumn_(sh, colOf(headers, 'amount'), '#,##0.00');
+    if (headers.indexOf('amount_eur') !== -1) {
+      formatColumn_(sh, colOf(headers, 'amount_eur'), baseFormat);
+    }
     formatColumn_(sh, colOf(headers, 'imported_at'), 'yyyy-mm-dd hh:mm');
   });
 
@@ -499,10 +525,11 @@ function applyFormats_(ss) {
   ['opening_balance', 'balance_api', 'balance_manual', 'balance'].forEach(function (c) {
     formatColumn_(acc, colOf(ACCOUNT_COLUMNS, c), '#,##0.00');
   });
+  formatAccountBalancesByCurrency_(acc, baseFormat);
 
   var cash = ss.getSheetByName(TABS.CASH_ENTRY);
   formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'date'), 'yyyy-mm-dd');
-  formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'amount'), '#,##0.00');
+  formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'amount'), baseFormat);
 
   ss.getSheets().forEach(function (sh) {
     var lastCol = sh.getLastColumn();
@@ -510,6 +537,31 @@ function applyFormats_(ss) {
     var header = sh.getRange(1, 1, 1, lastCol);
     header.setFontWeight('bold').setBackground('#f1f3f4');
     sh.setFrozenRows(1);
+  });
+}
+
+
+/**
+ * Each account's balance shown in that account's own currency.
+ *
+ * A column format cannot vary by row, so this is per row — which is fine
+ * here and nowhere else: `accounts` holds tens of rows, not thousands. It is
+ * also why a row you add by hand shows an unqualified number until the next
+ * `setup()`, which is a re-run rather than a repair.
+ *
+ * The alternative was one symbol for the whole column, which would have
+ * labelled Fineco's CHF, GBP and USD pockets as euros.
+ */
+function formatAccountBalancesByCurrency_(sheet, baseFormat) {
+  var columns = ['opening_balance', 'balance_api', 'balance_manual', 'balance']
+    .map(function (name) { return colIndex_(ACCOUNT_COLUMNS, name); });
+
+  readRecords_(sheet, ACCOUNT_COLUMNS).forEach(function (row) {
+    if (!row.account_id) return;
+    var format = row.currency ? currencyFormat_(row.currency) : baseFormat;
+    columns.forEach(function (column) {
+      sheet.getRange(row._row, column).setNumberFormat(format);
+    });
   });
 }
 
