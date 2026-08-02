@@ -31,7 +31,7 @@ function setup() {
 
 function runSetup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var report = { created: [], existing: [], seeded: [], added: [] };
+  var report = { created: [], existing: [], seeded: [], added: [], diverged: [] };
 
   buildTable_(ss, TABS.TRANSACTIONS, TX_COLUMNS, report);
   buildTable_(ss, TABS.PENDING, PENDING_COLUMNS, report);
@@ -72,6 +72,7 @@ function runSetup_() {
     : 'Everything already in place — nothing changed.';
   if (report.seeded.length) msg += '\nSeeded: ' + report.seeded.join(', ');
   if (report.added.length) msg += '\n' + describeAdditions_(report.added);
+  if ((report.diverged || []).length) msg += '\n' + describeDivergence_(report.diverged);
 
   SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'Setup complete', 10);
   return report;
@@ -144,6 +145,8 @@ function addMissingSeedRows_(ss, entry, report) {
   });
 
   var missing = seed.filter(function (row) { return !present[key(row)]; });
+  reportSeedDivergence_(sheet, entry, seed, report);
+
   if (!missing.length) return;
 
   appendRows_(sheet, 1, missing);
@@ -155,6 +158,67 @@ function addMissingSeedRows_(ss, entry, report) {
 }
 
 /**
+ * Rows the sheet already has, but with a different answer than the defaults.
+ *
+ * Reported, never corrected. Those are the same rows you are invited to edit
+ * — `_category_map` says so in as many words — so overwriting them would
+ * discard exactly the customisations `tests/customization.test.mjs` exists to
+ * protect. There is no way to tell "I changed this" from "an old version
+ * wrote this", and guessing wrong destroys work.
+ *
+ * But saying nothing was worse. `Child Support` was mapped to
+ * `Other / Uncategorised` by an early version and later corrected to
+ * `Income / Child support`; a sheet seeded before that kept the old row
+ * forever, because this function only ever *added* what was absent. The
+ * result filed €467 of money received as money spent, and the only symptom
+ * was a monthly total that quietly disagreed with BudgetBakers on both sides
+ * at once.
+ */
+function reportSeedDivergence_(sheet, entry, seed, report) {
+  if (!report) return;
+
+  var width = seed.length ? seed[0].length : 0;
+  if (width <= entry.keyWidth) return;
+
+  var rows = readRecordsRaw_(sheet, width);
+  var byKey = {};
+  rows.forEach(function (row) {
+    byKey[seedKey_(row, entry.keyWidth)] = row;
+  });
+
+  seed.forEach(function (want) {
+    var have = byKey[seedKey_(want, entry.keyWidth)];
+    if (!have) return;
+
+    var differs = false;
+    for (var c = entry.keyWidth; c < width; c++) {
+      if (String(have[c] === undefined ? '' : have[c]) !== String(want[c])) differs = true;
+    }
+    if (!differs) return;
+
+    report.diverged = (report.diverged || []).concat([{
+      tab: entry.tab,
+      key: want.slice(0, entry.keyWidth).join(' / '),
+      yours: have.slice(entry.keyWidth, width).join(' / '),
+      standard: want.slice(entry.keyWidth, width).join(' / ')
+    }]);
+  });
+}
+
+function seedKey_(row, keyWidth) {
+  return row.slice(0, keyWidth).map(function (cell) {
+    return String(cell === null || cell === undefined ? '' : cell);
+  }).join('\u0000');
+}
+
+/** Rows as plain arrays, for comparing against seed data of the same shape. */
+function readRecordsRaw_(sheet, width) {
+  var last = lastRecordRow_(sheet, 1);
+  if (last < 2) return [];
+  return sheet.getRange(2, 1, last - 1, width).getValues();
+}
+
+/**
  * The additions, as a line that fits on a toast.
  *
  * A new `_config` key is named, because it is a setting you now have a
@@ -162,6 +226,28 @@ function addMissingSeedRows_(ss, entry, report) {
  * category mappings are worth knowing the size of, not the contents of, and a
  * toast that scrolls is a toast nobody reads.
  */
+
+/**
+ * Divergence, said out loud and written down.
+ *
+ * Named rather than counted, and the full list goes to `_anomalies` because a
+ * toast is gone in ten seconds and this is a decision you may want to make
+ * next week. Each line reads "what your sheet says" against "what the
+ * defaults say", in that order, because yours is the one that is in force.
+ */
+function describeDivergence_(diverged) {
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '',
+    diverged.length + ' seeded row(s) differ from the defaults — yours are in force, ' +
+    'nothing was changed.', diverged);
+
+  var shown = diverged.slice(0, 3).map(function (d) {
+    return '  ' + d.key + ': you have "' + d.yours + '", default is "' + d.standard + '"';
+  }).join('\n');
+
+  return diverged.length + ' seeded row(s) differ from the defaults (unchanged):\n' + shown +
+    (diverged.length > 3 ? '\n  …' + (diverged.length - 3) + ' more, all listed in _anomalies' : '');
+}
+
 function describeAdditions_(added) {
   var settings = [];
   var counts = {};

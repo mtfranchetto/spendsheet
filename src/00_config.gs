@@ -70,7 +70,12 @@ var TX_COLUMNS_DERIVED = [
   'type',                   // W  expense | income | transfer
   'transfer_group',         // X
   'notes',                  // Y
-  'excluded'                // Z
+  'excluded',               // Z
+  // Cross-cutting and independent of category: a holiday is flights *and*
+  // restaurants *and* a pharmacy, each of which means something else the rest
+  // of the year. Comma-separated, yours to type, and never affects a total.
+  // BudgetBakers exports these, so a history arrives already labelled.
+  'labels'                  // AA
 ];
 
 var TX_COLUMNS = TX_COLUMNS_CODE.concat(TX_COLUMNS_DERIVED);
@@ -487,7 +492,8 @@ var DEFAULT_IMPORT_MAP = [
   ['budgetbakers', 'currency', 'currency'],
   ['budgetbakers', 'note', 'description'],
   ['budgetbakers', 'payee', 'counterparty'],
-  ['budgetbakers', 'category', 'category_override']
+  ['budgetbakers', 'category', 'category_override'],
+  ['budgetbakers', 'labels', 'labels']
 ];
 
 /** The value in the `type` column that means money out. */

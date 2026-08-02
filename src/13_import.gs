@@ -44,7 +44,7 @@
 
 /** Columns of `_import_staged`. A–O is the block you paste; the rest explains it. */
 var STAGED_COLUMNS = TX_COLUMNS_CODE
-  .concat(['category_override', 'include', 'why']);
+  .concat(['category_override', 'labels', 'include', 'why']);
 
 // ---------------------------------------------------------------------------
 // Reading _import_raw through _import_map
@@ -330,7 +330,13 @@ function stagedFormulas() {
     ['counterparty', importRawColumn_('counterparty')],
     ['source', '"csv:"&' + importPreset_()],
     ['imported_at', 'TODAY()'],
-    ['category_override', stagedCategoryExpression('category')]
+    ['category_override', stagedCategoryExpression('category')],
+    // Straight through, unmapped and unparsed: a label is whatever you called
+    // it, and inventing a taxonomy for them here would be a decision nobody
+    // asked for. `_labels` gets a dropdown in phase 7; the values are the
+    // point now, because re-labelling a history by hand is not a thing anyone
+    // does twice.
+    ['labels', importRawColumn_('labels')]
   ].map(function (pair) {
     return { column: pair[0], formula: stagedColumnFormula(pair[1]) };
   });
@@ -524,6 +530,22 @@ function describeStagedPlan_(plan) {
  * filled — which is also why both writes derive their row from the same
  * `appendRows_` result instead of each finding it again.
  */
+
+/**
+ * One of the columns beyond the code-owned block, written on its own.
+ *
+ * They are not contiguous — `category_override` is T and `labels` is AA, with
+ * the `amount_eur` ARRAYFORMULA and five other formula columns in between — so
+ * each is placed separately rather than as one wide block that would overwrite
+ * everything it spanned.
+ */
+function writeStagedColumn_(sheet, startRow, name, records) {
+  var values = records.map(function (record) {
+    return [record[name] === null || record[name] === undefined ? '' : record[name]];
+  });
+  sheet.getRange(startRow, colIndex_(TX_COLUMNS, name), values.length, 1).setValues(values);
+}
+
 function commitStagedImport_(plan) {
   var tx = sheetOrThrow_(TABS.TRANSACTIONS);
   var width = TX_COLUMNS_CODE.length;
@@ -534,9 +556,8 @@ function commitStagedImport_(plan) {
 
   var placed = appendRows_(tx, colIndex_(TX_COLUMNS, 'uid'), block);
 
-  var categories = plan.rows.map(function (record) { return [record.category_override || '']; });
-  tx.getRange(placed.row, colIndex_(TX_COLUMNS, 'category_override'), categories.length, 1)
-    .setValues(categories);
+  writeStagedColumn_(tx, placed.row, 'category_override', plan.rows);
+  writeStagedColumn_(tx, placed.row, 'labels', plan.rows);
 
   return { imported: placed.count, row: placed.row, width: width, plan: plan };
 }

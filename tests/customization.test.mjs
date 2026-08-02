@@ -16,14 +16,17 @@ describe('your customisations survive setup()', () => {
     ctx.setup();
     const tx = ctx.__spreadsheet.getSheetByName('transactions');
 
-    tx.maxColumns = 27;
-    tx.getRange(1, 27).setValue('my_column');
-    tx.getRange(2, 27).setValue('my note');
+    // One past whatever the schema currently ends at, so adding a column to
+    // the schema moves this test rather than breaking the promise it makes.
+    const mine = ctx.TX_COLUMNS.length + 1;
+    tx.maxColumns = mine;
+    tx.getRange(1, mine).setValue('my_column');
+    tx.getRange(2, mine).setValue('my note');
 
     ctx.setup();
 
-    expect(tx.getRange(1, 27).getValue()).toBe('my_column');
-    expect(tx.getRange(2, 27).getValue()).toBe('my note');
+    expect(tx.getRange(1, mine).getValue()).toBe('my_column');
+    expect(tx.getRange(2, mine).getValue()).toBe('my note');
   });
 
   it('keeps a tab you created yourself', () => {

@@ -19,7 +19,9 @@ Probed against a real one, because it can't be verified from any primary source:
 | **`transfer` is a boolean, not a pair id** | it marks that a row *is* a transfer, not which row it pairs with |
 | **Amounts are inconsistently formatted** | `116.87` and `1000` both appear, so nothing may assume a decimal point exists |
 
-Columns deliberately left unmapped: `ref_currency_amount` (identical to `amount` unless you hold a non-EUR account), `payment_type` (the instrument — `Transfer` there means *bank transfer*, not a move between your own accounts, and is easy to confuse with the `transfer` column), `transfer`, and `labels` (free-form tags on a small minority of rows; preserving them would need a third paste block, which isn't worth the chance of misaligning one).
+Columns deliberately left unmapped: `ref_currency_amount` (identical to `amount` unless you hold a non-EUR account), `payment_type` (the instrument — `Transfer` there means *bank transfer*, not a move between your own accounts, and is easy to confuse with the `transfer` column), and `transfer` itself, which is a boolean rather than a pair id — the category carries the meaning instead, via kind `transfer`, which is what keeps those rows out of spending totals.
+
+`labels` **is** mapped. It was left out when importing meant a manual paste, on the grounds that a third block was one more chance to misalign; *Import staged rows* writes each column separately, so that reasoning expired. It matters more than the row count suggests: a real export had 588 labelled rows across six labels, and nobody re-labels a history by hand.
 
 The shipped preset was later rebuilt against a **full year** — 1,464 rows, 57 distinct categories, where the first pass had been written off a 20-row sample and covered 36. See [the category map](#the-category-map).
 

@@ -72,7 +72,7 @@ describe('setup()', () => {
     expect(headers.slice(0, 15)).toEqual(ctx.TX_COLUMNS_CODE);
     expect(headers[6]).toBe('amount');      // G
     expect(headers[15]).toBe('amount_eur'); // P
-    expect(headers).toHaveLength(26);
+    expect(headers).toHaveLength(27);
   });
 
   it('hides every _-prefixed tab and no others', () => {
@@ -309,5 +309,60 @@ describe('currency formatting', () => {
 
     expect(c.currencyFormat_('GBP')).toContain('£');
     expect(c.currencyFormat_('SEK')).toContain('SEK');
+  });
+});
+
+
+/**
+ * A seeded row the sheet answers differently.
+ *
+ * The upgrade path only ever added what was absent, so a default I later
+ * *corrected* never reached a sheet that already held the old value. That is
+ * how `Child Support` stayed mapped to `Other / Uncategorised` long after the
+ * code said `Income / Child support`, filing money received as money spent.
+ */
+describe('seed rows that disagree with the defaults', () => {
+  const mapRow = (c) => {
+    const map = c.__spreadsheet.getSheetByName('_category_map');
+    const rows = c.readRecords_(map, c.CATEGORY_MAP_COLUMNS);
+    return rows.filter((r) => r.source_category === 'Child Support')[0];
+  };
+
+  it('reports one without changing it', () => {
+    const c = load();
+    c.setup();
+
+    const row = mapRow(c);
+    const map = c.__spreadsheet.getSheetByName('_category_map');
+    map.getRange(row._row, 3).setValue('Other');
+    map.getRange(row._row, 4).setValue('Uncategorised');
+
+    const report = c.setup();
+    const found = report.diverged.filter((d) => d.key.indexOf('Child Support') !== -1)[0];
+
+    expect(found).toBeTruthy();
+    expect(found.yours).toBe('Other / Uncategorised');
+    expect(found.standard).toBe('Income / Child support');
+
+    // Yours is in force: an edit you made is not a bug to be repaired.
+    expect(mapRow(c).category).toBe('Other');
+  });
+
+  it('says nothing when the sheet matches the defaults', () => {
+    const c = load();
+    c.setup();
+    expect(c.setup().diverged).toEqual([]);
+  });
+
+  it('writes the full list to _anomalies, since a toast does not survive', () => {
+    const c = load();
+    c.setup();
+
+    const map = c.__spreadsheet.getSheetByName('_category_map');
+    map.getRange(mapRow(c)._row, 3).setValue('Shopping');
+    c.setup();
+
+    expect(c.readColumn_(c.__spreadsheet.getSheetByName('_anomalies'), 4)
+      .filter((d) => String(d).indexOf('differ from the defaults') !== -1)).toHaveLength(1);
   });
 });
