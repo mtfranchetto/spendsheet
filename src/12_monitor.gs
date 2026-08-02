@@ -358,9 +358,40 @@ function snapshotToDrive() {
   return { file: name, rows: rows - 1 };
 }
 
+/**
+ * The backup folder, remembered rather than searched for.
+ *
+ * `getFoldersByName` searches your whole Drive, and searching needs `drive`
+ * or `drive.readonly` — both **restricted** scopes. An unverified app asking
+ * for those is hard-blocked on some account types with no way through, and
+ * verifying one requires a paid annual security assessment. Neither is a
+ * reasonable price for finding a folder we made ourselves.
+ *
+ * So it is created once and its id kept in Script Properties. `drive.file`
+ * grants access to exactly what this script created, which `getFolderById`
+ * is happy with and searching never will be.
+ *
+ * Deleting the folder is not an error: the id stops resolving, or resolves to
+ * something in the bin, and the next snapshot makes a new one.
+ */
+var SNAPSHOT_FOLDER_PROPERTY = 'EB_SNAPSHOT_FOLDER_ID';
+
 function snapshotFolder_(name) {
-  var existing = DriveApp.getFoldersByName(name);
-  return existing.hasNext() ? existing.next() : DriveApp.createFolder(name);
+  var properties = PropertiesService.getScriptProperties();
+  var id = properties.getProperty(SNAPSHOT_FOLDER_PROPERTY);
+
+  if (id) {
+    try {
+      var folder = DriveApp.getFolderById(id);
+      if (!folder.isTrashed()) return folder;
+    } catch (e) {
+      // Gone, or made by another account. Making a new one is the recovery.
+    }
+  }
+
+  var created = DriveApp.createFolder(name);
+  properties.setProperty(SNAPSHOT_FOLDER_PROPERTY, created.getId());
+  return created;
 }
 
 /**

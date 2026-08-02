@@ -309,8 +309,23 @@ describe('snapshotToDrive', () => {
     c.snapshotToDrive();
 
     expect(c.__driveFiles).toHaveLength(2);
-    expect(c.DriveApp.getFoldersByName('spendsheet-backups').hasNext()).toBe(true);
+    expect(c.__driveFolders).toHaveLength(1);
   });
+
+  it('makes a new folder when the remembered one has been deleted', () => {
+    // Not an error worth alerting about: the id simply stops resolving, and
+    // the recovery is the same thing the first run did.
+    const c = built();
+    addTransactions(c, 1);
+    c.snapshotToDrive();
+
+    c.__driveFolders[0].trashed = true;
+    c.snapshotToDrive();
+
+    expect(c.__driveFolders).toHaveLength(2);
+    expect(c.__driveFiles).toHaveLength(2);
+  });
+
 });
 
 describe('toCsv_', () => {

@@ -535,16 +535,26 @@ export function createGoogleStubs(options = {}) {
       })
     },
 
+    /**
+     * No `getFoldersByName`, deliberately — searching Drive needs a restricted
+     * scope this project does not have, and a fake that offers the method
+     * would let code depending on it pass here and fail in production, which
+     * is exactly how the first snapshotToDrive shipped broken.
+     */
     DriveApp: {
-      getFoldersByName: (name) => {
-        const found = folders.filter((f) => f.name === name);
-        let i = 0;
-        return { hasNext: () => i < found.length, next: () => found[i++] };
+      getFolderById: (id) => {
+        const folder = folders.filter((f) => f.id === id)[0];
+        if (!folder) throw new Error(`No item with the given ID could be found: ${id}`);
+        return folder;
       },
       createFolder: (name) => {
         const folder = {
           name,
+          id: `folder-${folders.length + 1}`,
+          trashed: false,
           getName: () => name,
+          getId: () => folder.id,
+          isTrashed: () => folder.trashed,
           createFile: (fileName, content, mime) => {
             driveFiles.push({ name: fileName, content, mime });
             return { getName: () => fileName, getId: () => `file-${driveFiles.length}` };
@@ -574,9 +584,7 @@ export function createGoogleStubs(options = {}) {
   sandbox.__ui = uiCalls;
   sandbox.__triggers = () => triggers;
   sandbox.__driveFiles = driveFiles;
-  /** Take or release the script lock from a test, after the sheet is built. */
-  sandbox.__setLockHeld = (held) => { lockHeld = held; };
-  sandbox.__driveFiles = driveFiles;
+  sandbox.__driveFolders = folders;
   /** Take or release the script lock from a test, after the sheet is built. */
   sandbox.__setLockHeld = (held) => { lockHeld = held; };
 

@@ -63,6 +63,25 @@ describe('appsscript.json', () => {
   it('keeps Drive access to files this script created', () => {
     // `drive` would grant the entire Drive; drive.file is only what we make.
     expect(manifest.oauthScopes).not.toContain('https://www.googleapis.com/auth/drive');
+    expect(manifest.oauthScopes).not.toContain('https://www.googleapis.com/auth/drive.readonly');
+  });
+
+  it('calls no DriveApp method that would need a wider scope than drive.file', () => {
+    // Declaring `DriveApp.` is not enough to know which scope it needs, and
+    // this is the gap that let snapshotToDrive ship: getFoldersByName
+    // *searches* Drive, and searching needs drive or drive.readonly. Both are
+    // restricted scopes — an unverified app asking for one is hard-blocked on
+    // some account types, with no Advanced link to click through.
+    //
+    // Everything below reads beyond what this script created. The way to find
+    // our own folder is to remember its id, not to look for it.
+    const NEEDS_WIDER_SCOPE = [
+      'getFoldersByName', 'getFilesByName', 'getRootFolder', 'getStorageUsed',
+      'searchFiles', 'searchFolders', 'getFolders(', 'getFiles(', 'getTrashedFiles'
+    ];
+
+    const used = NEEDS_WIDER_SCOPE.filter((method) => source.includes('DriveApp.' + method));
+    expect(used).toEqual([]);
   });
 
   it('is configured for the web app the bank redirects into', () => {
