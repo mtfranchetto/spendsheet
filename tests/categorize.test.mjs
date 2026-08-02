@@ -584,6 +584,47 @@ describe('imported rows arrive confirmed', () => {
   });
 });
 
+describe('column visibility on transactions', () => {
+  it('leaves the columns you review with visible and hides the machinery', () => {
+    // Reviewing a row means reading the description and setting two columns,
+    // and those two are twenty-two apart in the schema.
+    const c = load();
+    c.setup();
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+
+    const hidden = (name) => tx.isColumnHiddenByUser(c.TX_COLUMNS.indexOf(name) + 1);
+
+    expect(hidden('description')).toBe(false);
+    expect(hidden('category_override')).toBe(false);
+    expect(hidden('confirmed')).toBe(false);
+    expect(hidden('labels')).toBe(false);
+
+    expect(hidden('uid')).toBe(true);
+    expect(hidden('entry_reference')).toBe(true);
+    expect(hidden('category_auto')).toBe(true);
+  });
+
+  it('never re-hides a column you unhid', () => {
+    // The reason to unhide one is usually that you are mid-way through
+    // chasing something, and setup() undoing that is the worst possible moment.
+    const c = load();
+    c.setup();
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    const uid = c.TX_COLUMNS.indexOf('uid') + 1;
+
+    tx.showColumns(uid);
+    c.setup();
+
+    expect(tx.isColumnHiddenByUser(uid)).toBe(false);
+  });
+
+  it('keeps every visible column in the schema, so a rename cannot orphan one', () => {
+    ctx.TX_VISIBLE_COLUMNS.forEach((name) => {
+      expect(ctx.TX_COLUMNS, `${name} is not a column`).toContain(name);
+    });
+  });
+});
+
 describe('the label report', () => {
   const count = ctx.labelCountFormula();
   const total = ctx.labelTotalFormula();

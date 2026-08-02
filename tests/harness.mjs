@@ -205,6 +205,7 @@ class FakeSheet {
     this.notes = new Map();
     this.fontSizes = new Map();
     this.columnWidths = new Map();
+    this.hiddenColumns = new Set();
     this.protections = [];
     this.activeRange = null;
     this.filter = null;
@@ -293,6 +294,15 @@ class FakeSheet {
   }
 
   setColumnWidth(column, width) { this.columnWidths.set(column, width); return this; }
+  hideColumns(column, count = 1) {
+    for (let i = 0; i < count; i++) this.hiddenColumns.add(column + i);
+    return this;
+  }
+  showColumns(column, count = 1) {
+    for (let i = 0; i < count; i++) this.hiddenColumns.delete(column + i);
+    return this;
+  }
+  isColumnHiddenByUser(column) { return this.hiddenColumns.has(column); }
   setFrozenRows(n) { this.frozenRows = n; return this; }
   getFrozenRows() { return this.frozenRows; }
   hideSheet() { this.hidden = true; return this; }

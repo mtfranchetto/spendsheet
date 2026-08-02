@@ -6,7 +6,7 @@ No server. No subscription. No Docker. No account with anyone except your bank a
 
 Built on [Enable Banking](https://enablebanking.com)'s free tier (PSD2 open banking, EU/EEA/UK) and Google Apps Script, which runs on Google's servers at no cost.
 
-> **Status: in development.** Phase 1 of 10. `setup()` builds the spreadsheet; bank sync is not wired up yet. See [`docs/PLAN.md`](docs/PLAN.md) for the full build plan.
+> **Status: complete and in daily use.** Sync, dedup, cash, import, categorisation, monitoring, recurring detection and the dashboard are all built. Verified against four live Italian banks, and against five years of imported history that ties out to the cent with the tool it came from.
 
 ---
 
@@ -26,8 +26,10 @@ So the rules here are:
 - **Automatic daily sync** from your banks — transactions, balances, pending
 - **Automatic categorisation** that learns from your own corrections, no ML and no API key
 - **Transfer detection** so moving €500 between your own accounts doesn't count as both income and expense
+- **Labels** — `kids`, `travel`, `home-renovation` — the cross-cutting axis a category can't express, since a holiday is flights *and* restaurants *and* a pharmacy
+- **A `confirmed` flag**, so a category you agreed with and a category the machine guessed are never rendered as the same fact
 - **Net worth** including things PSD2 can't see — cash, brokerage, property
-- **Recurring payment detection** and a 90-day cashflow forecast
+- **Recurring payment detection** and a 90-day cashflow forecast that tells you the date you run out
 - **Monitoring that actually tells you when it breaks**, including the silent failure where a sync runs fine and returns nothing
 
 ## Requirements
@@ -66,11 +68,28 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 11. Repeat for each bank.
 12. **Spendsheet → Install triggers** — daily sync, daily self-check.
 
+### Part 3 — bring your history (optional, and worth it)
+
+13. Export your history from whatever you use now, **File → Import** it into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import staged rows**. ([`docs/IMPORT.md`](docs/IMPORT.md))
+14. **Spendsheet → Learn from corrections** — imported rows arrive confirmed, so your own categorisations become the lookup table the cascade uses.
+15. **Spendsheet → Re-categorise all**, then **Detect recurring** and **Rebuild cashflow**.
+
+This is the step that makes categorisation work on day one rather than in six months, and it's why the import lands before the cascade rather than after it. Cadence detection is the same story: an annual insurance premium is invisible in the rolling ~90 days PSD2 gives you.
+
 Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Menu
 
-Setup sheet · Connect a bank · Sync now · Import staged rows · Re-categorise all · Learn from corrections · Detect recurring · Rebuild cashflow · Health check · Run smoke tests · Install triggers
+| | |
+|---|---|
+| **Banks** | Sync now · Connect a bank · Refresh accounts |
+| **History** | Import staged rows |
+| **Categorising** | Re-categorise all · Confirm visible rows · Learn from corrections |
+| **Forecasting** | Detect recurring · Rebuild cashflow |
+| **Housekeeping** | Setup sheet · Update mappings to defaults · Tidy retired categories · Install credentials · Install triggers · Show schedule · Health check · Accept row count · Snapshot to Drive |
+| **Diagnostics** | Run smoke tests · Inspect session · Inspect account details · Inspect transactions · Diagnose accounts tab |
+
+The menu only shows an item whose function actually exists, so a partial checkout offers exactly what works instead of throwing.
 
 There is deliberately no "Add manual account" — you type a row in `accounts` — and no CSV importer: **File → Import** loads the file, and the mapping is formulas you can read and correct in `_import_staged`. *Import staged rows* only commits what you have already reviewed there, and it exists because that step was two pastes that had to land on the same row without crossing the one column holding a formula. Both are documented in [`docs/IMPORT.md`](docs/IMPORT.md).
 
@@ -84,11 +103,13 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 |---|---|
 | [`docs/SETUP.md`](docs/SETUP.md) | Long-form setup, both Enable Banking registrations |
 | [`docs/IMPORT.md`](docs/IMPORT.md) | Importing history from BudgetBakers or any CSV |
+| [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, labels and transfers |
 | [`docs/SHEET-SCHEMA.md`](docs/SHEET-SCHEMA.md) | Every tab and column, and whether you or the code owns it |
 | [`docs/MONITORING.md`](docs/MONITORING.md) | What breaks, how you find out, how you fix it |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Per-bank findings — which fields each bank actually populates |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Running the tests |
-| [`docs/PLAN.md`](docs/PLAN.md) | The full design document and its reasoning |
+
+The *why* behind the non-obvious decisions lives in the source comments, which are written for that purpose — start with the header of whichever `src/*.gs` file owns the thing you're changing.
 
 ## Contributing
 

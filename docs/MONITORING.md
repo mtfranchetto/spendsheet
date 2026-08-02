@@ -34,7 +34,7 @@ Apps Script emails you when a triggered run **throws**, but the default is a dai
 
 > [script.google.com](https://script.google.com) → your project → **Triggers** → the pencil on the sync trigger → *Failure notification settings* → **Notify me immediately**
 
-This covers failure 1 only. A run where one bank fails and the others succeed is caught and recorded rather than thrown, so it sends no email until phase 8 — check `_status.last_error` and the `state` column in the meantime.
+This covers failure 1 only — a run that *threw*. A run where one bank fails and the others succeed is caught and recorded rather than thrown, so Google sees a success and sends nothing; that case is what the five detectors below exist for.
 
 ## The six failure modes
 

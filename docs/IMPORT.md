@@ -37,7 +37,7 @@ That includes the accounts you've since closed. Give them a row, import their hi
 
 If you import before connecting, the fix afterwards is a find-and-replace on `account_id` in `transactions` — recoverable, but it's a code-owned column and thousands of rows.
 
-**Read `_category_map` first, not afterwards.** Their taxonomy is single-level and ours is two, so the second level is invented in that tab. These become `category_override` — the training signal the whole categorisation cascade learns from in phase 7. A category you wouldn't have chosen teaches the wrong thing about every future transaction from that merchant. Ten minutes there is worth more than any amount of correcting later.
+**Read `_category_map` first, not afterwards.** Their taxonomy is single-level and ours is two, so the second level is invented in that tab. These become `category_override` — the training signal the whole categorisation cascade learns from. A category you wouldn't have chosen teaches the wrong thing about every future transaction from that merchant. Ten minutes there is worth more than any amount of correcting later.
 
 ## The category map
 
@@ -138,7 +138,7 @@ Yes — the mapping is data, not code, and nothing in it is BudgetBakers-specifi
 To add one:
 
 1. Add rows to `_import_map` under a new preset name, one per column you want, mapping *their* header to *our* column
-2. Add rows to `_category_map` under the same name, mapping their categories to yours — or none, and categorise it in phase 7 instead
+2. Add rows to `_category_map` under the same name, mapping their categories to yours — or none, and let the cascade categorise it afterwards instead
 3. Set `import_preset` in `_config` to that name
 4. Import their CSV into `_import_raw` and check `_import_staged`
 

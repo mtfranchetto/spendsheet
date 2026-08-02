@@ -18,8 +18,8 @@ var TABS = {
   CATEGORIES: 'categories',
   // Visible, and named without an underscore, because it is the same kind of
   // thing as `categories`: a small taxonomy you edit, feeding a column you type
-  // into. The design doc calls it `_labels`; it also gained a spend report,
-  // which is not something to hide behind a tab you have to unhide first.
+  // into. It was originally specified as `_labels`; it also gained a spend
+  // report, which is not something to hide behind a tab you must unhide first.
   LABELS: 'labels',
   RECURRING: 'recurring',
   CASHFLOW: 'cashflow',

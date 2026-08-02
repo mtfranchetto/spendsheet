@@ -68,6 +68,7 @@ function runSetup_() {
   if (functionExists_('buildDashboard_')) buildDashboard_(ss, sep);
 
   applyFormats_(ss);
+  applyColumnVisibility_(ss, report);
   applyValidation_(ss);
   applyProtection_(ss);
   hidePrivateTabs_(ss, report);
@@ -824,6 +825,50 @@ function protectRange_(sheet, a1, description) {
     if (existing[i].getRange().getA1Notation() === target) return;
   }
   sheet.getRange(a1).protect().setDescription(description).setWarningOnly(true);
+}
+
+/**
+ * Columns worth seeing on `transactions`, out of twenty-eight.
+ *
+ * Everything else is either an identifier you never read (`uid`,
+ * `entry_reference`, `bank_transaction_code`), a date the booking date already
+ * answers for, or an intermediate the formula columns are built from
+ * (`category_auto`, `subcategory_auto`).
+ *
+ * This exists because reviewing a row means reading the description and setting
+ * two columns, and the two columns were twenty-two apart. The alternative —
+ * moving `confirmed` next to `category_override` — is the one edit this schema
+ * cannot survive: `setup()` rewrites the header row and does **not** move the
+ * data under it, so reordering relabels every column from T rightwards while
+ * their contents stay exactly where they were. Nothing would look wrong.
+ *
+ * Hiding is the same fact expressed where it costs nothing.
+ */
+var TX_VISIBLE_COLUMNS = [
+  'account_name', 'booking_date', 'amount', 'description', 'counterparty',
+  'amount_eur', 'category_source', 'category_override', 'category',
+  'labels', 'confirmed'
+];
+
+/**
+ * Hide the machinery on `transactions`, on the run that creates it and never
+ * again.
+ *
+ * Same contract as `hidePrivateTabs_`: a sensible default for a new book, and
+ * your call for ever afterwards. Re-running `setup()` will not re-hide a column
+ * you went and unhid, which matters because the reason to unhide one is usually
+ * that you are in the middle of chasing something.
+ */
+function applyColumnVisibility_(ss, report) {
+  if (!report || report.created.indexOf(TABS.TRANSACTIONS) === -1) return;
+
+  var sheet = ss.getSheetByName(TABS.TRANSACTIONS);
+  if (!sheet) return;
+
+  TX_COLUMNS.forEach(function (name, i) {
+    if (TX_VISIBLE_COLUMNS.indexOf(name) !== -1) return;
+    sheet.hideColumns(i + 1);
+  });
 }
 
 /**

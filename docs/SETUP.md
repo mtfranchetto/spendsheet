@@ -2,7 +2,7 @@
 
 Split in two on purpose: you get the whole thing working against a simulated bank before registering anything real or handing over any credentials.
 
-> **Where this is up to:** phases 1–2 are built, so everything through *Part 1* below works. Connecting a real bank is phase 3 and isn't wired up yet.
+> **Part 1 is a full dry run.** It connects a simulated bank, so you can watch the whole thing work end to end before registering anything real or handing over a private key. Part 2 is the same steps against your actual banks.
 
 ---
 
@@ -22,7 +22,7 @@ Not a work account — and not for quota reasons, since the free consumer limits
 
 **Extensions → Apps Script.** Create one file per `.gs` file in [`src/`](../src/) and paste the contents. Keep the names and their number prefixes: Apps Script has no module system and loads files in name order, so the numbers *are* the load order.
 
-Also paste `src/appsscript.json`, which sets the timezone, the V8 runtime and the web-app config phase 3 needs. It's hidden until you tick **Project Settings → Show "appsscript.json" manifest file**.
+Also paste `src/appsscript.json`, which sets the timezone, the V8 runtime and the web-app config Part 2 needs. It's hidden until you tick **Project Settings → Show "appsscript.json" manifest file**.
 
 There's no bulk import in the editor, and drag-and-drop does nothing. If you'd rather not paste by hand, [`clasp`](CONTRIBUTING.md#optional-clasp) pushes the whole folder in one command — it needs Node, which is why it isn't the default path.
 
@@ -95,15 +95,13 @@ A dialog rather than a simple prompt because a PEM is multi-line and a prompt bo
 
 **Spendsheet → Run smoke tests**, then unhide the `_tests` tab. Four checks: credentials present, JWT signs and decodes, `GET /application` accepted, `GET /aspsps` returns banks.
 
-If all four pass, your key and application ID are right and the API accepts your token. That's the whole of phase 2.
+If all four pass, your key and application ID are right and the API accepts your token.
 
 ---
 
 ## Part 2 — production
 
-> Phase 3. Not built yet.
-
-The shape of it: register a **second** application with environment *Production*, activate it, and connect your banks.
+Register a **second** application with environment *Production*, activate it, and connect your banks.
 
 **Activate it from Enable Banking's console, not from here.** A newly registered production application is *Inactive*, and an Inactive application cannot call the API at all — including `GET /aspsps`, which is the first thing **Connect a bank** does to populate its list. So the Sheet cannot bootstrap this itself; you get:
 

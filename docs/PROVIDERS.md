@@ -1,8 +1,6 @@
 # Provider findings
 
-Per-bank observations. **Empty until phase 3**, because none of it is knowable from documentation — it has to be probed against a live production connection.
-
-This file exists now because the questions it answers are already load-bearing for the code, and it's better to name them than to let them become undocumented assumptions.
+Per-bank observations. None of this is knowable from documentation — every line of it was probed against a live production connection, because the questions it answers are load-bearing for the code and the alternative is undocumented assumptions.
 
 ## What gets recorded, per bank
 

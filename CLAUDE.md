@@ -1,6 +1,10 @@
 # Working notes for Claude
 
-Conventions that are load-bearing here and not obvious from reading the code. `docs/PLAN.md` holds the design and its reasoning — **don't re-litigate decisions recorded there.**
+Conventions that are load-bearing here and not obvious from reading the code.
+
+**The reasoning behind a decision lives in the comment above it.** File headers and function docstrings in `src/*.gs` carry the *why*, deliberately and at length — including what was tried and rejected. Read the header of the file you're changing before changing it, and **don't re-litigate a decision it already argues.** If you disagree with one, say so; don't quietly reverse it.
+
+(There used to be a `docs/PLAN.md` holding the design document and the build plan. It was removed once every phase shipped — it had become a historical artefact that read as a roadmap. `git log -- docs/PLAN.md` if you ever want it.)
 
 ## The governing rule
 

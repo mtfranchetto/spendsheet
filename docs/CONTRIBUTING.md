@@ -43,7 +43,7 @@ The rule this repo follows is that **pure logic is separated from Sheet and HTTP
 
 This is not architectural purity for its own sake. The expensive bugs in this project live in sign conventions, deduplication, merchant normalisation and recurrence detection — all of which are pure functions, and all of which fail *quietly*. A sign inversion doesn't crash; it reports your salary as an expense. A dedup collision doesn't error; it silently discards a real transaction.
 
-Tests are written **in the same phase as the code they cover**, never batched into a final pass.
+Tests are written **in the same change as the code they cover**, never batched into a final pass.
 
 ## Writing formulas
 
