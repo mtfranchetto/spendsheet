@@ -794,3 +794,148 @@ function orderTabs_(ss) {
     ss.moveActiveSheet(i + 1);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Accepting the defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Menu → Update mappings to defaults.
+ *
+ * `setup()` reports a seeded row that disagrees with the defaults and changes
+ * nothing, because it cannot tell an edit you made from one an old version
+ * left behind. That is the right default and a dead end on its own: after the
+ * taxonomy shrank from fifteen categories to twelve, eleven mappings still
+ * pointed at parents that no longer exist, and the only offered remedy was
+ * retyping them.
+ *
+ * So this is the other half — the same comparison, shown in full, applied
+ * only on a yes. Keys are never touched, so nothing is added or removed here;
+ * only the answer part of a row you already have is replaced.
+ *
+ * It also names **orphans**: rows whose target category is not in `categories`
+ * at all. Those are invisible rather than wrong — an override naming a
+ * category the taxonomy does not have simply never appears in a report that
+ * groups by category, which is the most expensive way for a mapping to fail.
+ */
+function applySeedDefaults() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var report = { diverged: [] };
+  UPGRADABLE_SEEDS.forEach(function (entry) {
+    var sheet = ss.getSheetByName(entry.tab);
+    if (sheet) reportSeedDivergence_(sheet, entry, entry.seed(), report);
+  });
+
+  var orphans = orphanedCategoryMappings_(ss);
+
+  if (!report.diverged.length && !orphans.length) {
+    ui.alert('Update mappings', 'Every seeded row already matches the defaults.', ui.ButtonSet.OK);
+    return { updated: 0, orphans: orphans };
+  }
+
+  var answer = ui.alert('Update mappings',
+    describeSeedUpdate_(report.diverged, orphans), ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) {
+    ss.toast('Nothing was changed.', 'Cancelled', 5);
+    return { updated: 0, orphans: orphans };
+  }
+
+  var updated = 0;
+  UPGRADABLE_SEEDS.forEach(function (entry) {
+    updated += rewriteSeedRows_(ss.getSheetByName(entry.tab), entry);
+  });
+
+  ss.toast(updated + ' row(s) updated.' +
+    (orphans.length ? ' ' + orphans.length + ' orphan(s) left for you — see _anomalies.' : ''),
+    'Defaults applied', 20);
+  return { updated: updated, orphans: orphans };
+}
+
+/** Replace the non-key columns of any row whose key matches a seed row. */
+function rewriteSeedRows_(sheet, entry) {
+  if (!sheet) return 0;
+
+  var seed = entry.seed();
+  var width = seed.length ? seed[0].length : 0;
+  if (width <= entry.keyWidth) return 0;
+
+  var wanted = {};
+  seed.forEach(function (row) { wanted[seedKey_(row, entry.keyWidth)] = row; });
+
+  var rows = readRecordsRaw_(sheet, width);
+  var changed = 0;
+
+  rows.forEach(function (have, i) {
+    var want = wanted[seedKey_(have, entry.keyWidth)];
+    if (!want) return;
+
+    var differs = false;
+    for (var c = entry.keyWidth; c < width; c++) {
+      if (String(have[c] === undefined ? '' : have[c]) !== String(want[c])) differs = true;
+    }
+    if (!differs) return;
+
+    // Only the columns after the key, so the row keeps its identity and its
+    // position — this is an edit, not a delete and re-add.
+    sheet.getRange(i + 2, entry.keyWidth + 1, 1, width - entry.keyWidth)
+      .setValues([want.slice(entry.keyWidth)]);
+    changed++;
+  });
+
+  return changed;
+}
+
+/**
+ * Mappings pointing at a category the taxonomy no longer has.
+ *
+ * Not the same as a divergence: these may be rows you invented, and they are
+ * not fixed by applying defaults. They are worth naming because the failure
+ * is silent — the override is written, and every report that groups by
+ * category simply never shows it.
+ */
+function orphanedCategoryMappings_(ss) {
+  var categories = ss.getSheetByName(TABS.CATEGORIES);
+  var map = ss.getSheetByName(TABS.CATEGORY_MAP);
+  if (!categories || !map) return [];
+
+  var known = {};
+  readRecords_(categories, CATEGORY_COLUMNS).forEach(function (row) {
+    if (row.category) known[row.category + '\u0000' + row.subcategory] = true;
+  });
+
+  return readRecords_(map, CATEGORY_MAP_COLUMNS)
+    .filter(function (row) { return row.source_category && row.category; })
+    .filter(function (row) { return !known[row.category + '\u0000' + row.subcategory]; })
+    .map(function (row) {
+      return { source: row.source_category, target: row.category + ' / ' + row.subcategory };
+    });
+}
+
+function describeSeedUpdate_(diverged, orphans) {
+  var lines = [];
+
+  if (diverged.length) {
+    lines.push('Replace ' + diverged.length + ' row(s) with the current defaults:');
+    diverged.slice(0, 8).forEach(function (d) {
+      lines.push('  ' + d.key + ':  "' + d.yours + '"  ->  "' + d.standard + '"');
+    });
+    if (diverged.length > 8) lines.push('  …and ' + (diverged.length - 8) + ' more.');
+  }
+
+  if (orphans.length) {
+    lines.push('');
+    lines.push(orphans.length + ' mapping(s) point at a category that no longer exists.');
+    lines.push('They are left alone — a report grouping by category will not show them:');
+    orphans.slice(0, 5).forEach(function (o) {
+      lines.push('  ' + o.source + ' -> ' + o.target);
+    });
+  }
+
+  lines.push('');
+  lines.push('Anything you invented, and any key not in the defaults, is untouched.');
+  lines.push('');
+  lines.push('Continue?');
+  return lines.join('\n');
+}

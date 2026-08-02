@@ -366,3 +366,77 @@ describe('seed rows that disagree with the defaults', () => {
       .filter((d) => String(d).indexOf('differ from the defaults') !== -1)).toHaveLength(1);
   });
 });
+
+
+/**
+ * Accepting the defaults.
+ *
+ * setup() reports a divergence and changes nothing, which is right and is a
+ * dead end on its own: after the taxonomy shrank to twelve categories,
+ * eleven mappings still pointed at parents that no longer existed and the
+ * only remedy on offer was retyping them.
+ */
+describe('applySeedDefaults', () => {
+  const mapSheet = (c) => c.__spreadsheet.getSheetByName('_category_map');
+  const rowFor = (c, source) =>
+    c.readRecords_(mapSheet(c), c.CATEGORY_MAP_COLUMNS)
+      .filter((r) => r.source_category === source)[0];
+
+  /** A sheet holding the pre-merge mapping, as a real one does. */
+  function stale(c) {
+    const row = rowFor(c, 'Kids');
+    mapSheet(c).getRange(row._row, 3).setValue('Family');
+    mapSheet(c).getRange(row._row, 4).setValue('Kids');
+    return row;
+  }
+
+  it('replaces a row that disagrees, once you say yes', () => {
+    const c = load();
+    c.setup();
+    stale(c);
+
+    expect(c.applySeedDefaults().updated).toBeGreaterThan(0);
+    expect(rowFor(c, 'Kids').category).toBe('Shopping');
+    expect(rowFor(c, 'Kids').subcategory).toBe('Kids');
+  });
+
+  it('changes nothing when you say no', () => {
+    const c = load({ alertResponse: 'NO' });
+    c.setup();
+    stale(c);
+
+    expect(c.applySeedDefaults().updated).toBe(0);
+    expect(rowFor(c, 'Kids').category).toBe('Family');
+  });
+
+  it('leaves a mapping you invented alone', () => {
+    // Its key is not in the defaults, so there is nothing to compare it to.
+    const c = load();
+    c.setup();
+    c.appendRows_(mapSheet(c), 1, [['budgetbakers', 'My own category', 'Shopping', 'Books']]);
+
+    c.applySeedDefaults();
+    expect(rowFor(c, 'My own category').category).toBe('Shopping');
+  });
+
+  it('names a mapping pointing at a category that no longer exists', () => {
+    // Silent otherwise: the override is written and every report grouping by
+    // category simply never shows it.
+    const c = load();
+    c.setup();
+    c.appendRows_(mapSheet(c), 1, [['budgetbakers', 'Ghost', 'Retired', 'Gone']]);
+
+    const orphans = c.applySeedDefaults().orphans;
+    expect(orphans.filter((o) => o.source === 'Ghost')[0].target).toBe('Retired / Gone');
+  });
+
+  it('never adds or removes a row, only rewrites answers', () => {
+    const c = load();
+    c.setup();
+    const before = c.lastRecordRow_(mapSheet(c), 1);
+    stale(c);
+
+    c.applySeedDefaults();
+    expect(c.lastRecordRow_(mapSheet(c), 1)).toBe(before);
+  });
+});

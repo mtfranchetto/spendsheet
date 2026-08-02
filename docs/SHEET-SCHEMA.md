@@ -28,10 +28,25 @@ Two further rules that cost nothing and remove entire categories of failure:
 |---|---|
 | Extra columns **appended to the right** of the last schema column | untouched |
 | Whole tabs you create yourself | untouched — not reordered ahead of yours, not deleted |
-| Rows you add, edit or delete in `rules`, `categories`, `_config`, `_import_map` | kept as-is |
+| Rows you add, edit or delete in `rules`, `categories`, `_config`, `_import_map`, `_category_map` | kept as-is — see below |
 | Anything in a column marked *yours* — `category_override`, `notes`, `excluded`, `balance_manual` | never written by code |
 | Column widths, conditional formatting, filter views, charts, notes | not touched at all |
 | Unhiding a `_` tab | respected — tabs are hidden only on the run that creates them |
+
+### When the defaults move underneath you
+
+`setup()` adds seed rows your sheet is missing and **never changes one it already has**, because it cannot tell a mapping you edited from one an older version wrote. It does now say when they disagree:
+
+> `1 seeded row(s) differ from the defaults (unchanged):`
+> `  budgetbakers / Child Support: you have "Other / Uncategorised", default is "Income / Child support"`
+
+with the full list in `_anomalies`, since a toast lasts ten seconds.
+
+That was a dead end on its own. When the taxonomy shrank from fifteen top-level categories to twelve, eleven mappings still pointed at parents that no longer existed, and retyping them was the only remedy on offer.
+
+**Spendsheet → Update mappings to defaults** is the other half. It shows every divergence side by side — yours, then the default — and replaces them only if you say yes. Keys are never touched, so nothing is added or removed; only the answer part of a row you already have changes, and any key not in the defaults is left alone entirely.
+
+It also names **orphans**: mappings pointing at a category that isn't in `categories` at all. Those it leaves for you, because they may be yours. They're worth knowing about because the failure is silent — the override gets written, and every report that groups by category simply never shows it.
 
 **Reasserted. Your change is reverted:**
 

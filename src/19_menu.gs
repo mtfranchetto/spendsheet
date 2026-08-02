@@ -27,6 +27,7 @@ var MENU_ITEMS = [
   { name: 'Rebuild cashflow', fn: 'rebuildCashflow' },
   { separator: true },
   { name: 'Setup sheet', fn: 'setup' },
+  { name: 'Update mappings to defaults', fn: 'applySeedDefaults' },
   { name: 'Install credentials', fn: 'installCredentials' },
   { name: 'Install triggers', fn: 'installTriggers' },
   { name: 'Show schedule', fn: 'describeTriggers' },
