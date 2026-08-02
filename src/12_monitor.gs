@@ -169,7 +169,16 @@ function checkConsents_(config, now) {
     .filter(Boolean);
 }
 
-/** Failure 2 — one bank is broken while the others are fine. */
+/**
+ * Failure 2 — one bank is broken while the others are fine.
+ *
+ * A dead consent is separated out because it is not an incident, it is a
+ * state: every run from here fails identically until somebody redoes SCA.
+ * Reporting it as "last sync failed" invites you to wait and see, which is
+ * the one response that cannot work — and filing it under CONSENT rather
+ * than ACCOUNT_FAILING also stops it arriving twice, since the expiry
+ * detector is about to notice the same connection.
+ */
 function checkFailingAccounts_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.STATUS);
   if (!sheet) return [];
@@ -177,9 +186,18 @@ function checkFailingAccounts_() {
   return readRecords_(sheet, STATUS_COLUMNS)
     .filter(function (row) { return row.connection_id && row.last_error; })
     .map(function (row) {
+      var error = String(row.last_error);
+
+      if (error.indexOf('consent expired') !== -1) {
+        return alert_(ALERT_KIND.CONSENT, String(row.connection_id),
+          row.provider + ': reconnect needed',
+          error + '\n\nNothing else is affected — the other banks keep syncing, ' +
+          'and this one resumes from where it stopped once you reconnect.');
+      }
+
       return alert_(ALERT_KIND.ACCOUNT_FAILING, String(row.connection_id),
         row.provider + ': last sync failed',
-        row.provider + ' reported: ' + row.last_error);
+        row.provider + ' reported: ' + error);
     });
 }
 

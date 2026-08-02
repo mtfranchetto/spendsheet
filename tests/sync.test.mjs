@@ -324,6 +324,37 @@ describe('when a bank breaks', () => {
     expect(c.readColumn_(c.__spreadsheet.getSheetByName('_anomalies'), 3)).toContain('rate_limited');
   });
 
+  it('says a dead consent needs you, not another run', () => {
+    // A rate limit clears itself; this never does. Reporting both as "last
+    // sync failed" invites you to wait and see, which is the one response
+    // that cannot work here.
+    const provider = bank({});
+    provider.fail = { code: 401, body: '{"error":"EXPIRED_SESSION","message":"Session is expired"}' };
+    const c = withAccounts(provider);
+
+    c.syncNow();
+
+    const error = String(c.__spreadsheet.getSheetByName('_status').getRange('H2').getValue());
+    expect(error).toMatch(/consent expired/);
+    expect(error).toMatch(/Connect a bank/);
+    expect(error).toMatch(/Nothing is lost/);
+    expect(c.readColumn_(c.__spreadsheet.getSheetByName('_anomalies'), 3)).toContain('consent_died');
+  });
+
+  it('records how early the consent died, which is a fact about the bank', () => {
+    // By the time you reconnect, valid_until has been overwritten — so if it
+    // is not said now it cannot be said at all.
+    const provider = bank({});
+    const c = withAccounts(provider);
+    const status = c.__spreadsheet.getSheetByName('_status');
+    status.getRange('E2').setValue(new Date(Date.now() + 90 * 24 * 60 * 60 * 1000));
+
+    provider.fail = { code: 401, body: '{"error":"EXPIRED_SESSION"}' };
+    c.syncNow();
+
+    expect(String(status.getRange('H2').getValue())).toMatch(/died 90 days early/);
+  });
+
   it('keeps the pending rows of an account it could not reach', () => {
     // Dropping them would make an outage look like the bank clearing your
     // holds.

@@ -154,6 +154,7 @@ var ANOMALY_KIND = {
   TRUNCATED: 'truncated',              // paging cap hit: we did NOT fetch everything
   FETCH_FAILED: 'fetch_failed',
   RATE_LIMITED: 'rate_limited',
+  CONSENT_DIED: 'consent_died',        // 401 before valid_until — needs you, not a retry
   RAW_DUMP: 'raw_dump'                 // deliberate capture, for working out a shape
 };
 

@@ -142,11 +142,27 @@ describe('failure 3 — a consent is expiring', () => {
 describe('failure 2 — one bank is broken', () => {
   it('reports what that connection last said', () => {
     const c = built();
-    addConnection(c, { last_error: 'consent expired' });
+    addConnection(c, { last_error: 'the bank returned a 500' });
 
     const finding = c.runChecks_(NOW).filter((f) => f.kind === 'account_failing')[0];
-    expect(finding.detail).toContain('consent expired');
+    expect(finding.detail).toContain('the bank returned a 500');
     expect(finding.subject).toContain('Illimity');
+  });
+
+  it('files a dead consent as a consent problem, not a failed sync', () => {
+    // "Last sync failed" reads as an incident to wait out. This one is a
+    // state: every run fails identically until somebody redoes SCA. Filing
+    // it under CONSENT also keeps it from arriving twice, since the expiry
+    // detector is looking at the same connection.
+    const c = built();
+    addConnection(c, { last_error: 'consent expired — reconnect Illimity' });
+
+    const findings = c.runChecks_(NOW);
+    expect(findings.filter((f) => f.kind === 'account_failing')).toHaveLength(0);
+
+    const consent = findings.filter((f) => f.kind === 'consent')[0];
+    expect(consent.subject).toContain('reconnect needed');
+    expect(consent.detail).toContain('the other banks keep syncing');
   });
 });
 

@@ -285,6 +285,35 @@ function fetchTransactions_(account, context, status) {
   return result;
 }
 
+/**
+ * Whether the consent outlived what the bank promised.
+ *
+ * A session that dies well before its `valid_until` is a fact about the bank
+ * rather than about this run, and it is the difference between "consents last
+ * 180 days here" and "consents *claim* 180 days here" — only the second of
+ * which is true of some providers. Worth saying at the moment it happens,
+ * because by the time you reconnect the old expiry is overwritten.
+ *
+ * Deliberately does not call `daysBetween_`: that lives in 12_monitor and
+ * nothing in this file may depend on anything numbered higher.
+ */
+function consentExpiryNote_(account) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.STATUS);
+  if (!sheet || !account.connectionId) return '';
+
+  var row = findRowByValue_(sheet, colIndex_(STATUS_COLUMNS, 'connection_id'), account.connectionId);
+  if (!row) return '';
+
+  var until = readCell_(sheet, row, STATUS_COLUMNS, 'valid_until');
+  if (isBlankCell_(until) || !(until instanceof Date)) return '';
+
+  var days = Math.round((until.getTime() - new Date().getTime()) / (24 * 60 * 60 * 1000));
+  if (days <= 0) return ' It was due to expire on ' + dateKey(until) + ' anyway.';
+
+  return ' The bank had promised ' + dateKey(until) + ', so it died ' + days +
+    ' days early — worth noting in docs/PROVIDERS.md.';
+}
+
 /** `YYYY-MM-DD`, offset by whole days. */
 function isoDay_(now, offsetDays) {
   var date = new Date(now.getTime());
@@ -292,11 +321,31 @@ function isoDay_(now, offsetDays) {
   return dateKey(date);
 }
 
+/**
+ * One account's failure, in words, and recorded.
+ *
+ * The two coded cases are separated because they need opposite things from
+ * you. A rate limit resolves itself overnight and wants no action at all. An
+ * expired consent resolves never: every subsequent run fails identically
+ * until somebody redoes SCA, so a message reading "last sync failed" would
+ * be describing a permanent state as though it were an incident.
+ */
 function describeSyncError_(account, err) {
   if (err && err.code === EB_ERROR.ASPSP_RATE_LIMIT_EXCEEDED) {
     logAnomaly_(ANOMALY_KIND.RATE_LIMITED, account.uid,
       'Rate limited by the bank. Not retried — see 09_sync.', err.body || '');
     return 'rate limited by the bank, left for the next run';
+  }
+
+  if (err && err.code === EB_ERROR.EXPIRED_SESSION) {
+    var expiry = consentExpiryNote_(account);
+    logAnomaly_(ANOMALY_KIND.CONSENT_DIED, account.uid,
+      'Consent for ' + account.name + ' is dead' + expiry +
+      ' Reconnect from the menu; no retry can fix this.', err.body || '');
+
+    return 'consent expired — reconnect ' + account.name +
+      ' (Spendsheet → Connect a bank).' + expiry +
+      ' Nothing is lost: history already fetched stays, and no retry will help.';
   }
   if (err && err.code) {
     logAnomaly_(ANOMALY_KIND.FETCH_FAILED, account.uid,
