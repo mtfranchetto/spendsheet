@@ -33,9 +33,7 @@ function recordConnection(session, fallbackProvider, fallbackSessionId) {
   var accounts = extractAccounts(session);
   var provider = (session.aspsp && session.aspsp.name) || fallbackProvider || 'unknown';
   var session_id = sessionId(session) || fallbackSessionId || '';
-  var connectionId = resolveConnectionId_(session, provider, accounts.map(function (a) {
-    return a.uid;
-  }));
+  var connectionId = resolveConnectionId_(session, provider, accounts);
 
   // A session with no readable accounts means our idea of the response shape
   // is wrong. Keeping the raw response is the difference between a fixable
@@ -101,11 +99,30 @@ function extractAccounts(session) {
     var identifiers = detail.account_id || {};
     return {
       uid: uid,
+      identityHash: accountIdentityHash(detail),
       name: detail.name || detail.product || detail.details || '',
       currency: detail.currency || '',
       iban: identifiers.iban || (identifiers.other && identifiers.other.identification) || ''
     };
   });
+}
+
+/**
+ * The one field on an account that survives a new consent.
+ *
+ * `identification_hash` covers the IBAN *and* the currency, which is what
+ * makes it usable: Fineco exposes four accounts on a single IBAN, one per
+ * currency pocket, and only the currency separates them.
+ *
+ * There is deliberately no fallback to `identification_hashes`. That list
+ * holds hashes over narrower attribute sets — `[0]` is the IBAN alone, and
+ * another is the ASPSP plus the account name — and every one of them is
+ * identical across all four of those pockets. Falling back would silently
+ * merge four accounts into one, which is worse than having no key at all,
+ * because having no key is visible.
+ */
+function accountIdentityHash(detail) {
+  return (detail && detail.identification_hash) || '';
 }
 
 /**
@@ -149,6 +166,9 @@ function mergeAccountDetails(account, details) {
   var identifiers = details.account_id || {};
   return {
     uid: account.uid,
+    // Carried through explicitly: this rebuilds the object rather than
+    // patching it, so anything not named here is silently dropped.
+    identityHash: account.identityHash || accountIdentityHash(details),
     name: account.name || details.name || details.product || details.details ||
       details.display_name || details.owner_name || '',
     currency: account.currency || details.currency || '',
@@ -185,10 +205,12 @@ function upsertAccounts_(accounts, provider, connectionId) {
   var written = [];
 
   accounts.forEach(function (account) {
-    var existing = findRowByValue_(sheet, idColumn, account.uid);
+    var existing = findAccountRow_(sheet, account);
     var row = existing || nextEmptyRow_(sheet, idColumn);
 
     if (!existing) {
+      // Frozen here and never rewritten. Every transaction's uid hashes this
+      // in, so changing it would silently re-key the whole history.
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'account_id', account.uid);
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'name', account.name || placeholder);
       writeCell_(sheet, row, ACCOUNT_COLUMNS, 'kind', ACCOUNT_KIND.BANK);
@@ -210,6 +232,12 @@ function upsertAccounts_(accounts, provider, connectionId) {
     if (account.currency) writeCell_(sheet, row, ACCOUNT_COLUMNS, 'currency', account.currency);
     if (connectionId) writeCell_(sheet, row, ACCOUNT_COLUMNS, 'connection_id', connectionId);
 
+    // The two that move with each consent, while account_id stays put.
+    if (account.identityHash) {
+      writeCell_(sheet, row, ACCOUNT_COLUMNS, 'identity_hash', account.identityHash);
+    }
+    writeCell_(sheet, row, ACCOUNT_COLUMNS, 'provider_account_id', account.uid);
+
     written.push({
       uid: account.uid,
       row: row,
@@ -219,6 +247,34 @@ function upsertAccounts_(accounts, provider, connectionId) {
   });
 
   return { added: added, written: written };
+}
+
+
+/**
+ * The row this account already occupies, if any.
+ *
+ * Three ways in, most durable first:
+ *
+ * 1. **`identity_hash`** — the provider's own, stable across consents. This
+ *    is what makes a reconnect update a row rather than add one.
+ * 2. **`provider_account_id`** — the uid of the current consent. Catches a
+ *    row written before identity_hash existed, on the run that backfills it.
+ * 3. **`account_id`** — the frozen original. Same purpose, for a sheet whose
+ *    rows predate column R entirely.
+ *
+ * The last two exist only so an existing sheet upgrades itself on the next
+ * refresh instead of needing a migration.
+ */
+function findAccountRow_(sheet, account) {
+  var byHash = account.identityHash &&
+    findRowByValue_(sheet, colIndex_(ACCOUNT_COLUMNS, 'identity_hash'), account.identityHash);
+  if (byHash) return byHash;
+
+  var byProvider = findRowByValue_(
+    sheet, colIndex_(ACCOUNT_COLUMNS, 'provider_account_id'), account.uid);
+  if (byProvider) return byProvider;
+
+  return findRowByValue_(sheet, colIndex_(ACCOUNT_COLUMNS, 'account_id'), account.uid);
 }
 
 /**
@@ -236,7 +292,13 @@ function listSyncableAccounts_() {
     })
     .map(function (row) {
       return {
+        // `uid` is the frozen local identity: what transactions reference and
+        // what computeUid hashes. `providerUid` is what the API answers to,
+        // and it changes with every consent. Confusing the two either re-keys
+        // your history or calls the bank with an id it has forgotten.
         uid: String(row.account_id),
+        providerUid: String(row.provider_account_id || row.account_id),
+        identityHash: row.identity_hash || '',
         name: row.name || String(row.account_id),
         currency: row.currency || '',
         connectionId: row.connection_id || '',
@@ -420,16 +482,26 @@ function truncateForCell_(text) {
  *    inherit the first's row and overwrite its session. No account in
  *    common means a different connection, whatever it is called.
  */
-function resolveConnectionId_(session, provider, accountUids) {
+function resolveConnectionId_(session, provider, accounts) {
   var covered = {};
   readRecords_(sheetOrThrow_(TABS.ACCOUNTS), ACCOUNT_COLUMNS).forEach(function (row) {
     if (!row.account_id || !row.connection_id) return;
     var id = String(row.connection_id);
     covered[id] = covered[id] || {};
-    covered[id][String(row.account_id)] = true;
+
+    // Every identifier the row carries, because the incoming session knows
+    // the account by whichever of them is current. The uid is not it: that
+    // is precisely what a new consent changes.
+    [row.account_id, row.identity_hash, row.provider_account_id].forEach(function (value) {
+      if (value) covered[id][String(value)] = true;
+    });
   });
 
-  var wanted = (accountUids || []).map(String);
+  var wanted = [];
+  (accounts || []).forEach(function (account) {
+    if (account && account.uid) wanted.push(String(account.uid));
+    if (account && account.identityHash) wanted.push(String(account.identityHash));
+  });
   var reuse = '';
   Object.keys(covered).forEach(function (id) {
     if (reuse) return;

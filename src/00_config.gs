@@ -103,7 +103,22 @@ var ACCOUNT_COLUMNS = [
   // Which _status connection covers this account. Appended rather than
   // slotted in next to `provider`, because inserting a column mid-schema
   // renames headers without moving the data underneath them.
-  'connection_id'         // P
+  'connection_id',        // P
+  // Enable Banking mints a new account uid for every consent — observed on
+  // Revolut, illimity and Fineco, so it is how the API works rather than one
+  // bank's quirk. Keying on it duplicated the account row at every reconnect
+  // and, worse, changed every transaction's hash.
+  //
+  // `identity_hash` is the provider's own `identification_hash`, which covers
+  // [["account","account_id","iban"],["account","currency"]] and survives a
+  // new consent. It is the match key. Deliberately NOT
+  // `identification_hashes[0]`, which is the IBAN alone and is identical
+  // across Fineco's four currency pockets.
+  //
+  // `account_id` stays whatever it was the first time we saw the account and
+  // is never rewritten, so stored transaction uids remain valid forever.
+  'identity_hash',        // Q  stable across consents; how a returning account is recognised
+  'provider_account_id'   // R  the current per-consent uid, what the API is called with
 ];
 
 var RULE_COLUMNS = [

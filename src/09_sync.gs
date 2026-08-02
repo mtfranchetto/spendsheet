@@ -213,7 +213,7 @@ function syncAccount_(account, context) {
     // the rolling window are gone. So the balance call is only made when
     // there is room for it *and* for the fetch that follows.
     if (remaining > 1) {
-      var balances = ebGetAccountBalances(account.uid);
+      var balances = ebGetAccountBalances(account.providerUid);
       outcome.calls++;
       remaining--;
       updateAccountBalance_(account.row, balances);
@@ -271,7 +271,7 @@ function syncAccount_(account, context) {
  */
 function fetchTransactions_(account, context, status) {
   var windowDays = configNumber_(context.config, 'sync_window_days');
-  var result = ebGetAllTransactions(account.uid, {
+  var result = ebGetAllTransactions(account.providerUid, {
     dateFrom: context.backfill ? undefined : isoDay_(context.now, -windowDays),
     status: status,
     strategy: context.backfill ? 'longest' : undefined

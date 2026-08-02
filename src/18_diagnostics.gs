@@ -222,7 +222,9 @@ function unique_(values) {
  */
 function inspectAccountDetails() {
   var sheet = sheetOrThrow_(TABS.ACCOUNTS);
-  var uids = readColumn_(sheet, colIndex_(ACCOUNT_COLUMNS, 'account_id'))
+  // The provider's current uid, not our frozen one — this calls the API.
+  var uids = readRecords_(sheet, ACCOUNT_COLUMNS)
+    .map(function (row) { return row.provider_account_id || row.account_id; })
     .filter(function (uid) { return uid; });
   if (!uids.length) throw new Error('No accounts yet.');
 

@@ -64,8 +64,8 @@ function connected(fetch) {
 describe('extractAccounts', () => {
   it('joins the UID list to the separate details list', () => {
     expect(ctx.extractAccounts(SESSION)).toEqual([
-      { uid: 'acc-1', name: 'Current', currency: 'EUR', iban: 'FI2112345600000785' },
-      { uid: 'acc-2', name: 'Savings', currency: 'EUR', iban: 'FI2112345600000999' }
+      { uid: 'acc-1', identityHash: '', name: 'Current', currency: 'EUR', iban: 'FI2112345600000785' },
+      { uid: 'acc-2', identityHash: '', name: 'Savings', currency: 'EUR', iban: 'FI2112345600000999' }
     ]);
   });
 
@@ -80,14 +80,16 @@ describe('extractAccounts', () => {
 
   it('reads UIDs with no accounts_data at all', () => {
     expect(ctx.extractAccounts({ accounts: ['acc-9'] }))
-      .toEqual([{ uid: 'acc-9', name: '', currency: '', iban: '' }]);
+      .toEqual([{ uid: 'acc-9', identityHash: '', name: '', currency: '', iban: '' }]);
   });
 
   it('reads accounts_data with no accounts list', () => {
     const accounts = ctx.extractAccounts({
       accounts_data: [{ uid: 'acc-7', product: 'Conto Corrente', currency: 'EUR' }]
     });
-    expect(accounts).toEqual([{ uid: 'acc-7', name: 'Conto Corrente', currency: 'EUR', iban: '' }]);
+    expect(accounts).toEqual([
+      { uid: 'acc-7', identityHash: '', name: 'Conto Corrente', currency: 'EUR', iban: '' }
+    ]);
   });
 
   it('tolerates objects in the accounts list, in case a bank differs', () => {
@@ -110,18 +112,19 @@ describe('extractAccounts', () => {
 });
 
 describe('mergeAccountDetails', () => {
-  const bare = { uid: 'acc-1', name: '', currency: '', iban: '' };
+  const bare = { uid: 'acc-1', identityHash: '', name: '', currency: '', iban: '' };
 
   it('fills in what the session did not carry', () => {
     expect(ctx.mergeAccountDetails(bare, {
       name: 'Fineco mock', currency: 'EUR', account_id: { iban: 'IT60X0542811101000000123456' }
     })).toEqual({
-      uid: 'acc-1', name: 'Fineco mock', currency: 'EUR', iban: 'IT60X0542811101000000123456'
+      uid: 'acc-1', identityHash: '', name: 'Fineco mock', currency: 'EUR',
+      iban: 'IT60X0542811101000000123456'
     });
   });
 
   it('never overwrites something the session already told us', () => {
-    const known = { uid: 'acc-1', name: 'Current', currency: 'EUR', iban: 'FI21' };
+    const known = { uid: 'acc-1', identityHash: '', name: 'Current', currency: 'EUR', iban: 'FI21' };
     expect(ctx.mergeAccountDetails(known, { name: 'Other', currency: 'GBP' })).toEqual(known);
   });
 
@@ -478,5 +481,118 @@ describe('compareAccountIdentity_', () => {
     ]);
 
     expect(result.verdict).toMatch(/STABLE/);
+  });
+});
+
+
+/**
+ * A new consent for an account we already have.
+ *
+ * Enable Banking mints a fresh account uid every time you authorise, which
+ * was observed on all three real banks. Recognising the account anyway is
+ * what stops the row duplicating — and, far more importantly, what stops
+ * every stored transaction uid becoming unreachable, since computeUid hashes
+ * account_id in.
+ */
+describe('reconnecting a bank', () => {
+  const HASH = 'WwpbCiJhY2NvdW50Il0=.stable-across-consents';
+
+  const sessionWith = (sessionId, uid) => ({
+    session_id: sessionId,
+    aspsp: { name: 'Mock ASPSP', country: 'IT' },
+    access: { valid_until: '2027-01-26T19:55:29.069000Z' },
+    accounts: [uid],
+    accounts_data: [{
+      uid,
+      identification_hash: HASH,
+      name: 'Current',
+      currency: 'EUR',
+      account_id: { iban: 'IT19X0300203280000000403507' }
+    }]
+  });
+
+  it('updates the one row instead of adding a second', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('A3').getValue()).toBe('');
+    expect(c.lastRecordRow_(accounts, 1)).toBe(2);
+  });
+
+  it('never rewrites account_id, because transaction uids hash it', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    expect(accounts.getRange('A2').getValue()).toBe('uid-old');
+    expect(accounts.getRange(2, c.colIndex_(c.ACCOUNT_COLUMNS, 'provider_account_id')).getValue())
+      .toBe('uid-new');
+  });
+
+  it('calls the bank with the new uid, not the frozen one', () => {
+    // The API has forgotten uid-old the moment the consent was replaced.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+
+    const account = c.listSyncableAccounts_()[0];
+    expect(account.uid).toBe('uid-old');
+    expect(account.providerUid).toBe('uid-new');
+  });
+
+  it('keeps the same connection rather than minting a second', () => {
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+
+    const status = c.__spreadsheet.getSheetByName('_status');
+    expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
+    expect(status.getRange('A3').getValue()).toBe('');
+  });
+
+  it('adopts a row that predates the hash, rather than duplicating it', () => {
+    // An existing sheet has rows with no identity_hash. The first refresh
+    // must recognise them by uid and fill it in, or every account doubles.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const accounts = c.__spreadsheet.getSheetByName('accounts');
+    accounts.getRange('A2').setValue('uid-old');
+    accounts.getRange('C2').setValue('bank');
+
+    c.recordConnection(sessionWith('sess-2', 'uid-old'), 'Mock ASPSP');
+
+    expect(c.lastRecordRow_(accounts, 1)).toBe(2);
+    expect(accounts.getRange(2, c.colIndex_(c.ACCOUNT_COLUMNS, 'identity_hash')).getValue())
+      .toBe(HASH);
+  });
+
+  it('keeps four currency pockets on one IBAN apart', () => {
+    // identification_hashes[0] is the IBAN alone and is identical across all
+    // four of Fineco's. Keying on that would merge them into one account.
+    const c = connected(() => ({ code: 200, body: '{}' }));
+    const pocket = (uid, currency, hash) => ({
+      uid,
+      identification_hash: hash,
+      identification_hashes: ['iban-only-shared-by-all-four', hash],
+      currency,
+      account_id: { iban: 'IT60X0542811101000000123456' }
+    });
+
+    c.recordConnection({
+      session_id: 'sess-fineco',
+      aspsp: { name: 'FinecoBank', country: 'IT' },
+      access: { valid_until: '2027-01-26T19:55:29.069000Z' },
+      accounts: ['f-eur', 'f-chf', 'f-gbp', 'f-usd'],
+      accounts_data: [
+        pocket('f-eur', 'EUR', 'hash-eur'),
+        pocket('f-chf', 'CHF', 'hash-chf'),
+        pocket('f-gbp', 'GBP', 'hash-gbp'),
+        pocket('f-usd', 'USD', 'hash-usd')
+      ]
+    }, 'FinecoBank');
+
+    expect(c.lastRecordRow_(c.__spreadsheet.getSheetByName('accounts'), 1)).toBe(5);
   });
 });
