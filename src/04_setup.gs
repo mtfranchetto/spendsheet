@@ -61,6 +61,12 @@ function runSetup_() {
   var sep = detectArgSeparator_(ss);
   buildImportStaged_(ss, sep, report);
   applyFormulas_(ss, sep);
+
+  // A later phase extending an earlier one, through the same guarded forward
+  // reference the sync uses for assertNoRowLoss_. File numbering is load order;
+  // by the time anything runs, everything is defined.
+  if (functionExists_('buildDashboard_')) buildDashboard_(ss, sep);
+
   applyFormats_(ss);
   applyValidation_(ss);
   applyProtection_(ss);

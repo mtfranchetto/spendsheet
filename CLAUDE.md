@@ -31,7 +31,9 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `12_monitor.gs` | the six failure detectors, alerting, Drive snapshots. |
 | `13_import.gs` | formula builders for `_import_staged`. No importer — see the governing rule. |
 | `14_categorize.gs` | the cascade: merchant keys, learned memory, transfer pairing, confirming. |
-| `15`–`17` | free: recurring, cashflow. |
+| `15_recurring.gs` | cadence detection and the forward cashflow projection. Both pure at the core. |
+| `16_dashboard.gs` | the dashboard, entirely formulas. Called from `setup()` through `functionExists_`. |
+| `17` | free. |
 | `18_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
 | `19_menu.gs` | last, so every function it names is defined. |
 

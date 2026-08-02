@@ -121,6 +121,8 @@ class FakeRange {
   getRow() { return this.row; }
   getNumRows() { return this.numRows; }
 
+  setFontSize(n) { this.sheet.fontSizes.set(`${this.row},${this.col}`, n); return this; }
+
   /**
    * The selection, which "Confirm visible rows" reads to decide what it is
    * being asked to confirm. Recorded on the sheet rather than on the book,
@@ -201,7 +203,11 @@ class FakeSheet {
     this.cells = new Map();
     this.formulas = new Map();
     this.notes = new Map();
+    this.fontSizes = new Map();
+    this.columnWidths = new Map();
     this.protections = [];
+    this.activeRange = null;
+    this.filter = null;
     this.frozenRows = 0;
     this.hidden = false;
     this.maxRows = DEFAULT_ROWS;
@@ -286,6 +292,7 @@ class FakeSheet {
     return this;
   }
 
+  setColumnWidth(column, width) { this.columnWidths.set(column, width); return this; }
   setFrozenRows(n) { this.frozenRows = n; return this; }
   getFrozenRows() { return this.frozenRows; }
   hideSheet() { this.hidden = true; return this; }

@@ -288,7 +288,8 @@ var DEFAULT_CONFIG = [
   ['import_preset', 'budgetbakers', 'Which _import_map and _category_map rows to use.'],
   ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
-  ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.']
+  ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
+  ['cashflow_horizon_days', 90, 'How far ahead the cashflow projection runs.']
 ];
 
 /**

@@ -202,11 +202,18 @@ describe('the menu', () => {
     expect(names).toContain('Sync now');              // phase 4
     expect(names).toContain('Import staged rows');     // phase 6
     expect(names).toContain('Re-categorise all');      // phase 7
-    expect(names).toContain('Learn from corrections'); // phase 7
-    expect(names).toContain('Confirm visible rows');   // phase 7
-    // Phase 9 has not landed, so its entries must not be offered yet.
-    expect(names).not.toContain('Detect recurring');
-    expect(names).not.toContain('Rebuild cashflow');
+    expect(names).toContain('Detect recurring');       // phase 9
+
+    // The real invariant, now that every declared entry has landed: the menu
+    // shows an item only when the function behind it exists. It used to be
+    // checked by naming the phases that had not shipped, which stops proving
+    // anything the moment the last one does — and would have gone on passing
+    // for a menu that offered nothing at all.
+    const shown = menu.items.filter((i) => !i.separator);
+    shown.forEach(({ name, fn }) => {
+      expect(typeof fresh[fn], `${name} → ${fn}() is not defined`).toBe('function');
+    });
+    expect(shown.length).toBe(fresh.MENU_ITEMS.filter((i) => !i.separator).length);
   });
 
   it('files the diagnostics away in a submenu', () => {

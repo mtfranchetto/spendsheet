@@ -289,6 +289,26 @@ The category you pick lands in `category_override`, not `category_auto`: you cho
 
 A row missing an account or an amount is **left unprocessed rather than rejected** — on a phone that's someone mid-typing, not an error. It's picked up whenever it's finished, and the run message says how many are waiting so it can't sit there unnoticed. Columns can be filled in any order; a row whose date you haven't typed yet is still visible to the drain.
 
-**`recurring`** — written by `detectRecurring()`. **`cashflow`** — 90-day forward projection. **`dashboard`** — the Wallet-like view, formula-driven, with a health strip in row 1 so status lives where you already look. **`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app; drained into `transactions` by the daily trigger.
+### `recurring`, `cashflow`, `dashboard`
+
+**`recurring`** — `key` · `account_id` · `category` · `avg_amount` · `cadence_days` · `occurrences` · `last_seen` · `next_expected` · `confidence` · `active`. Rebuilt by **Detect recurring**.
+
+An item needs **three occurrences** at a recognisable cadence. Two is a coincidence: with one gap between them, every pair fits *some* cadence perfectly, so the detector can't tell a subscription from two unrelated payments a month apart.
+
+Weekly, fortnightly, 4-weekly, quarterly and yearly are matched on the **median** gap — one missed payment leaves a double-length gap that would drag a mean far enough to match nothing, and a subscription you paused for a month is still a subscription. Monthly is detected separately, by **day-of-month stability**, because Jan 15 → Feb 15 is 31 days and Feb 15 → Mar 15 is 28. Both explanations are scored and the better one wins; a tie goes to monthly, which is the case where a charge on the 15th also fits 4-weekly exactly.
+
+`active` is **yours**, and it survives a re-detect. It's how you say "yes this repeats, and no, don't forecast it" — and it's the column the projection reads.
+
+**`cashflow`** — `date` · `opening` · `expected_in` · `expected_out` · `closing`, one row per day for `cashflow_horizon_days` (default 90). Rebuilt after every sync, since the balances it starts from have just moved.
+
+Opening is **liquid** balance, not net worth: bank and cash only. A projection asks whether money runs out, and a flat you can't sell by Thursday doesn't stop that happening.
+
+**`dashboard`** — entirely formulas, so it's correct the moment a row lands rather than being a snapshot that needs refreshing. It's also what keeps the never-sort rule intact: every view of `transactions` happens *here*, through `QUERY`, instead of by rearranging the record of truth.
+
+Row 2 onward is the health strip — last successful sync, nearest consent expiry, rows in the last 7 days, needs-review count, unconfirmed count, and the projected date you run out. Health belongs where you already look; a status tab you have to remember to open is how you find out the sync died a fortnight ago.
+
+The three blocks below it are separated **horizontally**. They grow downwards, and a `QUERY` that outgrew its neighbour's start row would collide — which shows as `#REF!` across the whole block, not as one wrong cell.
+
+**`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app; drained into `transactions` by the daily trigger.
 
 Cash entry is a Sheets tab rather than a Google Form because **Forms has no native mobile app and cannot submit offline at all**, whereas Sheets has a real offline mode. Logging a €3 coffee happens standing in a bar, sometimes with no signal.
