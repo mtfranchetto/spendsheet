@@ -289,6 +289,8 @@ And because ASPSPs do emit bad duplicates: if the same `account_id|entry_referen
 | A `uid` | B `account_id` | C `account_name` | D `booking_date` | E `value_date` | F `transaction_date` | G `amount` (signed, − = outflow) | H `currency` | I `description` | J `counterparty` | K `entry_reference` | L `bank_transaction_code` | M `mcc` | N `source` | O `imported_at` |
 | P `amount_eur` | Q `category_auto` | R `subcategory_auto` | S `category_source` | T `category_override` | U `category` | V `subcategory` | W `type` (expense/income/transfer) | X `transfer_group` | Y `notes` | Z `excluded` |
 
+Phase 7 appends two more to the right: `confirmed` (you agreed with the category, and the only rows `deriveRules()` is allowed to learn from) and `labels` (comma-separated, cross-cutting, never affects a total). Appending is always safe; inserting never is.
+
 `amount_eur` is what every report reads — see multi-currency below. `category_source` records which cascade tier decided the category.
 
 Mapping from the verified API shape. Every point below was checked against the aggregation API reference, and three of them are corrections to what I first wrote:
@@ -460,6 +462,35 @@ It's a **cascade**, first hit wins, and each row records which tier decided it i
 **Tier 6 is what keeps it honest.** Unclassified rows surface as a `needs_review` count on the dashboard rather than being dumped into "Other", where miscategorised spending goes to die. When you fix one, `learnFromCorrection()` writes the merchant key into `_memory`, so that merchant is automatic forever after. That's the whole feedback loop, and it means the review queue shrinks toward zero on its own.
 
 Realistically: after importing your history, tier 3 should catch the large majority of transactions on day one, and the queue should be a handful of genuinely-new merchants a month.
+
+### Confirming a row, rather than trusting the cascade
+
+A guessed category and a category you agreed with are not the same fact, and a system that renders them identically will quietly teach you to trust the guesses. So `transactions` gains a **`confirmed`** column, appended to the right like everything else you own.
+
+Every synced row arrives unconfirmed. A row is confirmed when you say so — either by ticking it, or implicitly by typing a `category_override`, which is a stronger statement than a tick. Imported BudgetBakers rows arrive **confirmed**, because you already categorised them once in the tool they came from; re-reviewing four thousand of them would be a fresh chore invented by the migration.
+
+What it buys, and why it is worth a column rather than being inferred:
+
+- **`deriveRules()` learns only from confirmed rows.** Without this the cascade trains on its own output, and a single wrong guess about a frequent merchant hardens into a rule that generates more of the same. This is the real reason the column exists; the review queue is a side benefit.
+- **The dashboard reports confirmed and unconfirmed spend separately**, so "€400 on groceries" is never silently half guesswork.
+- **The review queue becomes "unconfirmed", not "unclassified"** — tier 6's `needs_review` count is a special case of it, and a confidently-wrong guess is exactly the row that most needs looking at and the one an unclassified-only queue never shows you.
+
+Confirming is a menu item over the current filter view rather than a per-row click: **Confirm visible rows**. Filter to a merchant, glance, confirm forty at once. Anything that makes confirming forty rows cost forty interactions guarantees it stops happening by the second month, and then the flag means nothing.
+
+Never automatic. A row confirmed by elapsed time is a row nobody looked at, wearing a badge that says somebody did.
+
+### Labels
+
+Categories answer *what did I buy*. Labels answer *what was this for* — `kids`, `holiday-2026`, `flat-renovation` — and the two are genuinely independent: a holiday is flights **and** restaurants **and** a pharmacy, spanning categories that each have their own separate meaning the rest of the year. BudgetBakers gets this right and it is the one feature of theirs worth copying wholesale.
+
+One **`labels`** column, comma-separated, yours to type. Not one column per label, which needs a schema change per label; not a separate join tab, which needs a UI this project deliberately doesn't have.
+
+- **Many per transaction.** `kids, holiday-2026` is normal and the reason this isn't a second category field.
+- **A `_labels` tab** holds the known set, feeding a data-validation dropdown so `holiday-2026` and `Holiday 2026` don't become two different things — the failure mode of every free-text tag system.
+- **Reporting is `QUERY` over the column**, not new machinery: spend per label, spend per label per month, and a label's breakdown by category, which is the view that actually answers "what did the holiday cost".
+- **Labels never affect `category`, `type` or any total.** A label is an annotation; the moment one starts changing a number, two systems own the same fact.
+
+`learnFromCorrection()` ignores labels entirely. Merchant → category is a stable relationship worth learning; merchant → label is not — the same supermarket is `kids` one week and nothing the next, and a system that guessed would be wrong constantly in a way that is tedious to correct.
 
 **Deliberately not included: LLM categorisation.** Calling Claude for unknown merchants would work and would cost pennies, but it adds an API key, an external dependency and a per-row cost to something whose whole premise is free and maintenance-free — and tier 3 makes it largely unnecessary. `docs/` will note it as an opt-in hook for anyone who wants it, defaulting off.
 
