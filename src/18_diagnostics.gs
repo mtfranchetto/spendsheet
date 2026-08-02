@@ -110,10 +110,14 @@ function writeTestResults_(results) {
 // ---------------------------------------------------------------------------
 
 /**
- * Dump the current session's raw JSON into _anomalies.
+ * Dump every session's raw JSON into _anomalies.
  *
  * Response shape varies by bank, and this is the probe that settles it. Every
  * entry in docs/PROVIDERS.md came from here.
+ *
+ * All of them rather than the first, because the questions worth asking are
+ * comparisons: whether two sessions for the same bank describe the same
+ * accounts, and which fields survive between them.
  */
 function inspectSession() {
   var status = sheetOrThrow_(TABS.STATUS);
@@ -121,14 +125,92 @@ function inspectSession() {
     .filter(function (id) { return id; });
   if (!ids.length) throw new Error('No connection in _status yet.');
 
-  var session = ebGetSession(ids[0]);
-  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '',
-    'GET /sessions/' + ids[0] + ' — top-level keys: ' + Object.keys(session || {}).join(', '),
-    session);
+  var sessions = [];
+  ids.forEach(function (id) {
+    try {
+      var session = ebGetSession(id);
+      sessions.push({ id: id, session: session });
+      logAnomaly_(ANOMALY_KIND.RAW_DUMP, '',
+        'GET /sessions/' + id + ' — top-level keys: ' + Object.keys(session || {}).join(', '),
+        session);
+    } catch (e) {
+      logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'GET /sessions/' + id + ' failed: ' + e.message, '');
+    }
+  });
+
+  var stability = compareAccountIdentity_(sessions);
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'account identity across ' + sessions.length +
+    ' session(s): ' + stability.verdict, stability);
 
   SpreadsheetApp.getActiveSpreadsheet()
-    .toast('Written to _anomalies. Unhide that tab to read it.', 'Session inspected', 10);
-  return session;
+    .toast(stability.verdict + '\n\nDetail in _anomalies.', 'Sessions inspected', 30);
+  return stability;
+}
+
+/**
+ * Whether anything about an account survives a new consent.
+ *
+ * `uid` demonstrably does not — reconnecting a bank produces a fresh one for
+ * the same IBAN, which is what makes every account row duplicate and every
+ * transaction hash differently. The question this answers is whether
+ * `identification_hash` is the stable key the name suggests, because if it is,
+ * it is a far better thing to key on than anything we could infer ourselves.
+ *
+ * Reports rather than decides. A probe that guessed would be how the wrong
+ * key got baked into transaction identity.
+ */
+function compareAccountIdentity_(sessions) {
+  var byHash = {};
+  var byIban = {};
+  var accounts = [];
+
+  sessions.forEach(function (entry) {
+    var data = (entry.session && entry.session.accounts_data) || [];
+    data.forEach(function (account) {
+      var hash = account.identification_hash ||
+        (account.identification_hashes || [])[0] || '';
+      var iban = (account.account_id && account.account_id.iban) || account.iban || '';
+
+      accounts.push({
+        session: entry.id,
+        uid: account.uid || '',
+        identification_hash: hash,
+        iban_masked: maskIban(iban),
+        currency: account.currency || ''
+      });
+
+      if (hash) (byHash[hash] = byHash[hash] || []).push(account.uid || '');
+      if (iban) (byIban[maskIban(iban)] = byIban[maskIban(iban)] || []).push(account.uid || '');
+    });
+  });
+
+  var withHash = accounts.filter(function (a) { return a.identification_hash; }).length;
+  var reused = Object.keys(byHash).filter(function (h) {
+    return unique_(byHash[h]).length > 1;
+  });
+
+  var verdict;
+  if (!accounts.length) verdict = 'No accounts_data in any session.';
+  else if (!withHash) verdict = 'No identification_hash on any account — it cannot be the key.';
+  else if (sessions.length < 2) verdict = 'identification_hash present, but only one session: ' +
+    'reconnect a bank and run this again to see whether it survives.';
+  else if (reused.length) verdict = 'identification_hash is STABLE — ' + reused.length +
+    ' hash(es) span more than one uid. Key on it.';
+  else verdict = 'identification_hash present but no hash spans two uids. ' +
+    'Either the sessions cover different accounts, or it is not stable.';
+
+  return { verdict: verdict, accounts: accounts, byHash: byHash, byIban: byIban };
+}
+
+function unique_(values) {
+  var seen = {};
+  var out = [];
+  (values || []).forEach(function (value) {
+    if (seen[value]) return;
+    seen[value] = true;
+    out.push(value);
+  });
+  return out;
 }
 
 /**

@@ -425,3 +425,58 @@ describe('connection_id', () => {
     expect(c.listSyncableAccounts_()[0].connectionId).toBe('mock-aspsp-it');
   });
 });
+
+
+/**
+ * Whether an account keeps any identity across consents.
+ *
+ * Reconnecting a bank returns a new `uid` for the same IBAN — observed on
+ * both Revolut and illimity — which duplicates the account row and makes
+ * every transaction hash differently. Before keying anything on
+ * `identification_hash` instead, the probe has to actually show it survives.
+ */
+describe('compareAccountIdentity_', () => {
+  const account = (uid, hash) => ({
+    uid,
+    identification_hash: hash,
+    currency: 'EUR',
+    account_id: { iban: 'IT19X0300203280000000403507' }
+  });
+
+  const session = (id, accounts) => ({ id, session: { accounts_data: accounts } });
+
+  it('calls the hash stable when one spans two uids', () => {
+    const result = ctx.compareAccountIdentity_([
+      session('sess-1', [account('uid-old', 'hash-a')]),
+      session('sess-2', [account('uid-new', 'hash-a')])
+    ]);
+
+    expect(result.verdict).toMatch(/STABLE/);
+    expect(result.byHash['hash-a']).toEqual(['uid-old', 'uid-new']);
+  });
+
+  it('does not call it stable on a single session, which proves nothing', () => {
+    const result = ctx.compareAccountIdentity_([session('sess-1', [account('uid-old', 'hash-a')])]);
+    expect(result.verdict).not.toMatch(/STABLE/);
+    expect(result.verdict).toMatch(/only one session/);
+  });
+
+  it('says so when the field is absent, rather than reading blanks as equal', () => {
+    // Two accounts with no hash would otherwise look like one shared key.
+    const result = ctx.compareAccountIdentity_([
+      session('sess-1', [account('uid-old', '')]),
+      session('sess-2', [account('uid-new', '')])
+    ]);
+
+    expect(result.verdict).toMatch(/cannot be the key/);
+  });
+
+  it('reads the hash from identification_hashes when the singular is missing', () => {
+    const result = ctx.compareAccountIdentity_([
+      session('sess-1', [{ uid: 'uid-old', identification_hashes: ['hash-a'], currency: 'EUR' }]),
+      session('sess-2', [{ uid: 'uid-new', identification_hashes: ['hash-a'], currency: 'EUR' }])
+    ]);
+
+    expect(result.verdict).toMatch(/STABLE/);
+  });
+});
