@@ -118,6 +118,16 @@ class FakeRange {
 
   setValue(v) { this.sheet._set(this.row, this.col, v); return this; }
 
+  getRow() { return this.row; }
+  getNumRows() { return this.numRows; }
+
+  /**
+   * The selection, which "Confirm visible rows" reads to decide what it is
+   * being asked to confirm. Recorded on the sheet rather than on the book,
+   * matching `getActiveRange()` being a Sheet method.
+   */
+  activate() { this.sheet.activeRange = this; return this; }
+
   clearContent() {
     for (let r = 0; r < this.numRows; r++) {
       for (let c = 0; c < this.numCols; c++) this.sheet._set(this.row + r, this.col + c, '');
@@ -283,6 +293,16 @@ class FakeSheet {
   isSheetHidden() { return this.hidden; }
   clear() { this.cells.clear(); this.formulas.clear(); this.notes.clear(); return this; }
   getProtections() { return this.protections.slice(); }
+  getActiveRange() { return this.activeRange || null; }
+
+  /**
+   * No filter unless a test installs one. Deliberately not faked further:
+   * `isRowHiddenByFilter` is real spreadsheet state with no local model behind
+   * it, and a stub that always answered "visible" would let a test claim
+   * "Confirm visible rows" respects a filter it never actually consulted.
+   */
+  getFilter() { return this.filter || null; }
+  isRowHiddenByFilter(row) { return !!(this.filter && this.filter.hidden.indexOf(row) !== -1); }
 
   /** Test convenience: the header row as a plain array. */
   headers() {
@@ -369,6 +389,7 @@ export function createGoogleStubs(options = {}) {
         rule.type = 'list'; rule.values = list; rule.showDropdown = showDropdown; return builder;
       },
       requireNumberBetween(a, b) { rule.type = 'number'; rule.values = [a, b]; return builder; },
+      requireCheckbox() { rule.type = 'checkbox'; return builder; },
       setAllowInvalid(v) { rule.allowInvalid = v; return builder; },
       setHelpText(t) { rule.help = t; return builder; },
       build() { return rule; }

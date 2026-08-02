@@ -134,6 +134,13 @@ function runSync_(options) {
 
   rewritePending_(pendingSheet, refreshed, pendingRows);
 
+  // After every append, including cash: transfer detection has to see both legs
+  // of a move, and an ATM withdrawal's second leg is the cash entry that was
+  // typed rather than fetched. Forward reference through functionExists_ for
+  // the same reason assertNoRowLoss_ is — file numbering is load order, and
+  // this runs long after everything is defined.
+  if (totals.inserted && functionExists_('categorizeAfterSync_')) categorizeAfterSync_(config);
+
   var attempted = accounts.length - totals.skipped;
   var result = !attempted ? RUN_RESULT.OK
     : totals.ok === attempted ? RUN_RESULT.OK

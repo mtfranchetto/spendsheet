@@ -293,7 +293,13 @@ function danglingSheetRefs(formula) {
   const tabs = Object.values(ctx.TABS).sort((a, b) => b.length - a.length);
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const found = [];
-  let rest = formula;
+
+  // Quoted text first, for the same reason localizeFormula is quote-aware: a
+  // tab name inside a string literal is data. `MATCH("labels", …)` looks up a
+  // *column* header called labels and has nothing to do with the tab of that
+  // name — without this the check reports a reference that does not exist,
+  // which is the one thing a guard against invisible bugs must never do.
+  let rest = formula.replace(/"[^"]*"/g, '""');
 
   tabs.forEach((tab) => {
     rest = rest.replace(new RegExp(escape(tab) + '(?![\\w!])', 'g'), () => {

@@ -38,6 +38,7 @@ function runSetup_() {
   buildTable_(ss, TABS.ACCOUNTS, ACCOUNT_COLUMNS, report);
   buildTable_(ss, TABS.RULES, RULE_COLUMNS, report, DEFAULT_RULES);
   buildTable_(ss, TABS.CATEGORIES, CATEGORY_COLUMNS, report, DEFAULT_CATEGORIES);
+  buildTable_(ss, TABS.LABELS, LABEL_COLUMNS, report, DEFAULT_LABELS);
   buildTable_(ss, TABS.RECURRING, RECURRING_COLUMNS, report);
   buildTable_(ss, TABS.CASHFLOW, CASHFLOW_COLUMNS, report);
   buildTable_(ss, TABS.CASH_ENTRY, CASH_ENTRY_COLUMNS, report);
@@ -327,9 +328,13 @@ function applyFormulas_(ss, sep) {
   setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula(), sep);
 
   // category_auto / subcategory_auto / category_source are written by the
-  // categorisation cascade in 09_categorize.gs (phase 7), not by a formula:
-  // tier 3 needs normalizeMerchant() and tier 5 needs priority-ordered
-  // substring matching, neither of which is expressible in ARRAYFORMULA.
+  // categorisation cascade in 14_categorize.gs, not by a formula: tier 3 needs
+  // normalizeMerchant() and tier 5 needs priority-ordered substring matching,
+  // neither of which is expressible in ARRAYFORMULA.
+
+  var labels = ss.getSheetByName(TABS.LABELS);
+  setFormula_(labels, colOf(LABEL_COLUMNS, 'transactions'), labelCountFormula(), sep);
+  setFormula_(labels, colOf(LABEL_COLUMNS, 'total_eur'), labelTotalFormula(), sep);
 
   var acc = ss.getSheetByName(TABS.ACCOUNTS);
   setFormula_(acc, colOf(ACCOUNT_COLUMNS, 'balance'), accountBalanceFormula(), sep);
@@ -488,6 +493,53 @@ function typeFormula() {
 }
 
 /**
+ * labels.transactions and labels.total_eur — the label report.
+ *
+ * Reporting over a comma-separated column, without new machinery: `COUNTIF` and
+ * `SUMIF` both vectorise their *criteria* inside an ARRAYFORMULA, so one
+ * formula anchored at row 2 covers every label you will ever add.
+ *
+ * The match is a wildcard substring, which carries one caveat worth stating
+ * plainly rather than engineering around: **a label that is a substring of
+ * another counts both.** `kids` would include `kids-school`. Whole-item
+ * matching inside a comma-separated cell needs the range transformed before
+ * SUMIF sees it, which SUMIF does not allow — and the alternatives (an MMULT
+ * matrix over every transaction, or a helper column on `transactions`) are a
+ * lot of machinery to buy a constraint that "keep label names distinct" already
+ * satisfies.
+ *
+ * `total_eur` reads `amount_eur` because every report does. It is signed, so a
+ * label covering both a purchase and its refund nets out, which is the honest
+ * figure for "what did this cost".
+ */
+function labelCountFormula() {
+  var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
+  return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
+    'COUNTIF(' + txLabelsRange_() + ',"*"&' + label + '&"*")))';
+}
+
+function labelTotalFormula() {
+  var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
+  var amount = colOf(TX_COLUMNS, 'amount_eur');
+  return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
+    'SUMIF(' + txLabelsRange_() + ',"*"&' + label + '&"*",' +
+    TABS.TRANSACTIONS + '!$' + amount + '$2:$' + amount + ')))';
+}
+
+/**
+ * Built whole rather than left for the caller to prefix.
+ *
+ * `TABS.TRANSACTIONS + '$AA$2:$AA'` reads correctly at the call site and
+ * produces `transactions$AA$2:$AA`, which does not parse — the `!` is easy to
+ * lose exactly once and the harness cannot see it, because it never hands a
+ * formula to a spreadsheet.
+ */
+function txLabelsRange_() {
+  var column = colOf(TX_COLUMNS, 'labels');
+  return TABS.TRANSACTIONS + '!$' + column + '$2:$' + column;
+}
+
+/**
  * accounts.balance — one formula covering all three account kinds, written
  * once and covering every row you will ever add.
  *
@@ -617,6 +669,14 @@ function applyFormats_(ss) {
   formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'date'), 'yyyy-mm-dd');
   formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'amount'), baseFormat);
 
+  // Qualified for the same reason amount_eur is: the column sums amount_eur,
+  // which is blank on any row that is not in the base currency.
+  var labels = ss.getSheetByName(TABS.LABELS);
+  if (labels) formatColumn_(labels, colOf(LABEL_COLUMNS, 'total_eur'), baseFormat);
+
+  var memory = ss.getSheetByName(TABS.MEMORY);
+  if (memory) formatColumn_(memory, colOf(MEMORY_COLUMNS, 'last_seen'), 'yyyy-mm-dd');
+
   ss.getSheets().forEach(function (sh) {
     var lastCol = sh.getLastColumn();
     if (lastCol < 1) return;
@@ -691,6 +751,19 @@ function applyValidation_(ss) {
     'counts the other way — so an ATM withdrawal adds to this account, and ' +
     'the matching debit on the bank side nets it to zero.\n\n' +
     'Type a minus sign to force money out.');
+
+  // A real checkbox, so confirming is a tap on a phone rather than typing the
+  // word TRUE. `isTruthyCell_` still accepts a typed `yes` — someone who wrote
+  // one has not made a mistake worth punishing with silence.
+  tx.getRange(colOf(TX_COLUMNS, 'confirmed') + '2:' + colOf(TX_COLUMNS, 'confirmed'))
+    .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+
+  // Deliberately no dropdown on `transactions.labels`. A label column holds
+  // `kids, travel` as often as it holds one value, and a list rule would flag
+  // every multi-label row with a warning triangle — which trains you to ignore
+  // warnings, the opposite of what validation is for. The `labels` tab catches
+  // the typo instead: a misspelling shows up there as a label with no
+  // transactions against it, next to the real one with all of them.
 
   var kindRule = SpreadsheetApp.newDataValidation()
     .requireValueInList([ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, ACCOUNT_KIND.ASSET], true)
@@ -785,7 +858,8 @@ function removeDefaultSheet_(ss) {
 function orderTabs_(ss) {
   var order = [
     TABS.DASHBOARD, TABS.TRANSACTIONS, TABS.PENDING, TABS.ACCOUNTS,
-    TABS.CASH_ENTRY, TABS.RULES, TABS.CATEGORIES, TABS.RECURRING, TABS.CASHFLOW
+    TABS.CASH_ENTRY, TABS.RULES, TABS.CATEGORIES, TABS.LABELS,
+    TABS.RECURRING, TABS.CASHFLOW
   ];
   order.forEach(function (name, i) {
     var sh = ss.getSheetByName(name);
@@ -851,6 +925,282 @@ function applySeedDefaults() {
     (orphans.length ? ' ' + orphans.length + ' orphan(s) left for you — see _anomalies.' : ''),
     'Defaults applied', 20);
   return { updated: updated, orphans: orphans };
+}
+
+// ---------------------------------------------------------------------------
+// Retiring a category
+// ---------------------------------------------------------------------------
+
+/**
+ * Menu → Tidy retired categories.
+ *
+ * `applySeedDefaults()` fixes rows whose *answer* drifted from the defaults. It
+ * cannot fix a row that should not exist any more, because seeding only ever
+ * adds: after the taxonomy went from fifteen parents to twelve, `Family`,
+ * `Travel` and `Bills & Utilities` stayed in `categories` with all their
+ * children, offered by every dropdown, one careless click from coming back.
+ *
+ * Removing them is not enough on its own. A `_category_map` row, a `rules` row
+ * or a `category_override` still naming a retired category does not break —
+ * it goes *invisible*, which is worse: the row is categorised as something no
+ * report groups by, so its money silently leaves every total while the sheet
+ * looks fine. That is the failure the tie-out against BudgetBakers caught.
+ *
+ * So references are repointed first and the rows removed second, and everything
+ * is named before anything happens.
+ *
+ * `RETIRED_CATEGORIES` in 00_config.gs is keyed on the full category/subcategory
+ * pair, which is what makes each move unambiguous. A `category_override` holds
+ * a parent alone, so a parent is only rewritten when every one of its retired
+ * children agrees on where it went: `Travel` always became `Entertainment`,
+ * while `Family` split between `Shopping` and `Entertainment` and is therefore
+ * reported and left for you.
+ */
+function tidyCategories() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var plan = planCategoryTidy_(ss);
+
+  if (plan.error) {
+    ui.alert('Tidy retired categories', plan.error, ui.ButtonSet.OK);
+    return plan;
+  }
+
+  var answer = ui.alert('Tidy retired categories', describeCategoryTidy_(plan), ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) {
+    ss.toast('Nothing was changed.', 'Cancelled', 5);
+    return plan;
+  }
+
+  var result = commitCategoryTidy_(ss, plan);
+  ss.toast(result.removed + ' categories removed, ' + result.repointed + ' references repointed.',
+    'Taxonomy tidied', 15);
+  return result;
+}
+
+function planCategoryTidy_(ss) {
+  var categories = ss.getSheetByName(TABS.CATEGORIES);
+  if (!categories) return { error: 'No ' + TABS.CATEGORIES + ' tab. Run Setup sheet first.' };
+
+  var rows = readRecords_(categories, CATEGORY_COLUMNS, colIndex_(CATEGORY_COLUMNS, 'category'));
+  var present = {};
+  rows.forEach(function (row) {
+    if (row.category) present[pairKey_(row.category, row.subcategory)] = true;
+  });
+
+  var retired = RETIRED_CATEGORIES.filter(function (entry) {
+    return present[pairKey_(entry.category, entry.subcategory)];
+  });
+
+  var parentMoves = unambiguousParentMoves_();
+
+  var plan = {
+    categories: categories,
+    rows: rows,
+    retired: retired,
+    parentMoves: parentMoves,
+    mappings: retargetPairs_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, 'source_category'),
+    rules: retargetPairs_(ss, TABS.RULES, RULE_COLUMNS, 'priority'),
+    overrides: retargetOverrides_(ss, parentMoves),
+    ambiguous: ambiguousParents_()
+  };
+
+  var work = retired.length + plan.mappings.length + plan.rules.length + plan.overrides.length;
+  if (!work) {
+    return { error: 'Nothing to tidy — no retired category is left in ' + TABS.CATEGORIES +
+      ', and nothing still points at one.' };
+  }
+
+  return plan;
+}
+
+function pairKey_(category, subcategory) {
+  return String(category || '') + '\u0000' + String(subcategory || '');
+}
+
+/**
+ * Retired parents whose children all went to the same place.
+ *
+ * A parent is only safe to rewrite on its own when there is one answer. Anything
+ * else has to be looked at, because picking either branch would file real
+ * spending under a category you did not choose.
+ */
+function unambiguousParentMoves_() {
+  var seen = {};
+  RETIRED_CATEGORIES.forEach(function (entry) {
+    var to = entry.to[0];
+    if (!(entry.category in seen)) { seen[entry.category] = to; return; }
+    if (seen[entry.category] !== to) seen[entry.category] = null;
+  });
+
+  var moves = {};
+  Object.keys(seen).forEach(function (parent) {
+    if (seen[parent]) moves[parent] = seen[parent];
+  });
+  return moves;
+}
+
+function ambiguousParents_() {
+  var all = {};
+  RETIRED_CATEGORIES.forEach(function (entry) { all[entry.category] = true; });
+
+  var unambiguous = unambiguousParentMoves_();
+  return Object.keys(all).filter(function (parent) { return !unambiguous[parent]; });
+}
+
+/**
+ * Rows on a tab whose `category`/`subcategory` name a retired pair.
+ *
+ * Both `_category_map` and `rules` carry those two columns under exactly those
+ * names, so one function covers both — they differ only in which column decides
+ * where the records end.
+ */
+function retargetPairs_(ss, tab, headers, keyColumn) {
+  var sheet = ss.getSheetByName(tab);
+  if (!sheet) return [];
+
+  var byPair = {};
+  RETIRED_CATEGORIES.forEach(function (entry) {
+    byPair[pairKey_(entry.category, entry.subcategory)] = entry.to;
+  });
+
+  return readRecords_(sheet, headers, colIndex_(headers, keyColumn))
+    .map(function (row) {
+      var to = byPair[pairKey_(row.category, row.subcategory)];
+      if (!to) return null;
+      return {
+        tab: tab,
+        headers: headers,
+        row: row._row,
+        from: row.category + ' / ' + row.subcategory,
+        to: to[0] + ' / ' + to[1],
+        category: to[0],
+        subcategory: to[1]
+      };
+    })
+    .filter(function (entry) { return entry; });
+}
+
+/**
+ * `category_override` cells naming a retired parent.
+ *
+ * Parent-only, because that is all the column ever holds — `subcategory` blanks
+ * itself whenever an override is present, so there is no child here to key on.
+ */
+function retargetOverrides_(ss, parentMoves) {
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  if (!tx) return [];
+
+  return readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'))
+    .map(function (row) {
+      var from = String(row.category_override || '');
+      var to = parentMoves[from];
+      if (!to) return null;
+      return { row: row._row, from: from, to: to };
+    })
+    .filter(function (entry) { return entry; });
+}
+
+function describeCategoryTidy_(plan) {
+  var lines = [];
+
+  if (plan.retired.length) {
+    lines.push('Remove ' + plan.retired.length + ' retired categories from ' + TABS.CATEGORIES + ':');
+    plan.retired.forEach(function (entry) {
+      lines.push('  ' + entry.category + ' / ' + entry.subcategory + '  →  ' +
+        entry.to[0] + ' / ' + entry.to[1]);
+    });
+    lines.push('');
+  }
+
+  [['mappings', TABS.CATEGORY_MAP], ['rules', TABS.RULES]].forEach(function (pair) {
+    var entries = plan[pair[0]];
+    if (!entries.length) return;
+    lines.push('Repoint ' + entries.length + ' rows in ' + pair[1] + ':');
+    summarizeMoves_(entries).forEach(function (line) { lines.push('  ' + line); });
+    lines.push('');
+  });
+
+  if (plan.overrides.length) {
+    lines.push('Rewrite category_override on ' + plan.overrides.length + ' transactions:');
+    summarizeMoves_(plan.overrides).forEach(function (line) { lines.push('  ' + line); });
+    lines.push('');
+  }
+
+  if (plan.ambiguous.length) {
+    lines.push('⚠ Left alone: ' + plan.ambiguous.join(', ') + '. Their children went to more ' +
+      'than one parent, so a row naming only the parent cannot be resolved without guessing. ' +
+      'Retype those by hand.');
+    lines.push('');
+  }
+
+  lines.push('Continue?');
+  return lines.join('\n');
+}
+
+function summarizeMoves_(entries) {
+  var counts = {};
+  entries.forEach(function (entry) {
+    var key = entry.from + '  →  ' + entry.to;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return Object.keys(counts).sort().map(function (key) { return key + '  (' + counts[key] + ')'; });
+}
+
+/**
+ * References first, rows second.
+ *
+ * In that order because the reverse leaves a window — however short — where a
+ * mapping points at a category the taxonomy no longer has, which is exactly the
+ * invisible state this exists to end.
+ */
+function commitCategoryTidy_(ss, plan) {
+  var repointed = 0;
+
+  plan.mappings.concat(plan.rules).forEach(function (entry) {
+    var sheet = ss.getSheetByName(entry.tab);
+    writeCell_(sheet, entry.row, entry.headers, 'category', entry.category);
+    writeCell_(sheet, entry.row, entry.headers, 'subcategory', entry.subcategory);
+    repointed++;
+  });
+
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  plan.overrides.forEach(function (entry) {
+    writeCell_(tx, entry.row, TX_COLUMNS, 'category_override', entry.to);
+    repointed++;
+  });
+
+  var removed = removeRetiredCategories_(plan);
+
+  return { removed: removed, repointed: repointed, ambiguous: plan.ambiguous };
+}
+
+/**
+ * Rewrite `categories` without the retired rows.
+ *
+ * Compacted rather than blanked in place: the dropdown reads `A2:A`, and a run
+ * of gaps in the middle of the list is the kind of untidiness that gets
+ * "cleaned up" later by deleting rows, which is how an anchored formula on some
+ * other tab dies. There are no formulas on this tab, so one rewrite is safe and
+ * leaves nothing to tidy afterwards.
+ */
+function removeRetiredCategories_(plan) {
+  var retiredKeys = {};
+  plan.retired.forEach(function (entry) {
+    retiredKeys[pairKey_(entry.category, entry.subcategory)] = true;
+  });
+  if (!plan.retired.length) return 0;
+
+  var keep = plan.rows
+    .filter(function (row) { return row.category; })
+    .filter(function (row) { return !retiredKeys[pairKey_(row.category, row.subcategory)]; })
+    .map(function (row) { return toRow_(CATEGORY_COLUMNS, row); });
+
+  var sheet = plan.categories;
+  clearDataRows_(sheet, colIndex_(CATEGORY_COLUMNS, 'category'), CATEGORY_COLUMNS.length);
+  if (keep.length) sheet.getRange(2, 1, keep.length, CATEGORY_COLUMNS.length).setValues(keep);
+
+  return plan.retired.length;
 }
 
 /** Replace the non-key columns of any row whose key matches a seed row. */

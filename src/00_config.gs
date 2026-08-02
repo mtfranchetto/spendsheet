@@ -16,6 +16,11 @@ var TABS = {
   ACCOUNTS: 'accounts',
   RULES: 'rules',
   CATEGORIES: 'categories',
+  // Visible, and named without an underscore, because it is the same kind of
+  // thing as `categories`: a small taxonomy you edit, feeding a column you type
+  // into. The design doc calls it `_labels`; it also gained a spend report,
+  // which is not something to hide behind a tab you have to unhide first.
+  LABELS: 'labels',
   RECURRING: 'recurring',
   CASHFLOW: 'cashflow',
   DASHBOARD: 'dashboard',
@@ -75,7 +80,21 @@ var TX_COLUMNS_DERIVED = [
   // restaurants *and* a pharmacy, each of which means something else the rest
   // of the year. Comma-separated, yours to type, and never affects a total.
   // BudgetBakers exports these, so a history arrives already labelled.
-  'labels'                  // AA
+  'labels',                 // AA
+  // A guess you agreed with, and a guess, are not the same fact — and a sheet
+  // that renders them identically teaches you to trust the guesses.
+  //
+  // Synced rows arrive blank. Imported rows arrive TRUE, because you already
+  // categorised them once in the tool they came from. A row carrying a
+  // `category_override` counts as confirmed without the tick: typing the
+  // category is a stronger statement than ticking a box next to it, and
+  // requiring both would mean an onEdit trigger for no extra information.
+  //
+  // The load-bearing consequence is in `learnFromCorrections`: memory is mined
+  // from confirmed rows only. Learn from everything and the cascade trains on
+  // its own output, where one wrong guess about a frequent merchant hardens
+  // into the rule that generates more of the same.
+  'confirmed'               // AB
 ];
 
 var TX_COLUMNS = TX_COLUMNS_CODE.concat(TX_COLUMNS_DERIVED);
@@ -132,6 +151,21 @@ var RULE_COLUMNS = [
 ];
 
 var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon'];
+
+/**
+ * labels — the cross-cutting axis a category cannot express.
+ *
+ * `category` answers *what did I buy*; a label answers *what was this for*.
+ * A holiday is flights and restaurants and a pharmacy, each of which means
+ * something else the rest of the year, so the two are genuinely independent
+ * and neither can be derived from the other.
+ *
+ * `transactions` and `total_eur` are formulas over `transactions.labels`, so
+ * this tab is both the known set and the report on it. Nothing here ever
+ * affects a category, a type or a total — the moment a label changes a number,
+ * two systems own the same fact.
+ */
+var LABEL_COLUMNS = ['label', 'description', 'transactions', 'total_eur'];
 
 var RECURRING_COLUMNS = [
   'key', 'account_id', 'category', 'avg_amount', 'cadence_days',
@@ -252,7 +286,54 @@ var DEFAULT_CONFIG = [
   ['selfcheck_hour', 9, 'Hour (0-23) the self-check runs. After the sync, so it has something to check.'],
   ['snapshot_hour', 5, 'Hour (0-23) the weekly Drive snapshot runs, on Sundays.'],
   ['import_preset', 'budgetbakers', 'Which _import_map and _category_map rows to use.'],
-  ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.']
+  ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
+  ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
+  ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.']
+];
+
+/**
+ * Example labels, seeded once so the tab shows the shape rather than an empty
+ * grid — replace them with your own.
+ *
+ * Deliberately absent from UPGRADABLE_SEEDS: a label you deleted is a label you
+ * decided against, and re-adding it on every upgrade is the behaviour `rules`
+ * is excluded for. A missing category is a gap; a resurrected label is an
+ * argument.
+ */
+var DEFAULT_LABELS = [
+  ['kids', 'Spending on the children — cuts across shopping, health and education.'],
+  ['travel', 'One trip, all of its categories.'],
+  ['home-renovation', 'A project with an end date, spanning furniture, maintenance and tools.']
+];
+
+/**
+ * Categories that used to exist, and what each became.
+ *
+ * `setup()` adds seed rows and never removes them, which is the right default —
+ * it cannot tell a row you deleted from one you never had. The cost is that a
+ * taxonomy change leaves the old parents sitting in `categories` forever,
+ * offered by every dropdown, quietly inviting their own reintroduction.
+ *
+ * So the retirements are recorded rather than inferred. Keyed on the full
+ * category/subcategory pair because that is what makes each one unambiguous:
+ * `Family` alone cannot be resolved — its children went to two different
+ * parents — while `Family / Kids` maps exactly. `tidyCategories()` in
+ * 04_setup.gs is what applies this, and it repoints references before removing
+ * anything.
+ */
+var RETIRED_CATEGORIES = [
+  { category: 'Bills & Utilities', subcategory: 'Electricity', to: ['Housing', 'Electricity'] },
+  { category: 'Bills & Utilities', subcategory: 'Gas', to: ['Housing', 'Gas'] },
+  { category: 'Bills & Utilities', subcategory: 'Water', to: ['Housing', 'Water'] },
+  { category: 'Bills & Utilities', subcategory: 'Internet', to: ['Housing', 'Internet'] },
+  { category: 'Bills & Utilities', subcategory: 'Phone', to: ['Housing', 'Phone'] },
+  { category: 'Bills & Utilities', subcategory: 'Subscriptions', to: ['Housing', 'Subscriptions'] },
+  { category: 'Bills & Utilities', subcategory: 'Other bills', to: ['Housing', 'Other bills'] },
+  { category: 'Family', subcategory: 'Kids', to: ['Shopping', 'Kids'] },
+  { category: 'Family', subcategory: 'Life events', to: ['Entertainment', 'Life events'] },
+  { category: 'Travel', subcategory: 'Flights', to: ['Entertainment', 'Flights'] },
+  { category: 'Travel', subcategory: 'Accommodation', to: ['Entertainment', 'Accommodation'] },
+  { category: 'Travel', subcategory: 'Holiday', to: ['Entertainment', 'Holiday'] }
 ];
 
 /**
@@ -488,9 +569,11 @@ var DEFAULT_RULES = [
  *                          Easy to confuse with the `transfer` column, which
  *                          is the one that means that.
  *   `transfer`             a boolean, not a pair id. See 13_import.gs.
- *   `labels`               free-form tags, on a small minority of rows. Would
- *                          need a third paste block into `notes` to preserve,
- *                          which is not worth the chance of misaligning one.
+ *
+ * `labels` *is* mapped, into the column of the same name. It is on a small
+ * minority of rows and carries the one axis a category cannot: a trip, a
+ * project, a child. Losing it would mean retyping years of annotation that
+ * already exists.
  */
 var DEFAULT_IMPORT_MAP = [
   ['budgetbakers', 'account', 'account_name'],

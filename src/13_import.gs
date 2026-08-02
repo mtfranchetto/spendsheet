@@ -559,5 +559,13 @@ function commitStagedImport_(plan) {
   writeStagedColumn_(tx, placed.row, 'category_override', plan.rows);
   writeStagedColumn_(tx, placed.row, 'labels', plan.rows);
 
+  // Imported rows arrive confirmed. You categorised them once already, in the
+  // tool they came from — re-reviewing four thousand of them would be a chore
+  // invented by the migration rather than by the data. It is also what gives
+  // the cascade something to learn from on day one: `learnFromCorrections`
+  // reads confirmed rows only, and without this it would have none.
+  var confirmed = plan.rows.map(function () { return { confirmed: true }; });
+  writeStagedColumn_(tx, placed.row, 'confirmed', confirmed);
+
   return { imported: placed.count, row: placed.row, width: width, plan: plan };
 }

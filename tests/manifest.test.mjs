@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sourceFiles } from './harness.mjs';
 
@@ -90,5 +90,55 @@ describe('appsscript.json', () => {
     expect(manifest.webapp.access).toBe('ANYONE_ANONYMOUS');
     expect(manifest.webapp.executeAs).toBe('USER_DEPLOYING');
     expect(manifest.runtimeVersion).toBe('V8');
+  });
+});
+
+/**
+ * Source hygiene that no other test can see.
+ *
+ * A `join('\u0000')` written as a **real NUL byte** works perfectly at runtime
+ * — and makes `grep` classify the file as binary and report *nothing*,
+ * silently. Two separate wrong conclusions have already come out of that: "no
+ * formula builds column J" and "the balance ARRAYFORMULA doesn't exist", both
+ * drawn from an empty grep over a file containing eleven of them.
+ *
+ * The scope is the whole repository rather than `src/`, and that is not
+ * caution. The rule was first written into CLAUDE.md **quoting the character
+ * it warns about**, which made the rule itself ungreppable — and the first
+ * draft of this very test embedded the literals in its own regex. A guard
+ * watching only the code would have passed happily through both.
+ *
+ * The fix is always the same: write the escape, not the character. It is
+ * identical at runtime and visible to every tool that reads the file after.
+ */
+describe('the repository', () => {
+  const CONTROL = new RegExp('[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]', 'g');
+  const SKIP = new Set(['node_modules', '.git', '.claude', 'coverage']);
+  const TEXT = /\.(gs|mjs|js|json|md|ya?ml|txt|html|css)$/;
+
+  function textFiles(dir, found = []) {
+    readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
+      if (SKIP.has(entry.name)) return;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) textFiles(full, found);
+      else if (TEXT.test(entry.name)) found.push(full);
+    });
+    return found;
+  }
+
+  it('has no literal control character in any text file', () => {
+    const offenders = [];
+
+    textFiles(ROOT).forEach((path) => {
+      readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
+        // Tab is legitimate; the newline was removed by split().
+        const bad = line.match(CONTROL);
+        if (!bad) return;
+        offenders.push(relative(ROOT, path) + ':' + (i + 1) + ' has ' +
+          bad.map((ch) => '0x' + ch.charCodeAt(0).toString(16)).join(', '));
+      });
+    });
+
+    expect(offenders).toEqual([]);
   });
 });

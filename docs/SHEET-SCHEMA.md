@@ -111,10 +111,18 @@ Append-only. **Booked transactions only** (see `pending` below).
 | X | `transfer_group` | cascade | pairs the two legs of an internal move |
 | Y | `notes` | **you** | |
 | Z | `excluded` | **you** | drop a row from reports without deleting it |
+| AA | `labels` | **you** | comma-separated, cross-cutting. Never affects a total |
+| AB | `confirmed` | **you** | you agreed with the category. The only rows memory is learned from |
 
 `amount_eur` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry plus a dashboard count is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
 
 `type` is derived, never stored, so recategorising a row fixes its type for free — and it's what keeps transfers out of spending reports.
+
+**`confirmed` is what separates a guess you agreed with from a guess.** Synced rows arrive blank; imported rows arrive ticked, because you categorised them once already in the tool they came from. A row carrying a `category_override` counts as confirmed without the tick — typing the category is a stronger statement than ticking a box next to it.
+
+It earns a column rather than being inferred because **`Learn from corrections` reads confirmed rows and nothing else.** Learn from everything and the cascade trains on its own output: one wrong guess about a frequent merchant becomes a memory entry, which produces more rows carrying that guess, which reinforces the entry. The review queue is the side benefit, not the reason.
+
+Confirming a row also **freezes** its `category_auto`. Re-categorising later leaves it exactly as it was, so a rule change can never silently move a row while the tick still claims a human agreed with where it ended up.
 
 ---
 
@@ -235,7 +243,19 @@ Cash entries have neither an `entry_reference` nor a batch to count against — 
 
 **`categories`** — `category` · `subcategory` · `kind` · `icon`. Drives the dropdowns, and `kind` is what `type` is derived from.
 
-**`_memory`** — `merchant_key` · `category` · `subcategory` · `hits` · `last_seen`. The learned table, and the workhorse of the cascade. Built from your imported history and extended every time you correct a row.
+**`labels`** — `label` · `description` · `transactions` · `total_eur`. The cross-cutting axis a category cannot express: `category` answers *what did I buy*, a label answers *what was this for*. The last two columns are formulas over `transactions.labels`, so the tab is both the known set and the report on it.
+
+Labels are comma-separated in one column, many per transaction, and **never affect a category, a `type` or any total** — the moment a label changes a number, two systems own the same fact.
+
+There is deliberately **no dropdown** on `transactions.labels`. A list rule would flag every multi-label row with a warning triangle, which trains you to ignore warnings. The `labels` tab catches a typo instead: the misspelling shows up there with zero transactions against it, next to the real one with all of them.
+
+One caveat, because the report matches by wildcard: **a label that is a substring of another counts both.** `kids` would include `kids-school`. Keep label names distinct.
+
+**`_memory`** — `merchant_key` · `category` · `subcategory` · `hits` · `last_seen`. The learned table, and the workhorse of the cascade. Built from your confirmed history by **Learn from corrections**.
+
+`_memory` is **derived and replaced wholesale**, not merged. A categorisation you want to *impose* belongs in `rules`, which is yours and is never rewritten. `hits` is the count behind the answer given, not the number of times the merchant was seen — twenty rows split 11/9 is not a twenty-row certainty, and the column says so.
+
+See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 
 ---
 

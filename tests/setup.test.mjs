@@ -12,19 +12,19 @@ import { load } from './harness.mjs';
 
 const EXPECTED_TABS = [
   'transactions', 'pending', 'accounts', 'rules', 'categories', 'recurring',
-  'cashflow', 'cash_entry', 'dashboard',
+  'cashflow', 'cash_entry', 'dashboard', 'labels',
   '_anomalies', '_status', '_runs', '_config', '_import_map', '_category_map',
   '_memory', '_import_raw', '_import_staged', '_tests'
 ];
 
 describe('setup()', () => {
-  it('builds exactly the 19 documented tabs', () => {
+  it('builds exactly the 20 documented tabs', () => {
     const ctx = load();
     ctx.setup();
 
     const names = ctx.__spreadsheet.getSheets().map((s) => s.getName());
     expect(names.sort()).toEqual([...EXPECTED_TABS].sort());
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(20);
   });
 
   it('removes the blank starter tab but never a sheet with content', () => {
@@ -72,7 +72,7 @@ describe('setup()', () => {
     expect(headers.slice(0, 15)).toEqual(ctx.TX_COLUMNS_CODE);
     expect(headers[6]).toBe('amount');      // G
     expect(headers[15]).toBe('amount_eur'); // P
-    expect(headers).toHaveLength(27);
+    expect(headers).toHaveLength(28);
   });
 
   it('hides every _-prefixed tab and no others', () => {

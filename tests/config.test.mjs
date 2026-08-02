@@ -77,7 +77,7 @@ describe('colOf', () => {
 describe('the column contract', () => {
   it('keeps code-owned columns in A-O and derived ones from P', () => {
     expect(ctx.TX_COLUMNS_CODE).toHaveLength(15);
-    expect(ctx.TX_COLUMNS).toHaveLength(27);
+    expect(ctx.TX_COLUMNS).toHaveLength(28);
     expect(ctx.TX_COLUMNS.slice(0, 15)).toEqual(ctx.TX_COLUMNS_CODE);
   });
 
@@ -200,9 +200,13 @@ describe('the menu', () => {
     expect(names).toContain('Install credentials');   // phase 2
     expect(names).toContain('Connect a bank');        // phase 3
     expect(names).toContain('Sync now');              // phase 4
-    // Phases 7-9 have not landed, so their entries must not be offered yet.
+    expect(names).toContain('Import staged rows');     // phase 6
+    expect(names).toContain('Re-categorise all');      // phase 7
+    expect(names).toContain('Learn from corrections'); // phase 7
+    expect(names).toContain('Confirm visible rows');   // phase 7
+    // Phase 9 has not landed, so its entries must not be offered yet.
     expect(names).not.toContain('Detect recurring');
-    expect(names).not.toContain('Learn from corrections');
+    expect(names).not.toContain('Rebuild cashflow');
   });
 
   it('files the diagnostics away in a submenu', () => {

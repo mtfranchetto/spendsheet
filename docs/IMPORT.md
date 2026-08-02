@@ -161,10 +161,23 @@ Two constraints that aren't negotiable per-preset: the file must be **one row pe
 
 The export flags transfer rows without pairing them, so `transfer_group` is left empty. What survives is the category — `Transfer / Between accounts`, whose `kind` is `transfer`, which is what keeps both legs out of spending reports. That's the part that affects your numbers.
 
-Pairing the legs is phase 7's job, and it has to work by amount and proximity regardless: in the export probed here the two legs of one €600 move were **three days apart**, and one €1,000 transfer had no counterpart at all because the other account isn't tracked.
+Pairing the legs is the categorisation cascade's job, and it has to work by amount and proximity regardless: in the export probed here the two legs of one €600 move were **three days apart**, and one €1,000 transfer had no counterpart at all because the other account isn't tracked. That three-day gap is why `transfer_window_days` defaults to 4 — see [CATEGORIES.md](CATEGORIES.md).
 
 ## Checking it worked
 
 Pick a past month and compare **spend by category** against what BudgetBakers reports for that same month.
 
 This is the real test, and it's worth doing before importing everything. If the totals don't tie out, either the mapping is wrong or the sign convention is — and both are far easier to fix on twenty rows than on six years.
+
+**Filter `type ≠ transfer` in the pivot.** BudgetBakers excludes transfers from both income and expense; if you don't, the transfer net shows up in your grand total and looks like a discrepancy that isn't one.
+
+## After the import
+
+Imported rows arrive with **`confirmed` ticked** — you categorised them once already in the tool they came from, and re-reviewing four thousand of them would be a chore invented by the migration rather than by the data.
+
+That is also what makes the import pay off twice. `Learn from corrections` reads confirmed rows and nothing else, so:
+
+1. **Spendsheet → Learn from corrections** — turns your history into `_memory`
+2. **Spendsheet → Re-categorise all** — everything else now categorises itself from it
+
+A five-year export gets most of your merchants in one pass. See [CATEGORIES.md](CATEGORIES.md).
