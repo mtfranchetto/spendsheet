@@ -176,3 +176,102 @@ function conflictsWith(previous, record) {
   return amountKey(previous.amount) !== amountKey(record.amount) ||
     dateKey(previous.booking_date) !== dateKey(record.booking_date);
 }
+
+// ---------------------------------------------------------------------------
+// The other kind of duplicate: one transaction, two sources
+// ---------------------------------------------------------------------------
+
+/**
+ * Matching an API row against history imported from somewhere else.
+ *
+ * 13_import argues that cross-source dedup cannot work, and the cutoff in
+ * `_import_staged` is the whole defence: only rows older than the API's oldest
+ * row for that account are staged. **That defence is one-directional.** It
+ * compares against the API rows that exist *at the moment you import*, and can
+ * say nothing about the ones that arrive afterwards — so importing before an
+ * account's first sync, or before the sync has reached back as far as it will,
+ * stages a year of history and then re-fetches the last ninety days of it
+ * tonight. Two rows per transaction, different uids, both counted.
+ *
+ * That happened, so this is the second defence rather than a hypothetical one.
+ *
+ * The disagreement with 13's header is narrower than it looks. What is unstable
+ * across sources is the **description**: an export says `Esselunga` where the
+ * bank says `PAGAMENTO POS 12/07 ESSELUNGA SPA TORINO`, which is exactly why
+ * the categoriser matches those by containment rather than equality. What is
+ * stable is that a sum of money left one account on one day. So the key here is
+ * account, date and amount, and deliberately *not* the description — including
+ * it would match nothing, which is the failure 13 predicted.
+ *
+ * Dropping the description costs precision, and the counting is what pays for
+ * it: two €1.50 coffees imported on the same day shadow at most two fetched
+ * ones. What is left is a genuine risk — an imported €11.42 and an unrelated
+ * fetched €11.42 on the same day in the same account — and it resolves in
+ * favour of losing the fetched row. That is the direction this file otherwise
+ * calls the worse one, so it is bounded on purpose: the match only fires
+ * against rows an import put there, only inside the window an import covered,
+ * and the count of what it swallowed is reported by every run rather than left
+ * to be noticed.
+ *
+ * Exact dates, not a window. A three-day tolerance would catch an export that
+ * records value dates where the bank records booking dates — and would also
+ * make every recurring €50 withdrawal a candidate for every other one. The
+ * exports seen here agree with the bank to the day, so precision is worth more
+ * than the reach.
+ */
+/**
+ * The key, or `''` when any part of it is missing.
+ *
+ * `amountKey` returns `''` for a blank and `dateKey` does the same, so a row
+ * with no readable amount would otherwise key as `acc|2026-07-17|` and match
+ * every other unreadable row on that day — a swallow decided by knowing
+ * nothing about either. Neither source should produce one, which is exactly
+ * why the guard is here rather than assumed away.
+ */
+function crossSourceKey(record) {
+  var account = String(record.account_id === null || record.account_id === undefined
+    ? '' : record.account_id);
+  var date = dateKey(record.booking_date);
+  var amount = amountKey(record.amount);
+
+  if (!account || !date || !amount) return '';
+  return [account, date, amount].join(UID_SEPARATOR);
+}
+
+/** key → how many imported rows carry it. */
+function indexImportedRows(rows) {
+  var counts = {};
+  (rows || []).forEach(function (row) {
+    var key = crossSourceKey(row);
+    if (!key) return;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return counts;
+}
+
+/**
+ * Split fetched rows into the ones we do not already hold under another source
+ * and the ones we do.
+ *
+ * **`counts` is consumed**, which is the whole mechanism: each imported row
+ * shadows one fetched row and then stops, so three fetched €4 fares meet two
+ * imported ones and exactly one is written. The mutation is why the caller
+ * builds the index once per run and passes the same object to every account —
+ * rebuilding it per account would let one row shadow several.
+ */
+function partitionByImport(records, counts) {
+  var fresh = [];
+  var shadowed = [];
+
+  (records || []).forEach(function (record) {
+    var key = crossSourceKey(record);
+    if (key && counts[key] > 0) {
+      counts[key]--;
+      shadowed.push(record);
+      return;
+    }
+    fresh.push(record);
+  });
+
+  return { fresh: fresh, shadowed: shadowed };
+}

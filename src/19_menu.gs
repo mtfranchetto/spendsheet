@@ -20,6 +20,7 @@ var MENU_ITEMS = [
   { name: 'Refresh accounts', fn: 'refreshAccounts' },
   { separator: true },
   { name: 'Import staged rows', fn: 'importStagedRows' },
+  { name: 'Remove synced duplicates', fn: 'removeSyncedDuplicates' },
   { separator: true },
   { name: 'Re-categorise all', fn: 'recategorizeAll' },
   { name: 'Confirm visible rows', fn: 'confirmVisibleRows' },

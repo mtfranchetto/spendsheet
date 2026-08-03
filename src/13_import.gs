@@ -569,3 +569,201 @@ function commitStagedImport_(plan) {
 
   return { imported: placed.count, row: placed.row, width: width, plan: plan };
 }
+
+// ---------------------------------------------------------------------------
+// Cleaning up an overlap that already landed
+// ---------------------------------------------------------------------------
+
+/**
+ * Menu → Remove synced duplicates of imported rows.
+ *
+ * The cutoff above stops an import restaging what the API already holds. It
+ * cannot stop the reverse, and the reverse is the one that happens: import a
+ * history for an account the sync has not reached yet — a bank connected this
+ * week, say — and every row is legitimately staged, because at that moment
+ * there is nothing to be older than. The next nightly run then fetches its
+ * ninety-day window and writes a second copy of every transaction the two
+ * overlap on, under a hash uid that shares nothing with `csv:...#4332`.
+ *
+ * 09_sync now suppresses that at the source, so this is for the copies made
+ * before it did. It is a one-time operation and the governing rule says those
+ * get documented rather than automated — except that the document would read
+ * "find, among several thousand rows, the few hundred that pair with an
+ * imported row on account, date and amount, then delete exactly those." That
+ * is not a human operation, and it is the same argument that bought
+ * `importStagedRows` its existence: what is being replaced is not judgement,
+ * it is a long error-prone selection.
+ *
+ * **The fetched row goes and the imported one stays.** They describe the same
+ * money, so neither is more true, and the tie is broken by what is attached:
+ * the imported row carries the category you gave it in the tool it came from,
+ * the tick that says you meant it, and its labels. The fetched row carries an
+ * `entry_reference` nothing downstream reads. Keeping the imported row is also
+ * what makes this agree with the suppression in 09 — one rule, applied twice,
+ * rather than a cleanup that undoes what tonight's sync will do.
+ *
+ * `transactions` is append-only everywhere else in this project, and this is
+ * the single exception. It snapshots to Drive first, refuses to touch row 2,
+ * and re-baselines the row-loss detector afterwards — which would otherwise
+ * block every future sync, correctly, having watched the tab shrink.
+ */
+function removeSyncedDuplicates() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var plan = planSyncedDuplicates_();
+
+  if (plan.error) {
+    ui.alert('Remove synced duplicates', plan.error, ui.ButtonSet.OK);
+    return plan;
+  }
+
+  var answer = ui.alert('Remove synced duplicates', describeSyncedDuplicates_(plan), ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) {
+    ss.toast('Nothing was removed.', 'Cancelled', 5);
+    return plan;
+  }
+
+  var result = commitSyncedDuplicates_(plan);
+  ss.toast(result.removed + ' rows removed. Backup: ' + result.snapshot + '.',
+    'Duplicates removed', 20);
+  return result;
+}
+
+/**
+ * Which fetched rows duplicate an imported one.
+ *
+ * Every imported row is indexed first and the fetched rows are then walked in
+ * sheet order, consuming the index — so two imported €12 lunches on one day
+ * account for two fetched ones and a third stays. Sheet order rather than any
+ * other means the *earliest* fetched copy is the one removed when a row
+ * somehow arrived three times, which keeps the survivor the one every later
+ * run has already decided it holds.
+ */
+function planSyncedDuplicates_() {
+  var tx = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
+  if (!tx) return { error: 'No ' + TABS.TRANSACTIONS + ' tab. Run Setup sheet first.' };
+
+  var records = readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'));
+  var imported = records.filter(function (row) { return isImportedSource_(row.source); });
+
+  if (!imported.length) {
+    return { error: 'Nothing here came from an import, so nothing can be a duplicate of one.' };
+  }
+
+  var counts = indexImportedRows(imported);
+  var fetched = records.filter(function (row) { return row.source === TX_SOURCE_API; });
+  var doomed = partitionByImport(fetched, counts).shadowed;
+
+  if (!doomed.length) {
+    return {
+      error: 'No synced row pairs with an imported one on account, date and amount.\n\n' +
+        records.length + ' rows checked — ' + imported.length + ' imported, ' +
+        fetched.length + ' synced.'
+    };
+  }
+
+  return {
+    sheet: tx,
+    rows: doomed,
+    total: records.length,
+    imported: imported.length,
+    fetched: fetched.length,
+    accounts: countStagedBy_(doomed, 'account_name'),
+    range: stagedDateRange_(doomed),
+    protectsAnchor: doomed.some(function (row) { return row._row <= 2; })
+  };
+}
+
+function describeSyncedDuplicates_(plan) {
+  var lines = ['Remove ' + plan.rows.length + ' synced rows from ' + TABS.TRANSACTIONS + '.'];
+
+  if (plan.range) {
+    lines.push('Dates ' + dateKey(plan.range.from) + ' to ' + dateKey(plan.range.to) + '.');
+  }
+
+  lines.push('');
+  Object.keys(plan.accounts).sort().forEach(function (name) {
+    lines.push('  ' + name + ': ' + plan.accounts[name]);
+  });
+  lines.push('');
+  lines.push('Each pairs with an imported row on account, date and amount. The imported ' +
+    'row stays — it carries the category you gave it — and the synced copy goes.');
+
+  // A quarter of the sheet is not an overlap, it is a match that has gone
+  // wrong, and the moment to notice is before the deletion rather than in a
+  // total next month. Not a refusal: a genuinely double-imported history would
+  // look exactly like this and would genuinely need clearing.
+  if (plan.rows.length > plan.total / 4) {
+    lines.push('');
+    lines.push('⚠ That is ' + Math.round(100 * plan.rows.length / plan.total) + '% of the tab. ' +
+      'Check a few of them before saying yes — an overlap is usually one sync window.');
+  }
+
+  lines.push('');
+  lines.push('A CSV of the tab as it stands goes to Drive first. Rows are deleted, not ' +
+    'blanked, so undoing this means the snapshot or File → Version history.');
+  lines.push('');
+  lines.push('Continue?');
+  return lines.join('\n');
+}
+
+/**
+ * Delete bottom-up, in contiguous runs.
+ *
+ * Bottom-up because deleting a row renumbers everything under it, so working
+ * downwards would make every row number after the first one wrong — the same
+ * failure as deleting from a list while iterating it. Runs because one
+ * `deleteRows(start, n)` is one operation against Sheets and a few hundred
+ * single-row deletes is a few hundred round-trips.
+ *
+ * Row 2 is where every ARRAYFORMULA in P onward is anchored. Deleting it does
+ * not move the formula, it destroys it, and the tab loses `amount_eur` and
+ * every category column at once — so this refuses rather than repairs.
+ */
+function commitSyncedDuplicates_(plan) {
+  if (plan.protectsAnchor) {
+    throw new Error('Refusing: row 2 is one of the duplicates, and it anchors every ' +
+      'ARRAYFORMULA in ' + TABS.TRANSACTIONS + '. Delete that one row by hand, then ' +
+      're-run this.');
+  }
+
+  var snapshot = snapshotToDrive();
+
+  var rows = plan.rows.map(function (row) { return row._row; })
+    .sort(function (a, b) { return b - a; });
+
+  var removed = 0;
+  runsOfRows_(rows).forEach(function (run) {
+    plan.sheet.deleteRows(run.start, run.count);
+    removed += run.count;
+  });
+
+  // The row-loss detector has just watched the tab shrink, which it is right
+  // to treat as a catastrophe — it would block every sync from here on. This
+  // is the one shrink that was asked for, so the baseline moves with it.
+  rememberRowCount_();
+
+  return { removed: removed, snapshot: snapshot.file, plan: plan };
+}
+
+/**
+ * Descending row numbers as `{start, count}` blocks, still descending.
+ *
+ * Kept separate from the deleting so the grouping is testable without a
+ * spreadsheet — it is the part with an off-by-one in it.
+ */
+function runsOfRows_(descending) {
+  var runs = [];
+
+  descending.forEach(function (row) {
+    var last = runs[runs.length - 1];
+    if (last && row === last.start - 1) {
+      last.start = row;
+      last.count++;
+      return;
+    }
+    runs.push({ start: row, count: 1 });
+  });
+
+  return runs;
+}

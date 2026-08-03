@@ -177,3 +177,88 @@ describe('partitionByUid', () => {
     expect(ctx.partitionByUid(null, {}).fresh).toEqual([]);
   });
 });
+
+/**
+ * The duplicate a uid cannot see.
+ *
+ * An imported row's key is `csv:budgetbakers:import1#4332` and a fetched one's
+ * is a hash — nothing about either can tell you they are the same transaction.
+ * The staging cutoff was supposed to make that impossible; it only looks at
+ * the API rows that exist when you import, so importing before an account's
+ * first sync stages everything and the next run writes a second copy of the
+ * overlap. That is what these cover.
+ */
+describe('crossSourceKey', () => {
+  it('ignores the description, which is the field that differs by source', () => {
+    const bank = record({ description: 'PAGAMENTO POS 12/07 ESSELUNGA SPA TORINO' });
+    const csv = record({ description: 'Esselunga' });
+
+    expect(ctx.crossSourceKey(bank)).toBe(ctx.crossSourceKey(csv));
+  });
+
+  it('reads 3, 3.00 and "3.0" as one amount, and a Date as its day', () => {
+    expect(ctx.crossSourceKey(record({ amount: -3 })))
+      .toBe(ctx.crossSourceKey(record({ amount: '-3.00' })));
+    expect(ctx.crossSourceKey(record({ booking_date: new Date(2026, 6, 28, 23, 30) })))
+      .toBe(ctx.crossSourceKey(record({ booking_date: '2026-07-28' })));
+  });
+
+  it('separates the same amount on the same day in two accounts', () => {
+    expect(ctx.crossSourceKey(record({ account_id: 'acc-2' })))
+      .not.toBe(ctx.crossSourceKey(record()));
+  });
+});
+
+describe('partitionByImport', () => {
+  it('drops a fetched row the import already covers', () => {
+    const counts = ctx.indexImportedRows([record()]);
+    const result = ctx.partitionByImport([record()], counts);
+
+    expect(result.fresh).toHaveLength(0);
+    expect(result.shadowed).toHaveLength(1);
+  });
+
+  it('lets the third coffee through when only two were imported', () => {
+    // The whole reason the index counts rather than flags. Two genuine €3
+    // coffees at the same bar on one day are identical in every field, so a
+    // boolean "we have one of these" would swallow every later one forever.
+    const counts = ctx.indexImportedRows([record(), record()]);
+    const result = ctx.partitionByImport([record(), record(), record()], counts);
+
+    expect(result.shadowed).toHaveLength(2);
+    expect(result.fresh).toHaveLength(1);
+  });
+
+  it('leaves a genuinely new transaction alone', () => {
+    const counts = ctx.indexImportedRows([record({ booking_date: new Date(2026, 6, 20) })]);
+    const result = ctx.partitionByImport([record()], counts);
+
+    expect(result.fresh).toHaveLength(1);
+    expect(result.shadowed).toHaveLength(0);
+  });
+
+  it('consumes the index, so one imported row cannot cover two accounts of runs', () => {
+    const counts = ctx.indexImportedRows([record()]);
+
+    expect(ctx.partitionByImport([record()], counts).shadowed).toHaveLength(1);
+    expect(ctx.partitionByImport([record()], counts).shadowed).toHaveLength(0);
+  });
+
+  it('never matches two rows on the strength of what is missing from both', () => {
+    // amountKey and dateKey both return '' for a blank, so without the guard
+    // two unreadable rows key alike and one is swallowed on no evidence at all.
+    ['amount', 'booking_date', 'account_id'].forEach((field) => {
+      const blank = record({ [field]: '' });
+      expect(ctx.crossSourceKey(blank)).toBe('');
+
+      const counts = ctx.indexImportedRows([blank]);
+      expect(ctx.partitionByImport([blank], counts).fresh).toHaveLength(1);
+    });
+  });
+
+  it('handles an empty batch and no import at all', () => {
+    expect(ctx.partitionByImport([], {})).toEqual({ fresh: [], shadowed: [] });
+    expect(ctx.partitionByImport(null, {}).fresh).toEqual([]);
+    expect(ctx.partitionByImport([record()], {}).fresh).toHaveLength(1);
+  });
+});

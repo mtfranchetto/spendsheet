@@ -287,8 +287,13 @@ describe('healthCheck', () => {
 
   it('says so plainly when there is nothing wrong', () => {
     const c = built();
-    addRun(c);
-    addConnection(c);
+    // Every other test here hands `runChecks_` its own clock. `healthCheck`
+    // reads the real one, so the run it is meant to be happy about has to be
+    // dated from the real one too — pinned to NOW, this passed until the day
+    // NOW fell outside `max_sync_age_days` and then failed for a reason that
+    // had nothing to do with the code.
+    addRun(c, { started_at: new Date() });
+    addConnection(c, { last_success: new Date() });
 
     expect(c.healthCheck()).toEqual([]);
     expect(c.__spreadsheet.toasts.pop().message).toMatch(/Nothing to report/);

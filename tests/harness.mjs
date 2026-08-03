@@ -293,6 +293,32 @@ class FakeSheet {
     return this;
   }
 
+  /**
+   * Shifts formulas and notes as well as values, because the one caller
+   * (`commitSyncedDuplicates_`) deletes rows out of a tab whose row 2 holds
+   * eleven ARRAYFORMULAs — and a fake that dropped formulas on the floor would
+   * let a test claim row 2 survived a deletion that in Sheets would have taken
+   * it with everything below.
+   */
+  deleteRows(start, howMany = 1) {
+    const shift = (map) => {
+      for (const key of [...map.keys()]) {
+        const [r, c] = key.split(',').map(Number);
+        if (r >= start && r < start + howMany) map.delete(key);
+        else if (r >= start + howMany) {
+          const v = map.get(key);
+          map.delete(key);
+          map.set(this._key(r - howMany, c), v);
+        }
+      }
+    };
+    shift(this.cells);
+    shift(this.formulas);
+    shift(this.notes);
+    this.maxRows -= howMany;
+    return this;
+  }
+
   setColumnWidth(column, width) { this.columnWidths.set(column, width); return this; }
   hideColumns(column, count = 1) {
     for (let i = 0; i < count; i++) this.hiddenColumns.add(column + i);

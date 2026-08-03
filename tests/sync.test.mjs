@@ -504,3 +504,108 @@ describe('concurrency', () => {
     expect(() => c.syncAll({})).toThrow(/already running/);
   });
 });
+
+describe('history imported from a CSV', () => {
+  /** A row as `commitStagedImport_` leaves it: readable uid, `csv:` source. */
+  function importRow(c, over = {}) {
+    c.appendRows_(tx(c), 1, [c.toRow_(c.TX_COLUMNS_CODE, {
+      uid: 'csv:budgetbakers:import1#4332',
+      account_id: 'acc-1',
+      account_name: 'Account acc-1',
+      booking_date: new Date(2026, 6, 28),
+      amount: -12.34,
+      currency: 'EUR',
+      description: 'Esselunga',
+      source: 'csv:budgetbakers',
+      ...over
+    })]);
+  }
+
+  it('does not fetch a second copy of a transaction the import already holds', () => {
+    // The staging cutoff cannot see this coming: it compares against the API
+    // rows that exist when you import, and says nothing about the ones the
+    // next sync brings. Connect a bank, import its history, and every row in
+    // the overlap lands twice under two unrelated uids.
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider);
+    importRow(c);
+
+    const summary = c.syncNow();
+
+    expect(summary.inserted).toBe(0);
+    expect(summary.shadowed).toBe(1);
+    expect(uids(c)).toEqual(['csv:budgetbakers:import1#4332']);
+  });
+
+  it('says so in the run message, since a match on three fields is a judgement', () => {
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider);
+    importRow(c);
+
+    expect(c.syncNow().message).toMatch(/1 matched history you imported/);
+  });
+
+  it('still writes the transactions the import does not cover', () => {
+    const provider = bank({
+      booked: [booked(), booked({ entry_reference: 'REF-2', booking_date: '2026-07-29' })]
+    });
+    const c = withAccounts(provider);
+    importRow(c);
+
+    const summary = c.syncNow();
+
+    expect(summary.inserted).toBe(1);
+    expect(summary.shadowed).toBe(1);
+    expect(tx(c).getRange('D3').getValue()).toEqual(new Date(2026, 6, 29));
+  });
+
+  it('shadows only the account the imported row belongs to', () => {
+    // Two accounts, the same charge on the same day in both — a joint card and
+    // a personal one at the same supermarket is not exotic. Only one of them
+    // was imported, so only one fetched copy may disappear.
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider, ['acc-1', 'acc-2']);
+    importRow(c);
+
+    const summary = c.syncNow();
+
+    expect(summary.shadowed).toBe(1);
+    expect(summary.inserted).toBe(1);
+    expect(tx(c).getRange('B3').getValue()).toBe('acc-2');
+  });
+
+  it('leaves the match alone when the amount differs by a cent', () => {
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider);
+    importRow(c, { amount: -12.35 });
+
+    const summary = c.syncNow();
+
+    expect(summary.inserted).toBe(1);
+    expect(summary.shadowed).toBe(0);
+  });
+
+  it('does not let a cash entry you typed shadow anything', () => {
+    // Only `csv:` sources are imported history. A manual row is money the
+    // bank genuinely does not know about, so a coincidence of account, day
+    // and amount between the two is exactly that.
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider);
+    importRow(c, { uid: 'cash-1', source: 'manual' });
+
+    expect(c.syncNow().inserted).toBe(1);
+  });
+
+  it('stays quiet on the next run, having written nothing to change its mind', () => {
+    const provider = bank({ booked: [booked()] });
+    const c = withAccounts(provider);
+    importRow(c);
+
+    c.syncNow();
+    const second = c.syncNow();
+
+    expect(second.shadowed).toBe(1);
+    expect(second.inserted).toBe(0);
+    expect(uids(c)).toHaveLength(1);
+  });
+});

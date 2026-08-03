@@ -83,7 +83,7 @@ Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 | | |
 |---|---|
 | **Banks** | Sync now · Connect a bank · Refresh accounts |
-| **History** | Import staged rows |
+| **History** | Import staged rows · Remove synced duplicates |
 | **Categorising** | Re-categorise all · Confirm visible rows · Learn from corrections |
 | **Forecasting** | Detect recurring · Rebuild cashflow |
 | **Housekeeping** | Setup sheet · Update mappings to defaults · Tidy retired categories · Install credentials · Install triggers · Show schedule · Health check · Accept row count · Snapshot to Drive |

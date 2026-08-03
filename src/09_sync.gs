@@ -74,7 +74,9 @@ function runSync_(options) {
   var pendingSheet = sheetOrThrow_(TABS.PENDING);
 
   var existing = readExistingIndex_(txSheet);
-  var totals = { fetched: 0, inserted: 0, duplicate: 0, ok: 0, skipped: 0, cashPending: 0 };
+  var totals = {
+    fetched: 0, inserted: 0, duplicate: 0, shadowed: 0, ok: 0, skipped: 0, cashPending: 0
+  };
   var messages = [];
   var pendingRows = [];
   var refreshed = [];
@@ -89,6 +91,7 @@ function runSync_(options) {
 
     totals.fetched += outcome.fetched;
     totals.duplicate += outcome.duplicates;
+    totals.shadowed += outcome.shadowed;
 
     if (outcome.skipped) {
       // Deliberately not counted as a failure: nothing broke, we chose not
@@ -163,6 +166,7 @@ function runSync_(options) {
     fetched: totals.fetched,
     inserted: totals.inserted,
     duplicate: totals.duplicate,
+    shadowed: totals.shadowed,
     result: result,
     message: describeRun_(attempted, totals, messages)
   };
@@ -180,6 +184,16 @@ function describeRun_(attempted, totals, messages) {
     ? totals.inserted + ' new, ' + totals.duplicate + ' already held, across ' +
       totals.ok + '/' + attempted + ' accounts.'
     : totals.inserted + ' new from cash entries.';
+
+  if (totals.shadowed) {
+    // Said out loud on every run that suppresses anything, because a
+    // cross-source match is a judgement rather than an identity — see
+    // 08_dedup. A number that climbs when nothing was imported recently, or
+    // that dwarfs the overlap you expect, is the tell that it is matching too
+    // much, and there is nowhere else it would show.
+    text += ' ' + totals.shadowed + ' matched history you imported and ' +
+      (totals.shadowed === 1 ? 'was' : 'were') + ' not written again.';
+  }
 
   if (totals.cashPending) {
     // Said out loud rather than left to be discovered: a half-typed row waits
@@ -205,7 +219,7 @@ function describeRun_(attempted, totals, messages) {
  */
 function syncAccount_(account, context) {
   var outcome = {
-    fetched: 0, duplicates: 0, fresh: [], pending: [],
+    fetched: 0, duplicates: 0, shadowed: 0, fresh: [], pending: [],
     pendingRefreshed: false, error: null, skipped: null, calls: 0
   };
 
@@ -242,9 +256,16 @@ function syncAccount_(account, context) {
     outcome.fetched = bookedRecords.length;
 
     var partitioned = partitionByUid(assignUids(bookedRecords), context.existing.byUid);
-    outcome.fresh = partitioned.fresh;
-    outcome.duplicates = partitioned.duplicates.length;
     reportConflicts_(account, partitioned.conflicts);
+
+    // Second pass, against history that came in from a CSV. Nothing in the uid
+    // can see it — an imported row's key is `csv:<preset>:<batch>#<row>` — so
+    // without this every transaction the import and the sync window both cover
+    // lands twice. See 08_dedup for why the key drops the description.
+    var separated = partitionByImport(partitioned.fresh, context.existing.imported);
+    outcome.fresh = separated.fresh;
+    outcome.shadowed = separated.shadowed.length;
+    outcome.duplicates = partitioned.duplicates.length;
 
     // Anything non-booked that arrived in the booked response is a pending
     // row the provider ignored the filter on. Free, so it is used rather than
@@ -373,29 +394,49 @@ function describeSyncError_(account, err) {
 // ---------------------------------------------------------------------------
 
 /**
- * uid → {amount, booking_date} for every row already in `transactions`.
+ * What the sheet already holds, in the three shapes the run needs.
  *
- * Reads only the columns identity depends on. The alternative — asking the
- * sheet per row — is a network round-trip each time and would put a nightly
- * sync into the six-minute limit somewhere around the second year.
+ * `byUid` is identity. `accountsSeen` decides whether an account gets the
+ * one-shot backfill. `imported` is the multiset 08's `partitionByImport`
+ * consumes — built once here and handed to every account, because rebuilding
+ * it per account would let a single imported row shadow one fetched row in
+ * each of them.
+ *
+ * Reads only as far as `source`, which is the last column any of the three
+ * needs. The alternative — asking the sheet per row — is a network round-trip
+ * each time and would put a nightly sync into the six-minute limit somewhere
+ * around the second year.
  */
 function readExistingIndex_(sheet) {
-  var index = { byUid: {}, accountsSeen: {} };
+  var index = { byUid: {}, accountsSeen: {}, imported: {} };
   var last = lastRecordRow_(sheet, 1);
   if (last < 2) return index;
 
-  var width = colIndex_(TX_COLUMNS_CODE, 'amount');
+  var width = colIndex_(TX_COLUMNS_CODE, 'source');
   var rows = sheet.getRange(2, 1, last - 1, width).getValues();
   var uidAt = colIndex_(TX_COLUMNS_CODE, 'uid') - 1;
   var accountAt = colIndex_(TX_COLUMNS_CODE, 'account_id') - 1;
   var dateAt = colIndex_(TX_COLUMNS_CODE, 'booking_date') - 1;
-  var amountAt = width - 1;
+  var amountAt = colIndex_(TX_COLUMNS_CODE, 'amount') - 1;
+  var sourceAt = width - 1;
+
+  var imported = [];
 
   rows.forEach(function (row) {
     if (!row[uidAt]) return;
     index.byUid[String(row[uidAt])] = { amount: row[amountAt], booking_date: row[dateAt] };
     if (row[accountAt]) index.accountsSeen[String(row[accountAt])] = true;
+
+    if (isImportedSource_(row[sourceAt])) {
+      imported.push({
+        account_id: row[accountAt],
+        booking_date: row[dateAt],
+        amount: row[amountAt]
+      });
+    }
   });
+
+  index.imported = indexImportedRows(imported);
   return index;
 }
 

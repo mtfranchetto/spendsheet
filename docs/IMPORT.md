@@ -129,7 +129,23 @@ That fifth step only matters on the first file. Once one year ties out, the mapp
 
 **What the cutoff does and doesn't catch.** The `why` column excludes rows the API already has — it's derived per account from the oldest `enablebanking` row in `transactions`. It does **not** compare against rows you imported earlier, so importing the same year twice inserts it twice. Nothing detects that but you. Since the years are disjoint this only bites if you lose your place; the batch name in the uid is what tells you where you got to.
 
-Imported rows use a readable key rather than a hash. Cross-source dedup can't work anyway: an imported row and the same transaction fetched from the bank share no field that's stable between them. The cutoff is what prevents overlap with the API, and a key you can read tells you where a row came from at a glance.
+Imported rows use a readable key rather than a hash, so you can see at a glance where a row came from.
+
+## Importing before a bank's first sync
+
+The cutoff only looks backwards, and that is worth understanding before you hit a case of it.
+
+It compares your export against the API rows that exist **at the moment you import**. If you connect a bank on Saturday and import its history on Sunday, before the nightly run has fetched anything for that account, there is nothing older to compare against — so every row stages legitimately. Monday's sync then fetches its rolling ninety-day window and writes a second copy of every transaction the two overlap on, under a hash uid that shares nothing with `csv:budgetbakers:import1#4332`.
+
+Two rows per transaction, both counted, every total wrong by the overlap.
+
+**Going forward this is handled.** A sync now checks fetched rows against imported ones on **account, date and amount** — not description, which is the field that differs by source, and the reason this was thought impossible. An imported row shadows at most one fetched row, so two €3 coffees imported on one day suppress two and a third still lands. Runs that suppress anything say so: *"12 matched history you imported and were not written again."* If that number climbs when you haven't imported recently, the match is reaching too far and you want to know.
+
+**For copies already in the sheet:** **Spendsheet → Remove synced duplicates**. It pairs each synced row with an imported one, shows the count, the accounts and the date range, and asks before removing anything.
+
+The synced copy is the one that goes. Neither is more true — they describe the same money — so the tie is broken by what's attached: the imported row carries the category you gave it in the tool it came from, the tick that says you meant it, and its labels. The synced row carries an `entry_reference` nothing downstream reads.
+
+This is the one place in the project that deletes a row of history, so it snapshots the tab to Drive first, refuses to touch row 2 (where every `ARRAYFORMULA` is anchored), and resets the row-loss detector afterwards — which would otherwise block every future sync, correctly, having watched the tab shrink.
 
 ## Other providers
 

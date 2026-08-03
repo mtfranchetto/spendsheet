@@ -606,3 +606,177 @@ describe('importing the staged rows', () => {
     expect(c.planStagedImport_().error).toMatch(/import_batch/);
   });
 });
+
+/**
+ * Clearing an overlap that already landed.
+ *
+ * The cutoff only looks backwards. Import a bank's history before its first
+ * sync and every row stages legitimately, because at that moment there is
+ * nothing older to compare against — and then the next run writes a second
+ * copy of everything the two overlap on. 09_sync stops that happening now;
+ * this is for the copies made before it did.
+ */
+describe('removing synced duplicates of imported rows', () => {
+  function txRow(c, over = {}) {
+    c.appendRows_(c.__spreadsheet.getSheetByName('transactions'), 1,
+      [c.toRow_(c.TX_COLUMNS_CODE, {
+        account_id: 'revolut',
+        account_name: 'Revolut',
+        booking_date: new Date(2026, 6, 17),
+        amount: -11.42,
+        currency: 'EUR',
+        ...over
+      })]);
+  }
+
+  function imported(c, over = {}) {
+    txRow(c, {
+      uid: 'csv:budgetbakers:import1#4332',
+      description: 'ALLIANZ GLOBAL LIFE',
+      source: 'csv:budgetbakers',
+      ...over
+    });
+  }
+
+  function synced(c, over = {}) {
+    txRow(c, {
+      uid: 'a1b2c3',
+      description: 'ALLIANZ GLOBAL LIFE DESIGNATED ACTIVITY Addebito SDD',
+      entry_reference: 'MjAyNjA3MTdf',
+      source: 'enablebanking',
+      ...over
+    });
+  }
+
+  const rowsIn = (c) =>
+    c.readColumn_(c.__spreadsheet.getSheetByName('transactions'), 1).filter(Boolean);
+
+  it('removes the synced copy and keeps the one carrying your category', () => {
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+
+    const result = c.removeSyncedDuplicates();
+
+    expect(result.removed).toBe(1);
+    expect(rowsIn(c)).toEqual(['csv:budgetbakers:import1#4332']);
+  });
+
+  it('leaves a synced row the import never covered', () => {
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+    synced(c, { uid: 'd4e5f6', booking_date: new Date(2026, 6, 18) });
+
+    c.removeSyncedDuplicates();
+
+    expect(rowsIn(c)).toEqual(['csv:budgetbakers:import1#4332', 'd4e5f6']);
+  });
+
+  it('removes one synced copy per imported row and no more', () => {
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+    synced(c, { uid: 'second-real-charge' });
+
+    expect(c.removeSyncedDuplicates().removed).toBe(1);
+    expect(rowsIn(c)).toEqual(['csv:budgetbakers:import1#4332', 'second-real-charge']);
+  });
+
+  it('backs the tab up to Drive before deleting anything', () => {
+    // Version history on a free account is 30 days or 100 revisions, and a
+    // daily sync burns 100 in about three months. This is the only place in
+    // the project that deletes a row of history.
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+
+    const result = c.removeSyncedDuplicates();
+
+    expect(result.snapshot).toMatch(/^transactions-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(c.__driveFiles.map((f) => f.name)).toContain(result.snapshot);
+  });
+
+  it('re-baselines the row-loss detector, which would otherwise block every sync', () => {
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+    c.rememberRowCount_();
+
+    c.removeSyncedDuplicates();
+
+    expect(() => c.assertNoRowLoss_()).not.toThrow();
+  });
+
+  it('removes nothing at all when the answer is no', () => {
+    const c = load({ alertResponse: 'NO' });
+    c.setup();
+    imported(c);
+    synced(c);
+
+    c.removeSyncedDuplicates();
+    expect(rowsIn(c)).toHaveLength(2);
+  });
+
+  it('refuses to take row 2, where every ARRAYFORMULA is anchored', () => {
+    // Deleting it does not move the formula, it destroys it — the tab loses
+    // amount_eur and every category column at once.
+    const c = load();
+    c.setup();
+    synced(c);
+    imported(c);
+
+    expect(c.planSyncedDuplicates_().protectsAnchor).toBe(true);
+    expect(() => c.removeSyncedDuplicates()).toThrow(/row 2/);
+    expect(rowsIn(c)).toHaveLength(2);
+  });
+
+  it('says there is nothing to do rather than nothing at all', () => {
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c, { amount: -99 });
+
+    expect(c.removeSyncedDuplicates().error).toMatch(/No synced row pairs/);
+  });
+
+  it('refuses when nothing came from an import', () => {
+    const c = load();
+    c.setup();
+    synced(c);
+
+    expect(c.removeSyncedDuplicates().error).toMatch(/came from an import/);
+  });
+
+  it('warns when the match has clearly gone wrong', () => {
+    // A quarter of the tab is not an overlap. Not a refusal — a genuinely
+    // double-imported history looks the same and genuinely needs clearing —
+    // but the moment to notice is before the delete.
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+
+    expect(c.describeSyncedDuplicates_(c.planSyncedDuplicates_())).toMatch(/50% of the tab/);
+  });
+});
+
+describe('runsOfRows_', () => {
+  it('groups descending row numbers into blocks that stay descending', () => {
+    // Deleting renumbers everything below, so the walk has to go bottom-up and
+    // each block has to be one deleteRows call, not one per row.
+    const c = load();
+
+    expect(c.runsOfRows_([9, 8, 7, 4, 2])).toEqual([
+      { start: 7, count: 3 },
+      { start: 4, count: 1 },
+      { start: 2, count: 1 }
+    ]);
+    expect(c.runsOfRows_([])).toEqual([]);
+  });
+});

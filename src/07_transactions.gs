@@ -27,6 +27,21 @@ var TX_SOURCE_API = 'enablebanking';
 var TX_SOURCE_CASH = 'manual';
 
 /**
+ * What an imported row's `source` starts with — `csv:budgetbakers` and friends.
+ *
+ * A prefix rather than a value, because the preset is part of it: knowing which
+ * export a row came from is worth more than one fewer string comparison. 08's
+ * cross-source matching keys off this, so it lives here with the other two
+ * rather than being spelled out at each site that tests it.
+ */
+var TX_SOURCE_IMPORT_PREFIX = 'csv:';
+
+function isImportedSource_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .indexOf(TX_SOURCE_IMPORT_PREFIX) === 0;
+}
+
+/**
  * A provider transaction as a row object, keyed by column name.
  *
  * `uid` is deliberately absent — identity is 08_dedup's job, and it needs the
