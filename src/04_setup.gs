@@ -31,7 +31,9 @@ function setup() {
 
 function runSetup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var report = { created: [], existing: [], seeded: [], added: [], diverged: [] };
+  var report = {
+    created: [], existing: [], seeded: [], added: [], diverged: [], newColumns: []
+  };
 
   buildTable_(ss, TABS.TRANSACTIONS, TX_COLUMNS, report);
   buildTable_(ss, TABS.PENDING, PENDING_COLUMNS, report);
@@ -50,6 +52,7 @@ function runSetup_() {
   buildTable_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, report, DEFAULT_CATEGORY_MAP);
   buildTable_(ss, TABS.MEMORY, MEMORY_COLUMNS, report);
   buildTable_(ss, TABS.REMOVED, TX_COLUMNS, report);
+  buildTable_(ss, TABS.REVIEW, REVIEW_COLUMNS, report);
   buildTable_(ss, TABS.TESTS, TEST_COLUMNS, report);
 
   // After every tab exists, so a book built by an older version catches up.
@@ -58,15 +61,18 @@ function runSetup_() {
   // Working tabs with no fixed schema.
   getOrCreate_(ss, TABS.IMPORT_RAW, report);      // CSV lands here via File → Import
   getOrCreate_(ss, TABS.DASHBOARD, report);
+  getOrCreate_(ss, TABS.REPORTS, report);
 
   var sep = detectArgSeparator_(ss);
   buildImportStaged_(ss, sep, report);
   applyFormulas_(ss, sep);
 
-  // A later phase extending an earlier one, through the same guarded forward
+  // Later phases extending an earlier one, through the same guarded forward
   // reference the sync uses for assertNoRowLoss_. File numbering is load order;
   // by the time anything runs, everything is defined.
   if (functionExists_('buildDashboard_')) buildDashboard_(ss, sep);
+  if (functionExists_('buildAnalytics_')) buildAnalytics_(ss, sep, report);
+  if (functionExists_('buildReviewTab_')) buildReviewTab_(ss, report);
 
   applyFormats_(ss);
   applyColumnVisibility_(ss, report);
@@ -284,6 +290,7 @@ function buildTable_(ss, name, headers, report, seed) {
   var sh = getOrCreate_(ss, name, report);
   var isNew = report && report.created.indexOf(name) !== -1;
 
+  recordNewColumns_(sh, name, headers, report, isNew);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
 
   // Trim the blank columns a new sheet is born with — but ONLY on a new
@@ -300,6 +307,34 @@ function buildTable_(ss, name, headers, report, seed) {
     if (report) report.seeded.push(name);
   }
   return sh;
+}
+
+/**
+ * Which columns this run is about to add to a tab that already existed.
+ *
+ * Recorded before the header row is overwritten, because afterwards there is
+ * no way to tell a column an upgrade just introduced from one that has been
+ * there since March.
+ *
+ * It exists so that a **new** column gets the same default a new book would
+ * give it. `applyColumnVisibility_` deliberately hides nothing on a re-run —
+ * unhiding a column is a decision, and re-hiding it would undo that decision
+ * exactly when you are in the middle of chasing something. But a column that
+ * did not exist five seconds ago carries no decision to respect, and
+ * `in_reports` is the case that made this obvious: a hidden helper on a new
+ * book, and a thousand rows of `FALSE` in the middle of your sheet on an
+ * upgraded one.
+ */
+function recordNewColumns_(sheet, name, headers, report, isNew) {
+  if (!report || isNew) return;
+
+  var width = sheet.getLastColumn();
+  var existing = width ? sheet.getRange(1, 1, 1, width).getValues()[0].map(String) : [];
+
+  report.newColumns = (report.newColumns || []).concat(
+    headers.map(function (header, i) {
+      return existing.indexOf(header) === -1 ? { tab: name, name: header, index: i + 1 } : null;
+    }).filter(function (entry) { return entry; }));
 }
 
 /**
@@ -334,6 +369,7 @@ function applyFormulas_(ss, sep) {
   setFormula_(tx, colOf(TX_COLUMNS, 'category'), categoryFormula(), sep);
   setFormula_(tx, colOf(TX_COLUMNS, 'subcategory'), subcategoryFormula(), sep);
   setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula(), sep);
+  setFormula_(tx, colOf(TX_COLUMNS, 'in_reports'), inReportsFormula(), sep);
 
   // category_auto / subcategory_auto / category_source are written by the
   // categorisation cascade in 14_categorize.gs, not by a formula: tier 3 needs
@@ -501,6 +537,45 @@ function typeFormula() {
 }
 
 /**
+ * in_reports — whether a row counts as spending. The one place that decides.
+ *
+ * Three properties are load-bearing, and each of them has already cost this
+ * project something in a different column:
+ *
+ * **It returns a boolean in every branch.** Sheets does not compare across
+ * types — `=1=TRUE` is FALSE here where it is TRUE in Excel — so an expression
+ * built by multiplying two tests yields `1`, and `where AC = true` silently
+ * matches nothing. The nested IF ends in `<>`, which returns a real boolean,
+ * and the other branch is the literal FALSE.
+ *
+ * **Rows with no transaction in them say FALSE, not "".** Every other derived
+ * column here emits `""` for an empty row, which is right for a number or a
+ * name. It is wrong for a boolean: QUERY infers a column's type from what is
+ * in it, and an ARRAYFORMULA spills to the *sheet's* last row, not to the last
+ * record. On a book with thirty transactions in a thousand-row sheet, a column
+ * of thirty booleans and nine hundred and seventy empty strings is a text
+ * column — and `= true` matches nothing, on the newest books, which are
+ * exactly the ones where a blank dashboard reads as "not set up yet". FALSE on
+ * the empty rows is also true: a row that does not exist is not spending.
+ *
+ * **`excluded` is compared to TRUE rather than tested for emptiness.** `LEN`
+ * would be wrong in both directions — `LEN(FALSE)` is 5, so an unticked
+ * checkbox would exclude the row. The checkbox validation applied in
+ * `applyValidation_` is what makes the comparison reliable; a typed `yes` is
+ * accepted by `isTruthyCell_` in code and would *not* exclude here, which is
+ * why the column gets a real checkbox rather than being left free text.
+ */
+function inReportsFormula() {
+  var uid = colOf(TX_COLUMNS, 'uid');
+  var excluded = colOf(TX_COLUMNS, 'excluded');
+  var type = colOf(TX_COLUMNS, 'type');
+
+  return '=ARRAYFORMULA(IF(LEN($' + uid + '$2:$' + uid + ')=0,FALSE,' +
+    'IF($' + excluded + '$2:$' + excluded + '=TRUE,FALSE,' +
+    '$' + type + '$2:$' + type + '<>"' + TX_TYPE.TRANSFER + '")))';
+}
+
+/**
  * labels.transactions and labels.total_eur — the label report.
  *
  * Reporting over a comma-separated column, without new machinery: `COUNTIF` and
@@ -519,19 +594,26 @@ function typeFormula() {
  * `total_eur` reads `amount_eur` because every report does. It is signed, so a
  * label covering both a purchase and its refund nets out, which is the honest
  * figure for "what did this cost".
+ *
+ * Both are `…IFS` rather than `…IF` so they can carry the `in_reports`
+ * condition, which is what makes a label you excluded, or a labelled transfer
+ * between your own accounts, stop inflating the total. That was the whole
+ * point of the column: one place decides what spending is, and everything that
+ * reports on money asks it.
  */
 function labelCountFormula() {
   var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
   return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
-    'COUNTIF(' + txLabelsRange_() + ',"*"&' + label + '&"*")))';
+    'COUNTIFS(' + txLabelsRange_() + ',"*"&' + label + '&"*",' +
+    txColumnRange_('in_reports') + ',TRUE)))';
 }
 
 function labelTotalFormula() {
   var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
-  var amount = colOf(TX_COLUMNS, 'amount_eur');
   return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
-    'SUMIF(' + txLabelsRange_() + ',"*"&' + label + '&"*",' +
-    TABS.TRANSACTIONS + '!$' + amount + '$2:$' + amount + ')))';
+    'SUMIFS(' + txColumnRange_('amount_eur') + ',' +
+    txLabelsRange_() + ',"*"&' + label + '&"*",' +
+    txColumnRange_('in_reports') + ',TRUE)))';
 }
 
 /**
@@ -543,7 +625,12 @@ function labelTotalFormula() {
  * formula to a spreadsheet.
  */
 function txLabelsRange_() {
-  var column = colOf(TX_COLUMNS, 'labels');
+  return txColumnRange_('labels');
+}
+
+/** A whole column of `transactions`, `!` and all. */
+function txColumnRange_(name) {
+  var column = colOf(TX_COLUMNS, name);
   return TABS.TRANSACTIONS + '!$' + column + '$2:$' + column;
 }
 
@@ -763,8 +850,28 @@ function applyValidation_(ss) {
   // A real checkbox, so confirming is a tap on a phone rather than typing the
   // word TRUE. `isTruthyCell_` still accepts a typed `yes` — someone who wrote
   // one has not made a mistake worth punishing with silence.
+  var checkbox = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+
   tx.getRange(colOf(TX_COLUMNS, 'confirmed') + '2:' + colOf(TX_COLUMNS, 'confirmed'))
-    .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+    .setDataValidation(checkbox);
+
+  // `excluded` gets one for a second reason on top of the tap: `in_reports`
+  // compares it to TRUE, and a comparison against a column somebody might have
+  // typed `yes` into is a silent miss. Code reading the same column still goes
+  // through `isTruthyCell_`, so a sheet that predates this stays correct
+  // everywhere except the formula — and the checkbox is what closes that gap
+  // going forward.
+  tx.getRange(colOf(TX_COLUMNS, 'excluded') + '2:' + colOf(TX_COLUMNS, 'excluded'))
+    .setDataValidation(checkbox);
+
+  // Same argument, on the two `accounts` flags the net worth total reads.
+  // These are written as real booleans by `refreshAccounts`, so the only rows
+  // at risk are the ones you type yourself — which is exactly how a manual
+  // account is added, and therefore not a rare case.
+  ['active', 'include_in_net_worth'].forEach(function (name) {
+    accounts.getRange(colOf(ACCOUNT_COLUMNS, name) + '2:' + colOf(ACCOUNT_COLUMNS, name))
+      .setDataValidation(checkbox);
+  });
 
   // Deliberately no dropdown on `transactions.labels`. A label column holds
   // `kids, travel` as often as it holds one value, and a list rule would flag
@@ -799,6 +906,9 @@ function applyProtection_(ss) {
   protectRange_(ss.getSheetByName(TABS.TRANSACTIONS),
     colOf(TX_COLUMNS, 'category') + '2:' + colOf(TX_COLUMNS, 'type'),
     'spendsheet: formula (category)');
+  protectRange_(ss.getSheetByName(TABS.TRANSACTIONS),
+    colOf(TX_COLUMNS, 'in_reports') + '2:' + colOf(TX_COLUMNS, 'in_reports'),
+    'spendsheet: formula (in_reports)');
   protectRange_(ss.getSheetByName(TABS.ACCOUNTS),
     colOf(ACCOUNT_COLUMNS, 'balance') + '2:' + colOf(ACCOUNT_COLUMNS, 'balance'),
     'spendsheet: formula (balance)');
@@ -861,14 +971,23 @@ var TX_VISIBLE_COLUMNS = [
  * that you are in the middle of chasing something.
  */
 function applyColumnVisibility_(ss, report) {
-  if (!report || report.created.indexOf(TABS.TRANSACTIONS) === -1) return;
-
   var sheet = ss.getSheetByName(TABS.TRANSACTIONS);
-  if (!sheet) return;
+  if (!sheet || !report) return;
 
-  TX_COLUMNS.forEach(function (name, i) {
-    if (TX_VISIBLE_COLUMNS.indexOf(name) !== -1) return;
-    sheet.hideColumns(i + 1);
+  if (report.created.indexOf(TABS.TRANSACTIONS) !== -1) {
+    TX_COLUMNS.forEach(function (name, i) {
+      if (TX_VISIBLE_COLUMNS.indexOf(name) !== -1) return;
+      sheet.hideColumns(i + 1);
+    });
+    return;
+  }
+
+  // An upgrade adding a column, on a sheet whose visibility is otherwise
+  // yours. See `recordNewColumns_`.
+  (report.newColumns || []).forEach(function (entry) {
+    if (entry.tab !== TABS.TRANSACTIONS) return;
+    if (TX_VISIBLE_COLUMNS.indexOf(entry.name) !== -1) return;
+    sheet.hideColumns(entry.index);
   });
 }
 
@@ -909,9 +1028,9 @@ function removeDefaultSheet_(ss) {
 /** Put the tabs you actually use in front. */
 function orderTabs_(ss) {
   var order = [
-    TABS.DASHBOARD, TABS.TRANSACTIONS, TABS.PENDING, TABS.ACCOUNTS,
-    TABS.CASH_ENTRY, TABS.RULES, TABS.CATEGORIES, TABS.LABELS,
-    TABS.RECURRING, TABS.CASHFLOW
+    TABS.DASHBOARD, TABS.REPORTS, TABS.REVIEW, TABS.TRANSACTIONS,
+    TABS.PENDING, TABS.ACCOUNTS, TABS.CASH_ENTRY, TABS.RULES,
+    TABS.CATEGORIES, TABS.LABELS, TABS.RECURRING, TABS.CASHFLOW
   ];
   order.forEach(function (name, i) {
     var sh = ss.getSheetByName(name);

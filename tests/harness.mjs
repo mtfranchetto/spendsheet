@@ -119,7 +119,10 @@ class FakeRange {
   setValue(v) { this.sheet._set(this.row, this.col, v); return this; }
 
   getRow() { return this.row; }
+  getColumn() { return this.col; }
   getNumRows() { return this.numRows; }
+  getNumColumns() { return this.numCols; }
+  getSheet() { return this.sheet; }
 
   setFontSize(n) { this.sheet.fontSizes.set(`${this.row},${this.col}`, n); return this; }
 
@@ -187,6 +190,51 @@ export function indexToColumn(index) {
   return s;
 }
 
+class FakeChartBuilder {
+  constructor(sheet) {
+    this.sheet = sheet;
+    this.chartType = null;
+    this.ranges = [];
+    this.position = null;
+    this.numHeaders = 0;
+    this.options = {};
+  }
+
+  setChartType(type) { this.chartType = type; return this; }
+  addRange(range) { this.ranges.push(range); return this; }
+  setPosition(row, column, offsetX, offsetY) {
+    this.position = { row, column, offsetX, offsetY };
+    return this;
+  }
+  setNumHeaders(n) { this.numHeaders = n; return this; }
+  setOption(key, value) { this.options[key] = value; return this; }
+
+  build() {
+    const options = { ...this.options };
+    const built = this.ranges.slice();
+
+    return {
+      type: this.chartType,
+      numHeaders: this.numHeaders,
+      options,
+      position: this.position,
+      ranges: built.map((r) => r.getA1Notation()),
+      // The two accessors the real EmbeddedChart has, since `emptyCharts_`
+      // reads a chart back through them.
+      getRanges: () => built.slice(),
+      getOptions: () => ({ get: (key) => options[key] })
+    };
+  }
+}
+
+class FakeConditionalFormatRuleBuilder {
+  constructor() { this.rule = { formula: null, background: null, ranges: [] }; }
+  whenFormulaSatisfied(formula) { this.rule.formula = formula; return this; }
+  setBackground(colour) { this.rule.background = colour; return this; }
+  setRanges(ranges) { this.rule.ranges = ranges.map((r) => r.getA1Notation()); return this; }
+  build() { return this.rule; }
+}
+
 class FakeProtection {
   constructor(range) { this.range = range; this.description = ''; this.warningOnly = false; }
   setDescription(d) { this.description = d; return this; }
@@ -207,6 +255,8 @@ class FakeSheet {
     this.columnWidths = new Map();
     this.hiddenColumns = new Set();
     this.protections = [];
+    this.charts = [];
+    this.conditionalFormatRules = [];
     this.activeRange = null;
     this.filter = null;
     this.frozenRows = 0;
@@ -339,6 +389,21 @@ class FakeSheet {
   getActiveRange() { return this.activeRange || null; }
 
   /**
+   * Charts, modelled just far enough to catch the two mistakes a string test
+   * cannot: a chart pointed at a range with nothing in it, and a `setup()`
+   * that stacks another copy on every run. An EmbeddedChart has no id in the
+   * real API either, which is exactly why the code never tries to update one
+   * in place.
+   */
+  newChart() { return new FakeChartBuilder(this); }
+  insertChart(chart) { this.charts.push(chart); return this; }
+  removeChart(chart) { this.charts = this.charts.filter((c) => c !== chart); return this; }
+  getCharts() { return this.charts.slice(); }
+
+  setConditionalFormatRules(rules) { this.conditionalFormatRules = rules.slice(); return this; }
+  getConditionalFormatRules() { return this.conditionalFormatRules.slice(); }
+
+  /**
    * No filter unless a test installs one. Deliberately not faked further:
    * `isRowHiddenByFilter` is real spreadsheet state with no local model behind
    * it, and a stub that always answered "visible" would let a test claim
@@ -363,7 +428,12 @@ class FakeSheet {
       cells: [...this.cells.entries()].sort(),
       formulas: [...this.formulas.entries()].sort(),
       notes: [...this.notes.entries()].sort(),
-      protections: this.protections.map((p) => [p.getDescription(), p.isWarningOnly()]).sort()
+      protections: this.protections.map((p) => [p.getDescription(), p.isWarningOnly()]).sort(),
+      // Charts and format rules are both APIs that append rather than replace,
+      // so a second setup() stacking a duplicate is exactly the shape of bug
+      // an idempotency diff exists to catch.
+      charts: this.charts.map((c) => [c.type, c.position && c.position.row, ...c.ranges]),
+      conditionalFormats: this.conditionalFormatRules.map((r) => [r.formula, ...r.ranges])
     };
   }
 }
@@ -492,8 +562,18 @@ export function createGoogleStubs(options = {}) {
         }
       }),
       newDataValidation: dataValidationBuilder,
+      newConditionalFormatRule: () => new FakeConditionalFormatRuleBuilder(),
       ProtectionType: { RANGE: 'RANGE', SHEET: 'SHEET' },
       flush: () => {}
+    },
+
+    /**
+     * Only the enum. The builder lives on the sheet, which is where Apps
+     * Script puts it too — `Charts` itself contributes nothing but the names,
+     * and a fake that invented a chart type would let a typo pass.
+     */
+    Charts: {
+      ChartType: { COLUMN: 'COLUMN', BAR: 'BAR', LINE: 'LINE', PIE: 'PIE', AREA: 'AREA' }
     },
 
     PropertiesService: {

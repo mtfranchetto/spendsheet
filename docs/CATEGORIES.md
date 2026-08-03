@@ -57,6 +57,8 @@ A guessed category and a category you agreed with are not the same fact.
 
 Confirming does two things: it freezes that row's `category_auto` against future rule changes, and it makes the row eligible for learning. Typing a `category_override` counts as confirming without the tick.
 
+**On a phone, use the `review` tab instead.** It holds the unconfirmed backlog, oldest first, with a checkbox and a category dropdown next to each row — and a tick there writes straight back to `transactions`. That is the whole reason it exists: custom menus do not exist in the Sheets mobile app, so *Confirm visible rows* is a desktop tool and the checkbox is the one that works everywhere. See [`REPORTS.md`](REPORTS.md#review).
+
 Never automatic. A row confirmed by elapsed time is a row nobody looked at, wearing a badge that says somebody did.
 
 ---

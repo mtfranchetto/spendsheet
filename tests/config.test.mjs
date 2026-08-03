@@ -77,7 +77,7 @@ describe('colOf', () => {
 describe('the column contract', () => {
   it('keeps code-owned columns in A-O and derived ones from P', () => {
     expect(ctx.TX_COLUMNS_CODE).toHaveLength(15);
-    expect(ctx.TX_COLUMNS).toHaveLength(28);
+    expect(ctx.TX_COLUMNS).toHaveLength(29);
     expect(ctx.TX_COLUMNS.slice(0, 15)).toEqual(ctx.TX_COLUMNS_CODE);
   });
 

@@ -96,7 +96,7 @@ Append-only. **Booked transactions only** (see `pending` below).
 
 `source` is what lets imported history, manual cash entries and API rows share one timeline without union queries — and lets any one source be re-imported independently.
 
-### Formulas and yours (P–Z)
+### Formulas and yours (P–AC)
 
 | | Column | Owner | Notes |
 |---|---|---|---|
@@ -113,10 +113,17 @@ Append-only. **Booked transactions only** (see `pending` below).
 | Z | `excluded` | **you** | drop a row from reports without deleting it |
 | AA | `labels` | **you** | comma-separated, cross-cutting. Never affects a total |
 | AB | `confirmed` | **you** | you agreed with the category. The only rows memory is learned from |
+| AC | `in_reports` | formula | whether the row counts as spending. **Every money block reads this** |
 
 `amount_eur` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry plus a dashboard count is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
 
 `type` is derived, never stored, so recategorising a row fixes its type for free — and it's what keeps transfers out of spending reports.
+
+**`in_reports` is the one place that decides what counts as spending**, and it exists because there used to be six. Every dashboard block filtered `type <> 'transfer'` and nothing else, so `excluded` — a documented column you can tick — was honoured by recurring detection and by nothing you actually look at. A row you had deliberately excluded still counted in this month's spending, in the trend, and in every label total.
+
+It is a column rather than one more condition per query for a reason worth knowing before you write another report: `excluded` is blank on nearly every row, and `QUERY` infers a column's type from what is in it and treats blanks as null. `where Z = false` would drop nearly every row and blank the whole block. A formula that emits a real boolean on **every** row — including the ones with no transaction in them — removes both the null case and the majority-type case. That is also why the empty rows say `FALSE` rather than `""`: on a new book, thirty booleans among nine hundred empty strings is a *text* column, and `= true` would match nothing.
+
+Tick `excluded` on a row and it leaves every report at once. Nothing else changes; the row stays exactly where it is.
 
 **`confirmed` is what separates a guess you agreed with from a guess.** Synced rows arrive blank; imported rows arrive ticked, because you categorised them once already in the tool they came from. A row carrying a `category_override` counts as confirmed without the tick — typing the category is a stronger statement than ticking a box next to it.
 
@@ -304,11 +311,9 @@ Weekly, fortnightly, 4-weekly, quarterly and yearly are matched on the **median*
 
 Opening is **liquid** balance, not net worth: bank and cash only. A projection asks whether money runs out, and a flat you can't sell by Thursday doesn't stop that happening.
 
-**`dashboard`** — entirely formulas, so it's correct the moment a row lands rather than being a snapshot that needs refreshing. It's also what keeps the never-sort rule intact: every view of `transactions` happens *here*, through `QUERY`, instead of by rearranging the record of truth.
+**`dashboard`**, **`reports`** and **`review`** have a page of their own: [`docs/REPORTS.md`](REPORTS.md). The short version is that all three are formulas, checkboxes and dropdowns — never a menu item — because **custom menus, sidebars and dialogs do not exist in the Google Sheets mobile app**, and those are the tabs you open on a phone.
 
-Row 2 onward is the health strip — last successful sync, nearest consent expiry, rows in the last 7 days, needs-review count, unconfirmed count, and the projected date you run out. Health belongs where you already look; a status tab you have to remember to open is how you find out the sync died a fortnight ago.
-
-The three blocks below it are separated **horizontally**. They grow downwards, and a `QUERY` that outgrew its neighbour's start row would collide — which shows as `#REF!` across the whole block, not as one wrong cell.
+`review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_eur` · `guess` · `why` · `confirmed` · `category_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
 
 **`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app; drained into `transactions` by the daily trigger.
 

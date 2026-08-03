@@ -55,7 +55,17 @@ function runSmokeTests() {
     // at all anywhere else.
     var broken = brokenFormulaCells_();
     if (broken.length) throw new Error('#ERROR! in ' + broken.join(', '));
-    return 'all formula cells evaluate';
+    return formulaAnchors_().length + ' formula cells evaluate';
+  }));
+
+  results.push(smokeTest_('sheet', 'in_reports is a boolean, not text', function () {
+    return describeInReports_();
+  }));
+
+  results.push(smokeTest_('sheet', 'every chart points at data', function () {
+    var empty = emptyCharts_();
+    if (empty.length) throw new Error('nothing to plot in ' + empty.join(', '));
+    return chartsInBook_().length + ' charts have data behind them';
   }));
 
   writeTestResults_(results);
@@ -77,24 +87,145 @@ function smokeTest_(suite, name, fn) {
   }
 }
 
-/** Every anchor cell setup() writes a formula into, reported if it errored. */
-function brokenFormulaCells_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+/**
+ * Every cell setup() writes a formula into, as `tab!A1`.
+ *
+ * Listed rather than discovered, because a formula that failed to *land* is
+ * exactly as broken as one that failed to parse, and scanning for whatever
+ * happens to be there cannot tell the difference.
+ *
+ * The dashboard and reports entries are the ones that matter most: almost
+ * everything on those two tabs is a generated string, and the harness cannot
+ * hand one to a spreadsheet. This is the only check in the project that can.
+ */
+function formulaAnchors_() {
   var anchors = [
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'amount_eur')],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'category')],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'subcategory')],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'type')],
-    [TABS.ACCOUNTS, colOf(ACCOUNT_COLUMNS, 'balance')],
-    [TABS.STATUS, colOf(STATUS_COLUMNS, 'days_left')],
-    [TABS.STATUS, colOf(STATUS_COLUMNS, 'state')]
+    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'amount_eur') + '2'],
+    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'category') + '2'],
+    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'subcategory') + '2'],
+    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'type') + '2'],
+    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'in_reports') + '2'],
+    [TABS.ACCOUNTS, colOf(ACCOUNT_COLUMNS, 'balance') + '2'],
+    [TABS.STATUS, colOf(STATUS_COLUMNS, 'days_left') + '2'],
+    [TABS.STATUS, colOf(STATUS_COLUMNS, 'state') + '2'],
+    [TABS.LABELS, colOf(LABEL_COLUMNS, 'transactions') + '2'],
+    [TABS.LABELS, colOf(LABEL_COLUMNS, 'total_eur') + '2']
   ];
 
-  return anchors.filter(function (anchor) {
+  if (typeof DASH !== 'undefined') {
+    for (var i = 0; i < 6; i++) {
+      anchors.push([TABS.DASHBOARD, 'B' + (DASH.HEALTH_ROW + i)]);
+      anchors.push([TABS.DASHBOARD, 'B' + (DASH.MONTH_ROW + i)]);
+    }
+    [DASH.ACCOUNTS_COL, DASH.CATEGORY_COL, DASH.CATEGORY_VALUE_COL,
+      DASH.MONTHLY_COL, DASH.TREND_COL, DASH.LABEL_COL].forEach(function (column) {
+      anchors.push([TABS.DASHBOARD, column + DASH.BLOCK_ROW]);
+    });
+    anchors.push([TABS.DASHBOARD, nextColumn_(DASH.MONTHLY_COL, 1) + DASH.BLOCK_ROW]);
+    anchors.push([TABS.DASHBOARD, nextColumn_(DASH.MONTHLY_COL, 2) + DASH.BLOCK_ROW]);
+    anchors.push([TABS.DASHBOARD, nextColumn_(DASH.TREND_COL, 1) + DASH.BLOCK_ROW]);
+  }
+
+  if (typeof REPORT !== 'undefined') {
+    ['E' + REPORT.WINDOW_ROW, 'E' + (REPORT.WINDOW_ROW + 1),
+      'E' + REPORT.QUERY_ROW, 'E' + (REPORT.QUERY_ROW + 1),
+      'A' + REPORT.RESULT_ROW, 'C' + REPORT.RESULT_ROW,
+      REPORT.MONTH_COL + REPORT.MONTH_ROW,
+      nextColumn_(REPORT.MONTH_COL, 3) + REPORT.MONTH_ROW,
+      nextColumn_(REPORT.MONTH_COL, 4) + REPORT.MONTH_ROW,
+      nextColumn_(REPORT.YOY_COL, 1) + REPORT.YOY_ROW
+    ].forEach(function (a1) { anchors.push([TABS.REPORTS, a1]); });
+  }
+
+  return anchors;
+}
+
+/**
+ * The anchors that errored, or that have no formula in them at all.
+ *
+ * A blank anchor is reported too. `setValues` one column too wide silently
+ * deletes an ARRAYFORMULA, and the symptom of that is a cell holding nothing
+ * — which reads as "no data yet" rather than as damage.
+ */
+function brokenFormulaCells_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  return formulaAnchors_().filter(function (anchor) {
     var sheet = ss.getSheetByName(anchor[0]);
     if (!sheet) return true;
-    return String(sheet.getRange(anchor[1] + '2').getValue()).indexOf('#') === 0;
-  }).map(function (anchor) { return anchor[0] + '!' + anchor[1] + '2'; });
+
+    var cell = sheet.getRange(anchor[1]);
+    if (!cell.getFormula()) return true;
+    return String(cell.getValue()).indexOf('#') === 0;
+  }).map(function (anchor) { return anchor[0] + '!' + anchor[1]; });
+}
+
+/**
+ * Whether `in_reports` really produced booleans.
+ *
+ * The single most fragile assumption in the reporting layer, and one no unit
+ * test can reach: QUERY infers a column's type from what is in it, and
+ * `where AC = true` against a column Sheets decided was text matches nothing
+ * — silently, and only on some books. Reading the cell back is the only way
+ * to know which kind of column it built.
+ */
+function describeInReports_() {
+  var sheet = sheetOrThrow_(TABS.TRANSACTIONS);
+  var column = colOf(TX_COLUMNS, 'in_reports');
+
+  var first = sheet.getRange(column + '2').getValue();
+  if (typeof first !== 'boolean') {
+    throw new Error(column + '2 holds ' + (typeof first) + ' "' + first +
+      '", not a boolean — every report gated on it will be empty');
+  }
+
+  var last = lastRecordRow_(sheet, colIndex_(TX_COLUMNS, 'uid'));
+  if (last < 2) return 'no transactions yet, and the column is still a boolean';
+
+  var included = sheet.getRange(2, colIndex_(TX_COLUMNS, 'in_reports'), last - 1, 1)
+    .getValues().filter(function (row) { return row[0] === true; }).length;
+
+  return included + ' of ' + (last - 1) + ' rows count as spending';
+}
+
+/** Every chart in the book, with the tab it sits on. */
+function chartsInBook_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var found = [];
+
+  [TABS.DASHBOARD, TABS.REPORTS].forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    sheet.getCharts().forEach(function (chart) {
+      found.push({ tab: name, sheet: sheet, chart: chart });
+    });
+  });
+  return found;
+}
+
+/**
+ * Charts whose ranges are entirely empty.
+ *
+ * A chart pointed at nothing draws nothing, forever, and says nothing about
+ * why — which is indistinguishable from "you have not spent anything yet".
+ * The ranges are fixed when the chart is created, so this is the check that
+ * catches a block that moved out from under one.
+ */
+function emptyCharts_() {
+  return chartsInBook_().filter(function (entry) {
+    var ranges = entry.chart.getRanges ? entry.chart.getRanges() : [];
+    var filled = 0;
+
+    ranges.forEach(function (range) {
+      range.getValues().forEach(function (row) {
+        row.forEach(function (cell) { if (!isBlankCell_(cell)) filled++; });
+      });
+    });
+    return filled === 0;
+  }).map(function (entry) {
+    var options = entry.chart.getOptions ? entry.chart.getOptions() : null;
+    return entry.tab + ': ' + (options ? options.get('title') : 'a chart');
+  });
 }
 
 function writeTestResults_(results) {

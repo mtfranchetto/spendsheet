@@ -38,6 +38,13 @@ var TABS = {
   // thing does, and nothing else ever should. Same schema as `transactions`, so
   // putting a row back is a paste rather than a reconstruction.
   REMOVED: '_removed',
+  // Dropdowns driving one QUERY. Visible and without an underscore because it
+  // is a thing you use rather than machinery you ignore.
+  REPORTS: 'reports',
+  // The unconfirmed backlog, small enough to fit on one screen, with the two
+  // cells that are yours next to each row. The only surface in this project
+  // you can act on from a phone.
+  REVIEW: 'review',
   TESTS: '_tests'
 };
 
@@ -98,10 +105,54 @@ var TX_COLUMNS_DERIVED = [
   // from confirmed rows only. Learn from everything and the cascade trains on
   // its own output, where one wrong guess about a frequent merchant hardens
   // into the rule that generates more of the same.
-  'confirmed'               // AB
+  'confirmed',              // AB
+  // Whether this row counts as spending. One place decides it; every report
+  // reads the answer.
+  //
+  // `excluded` was a documented column that nothing you look at honoured —
+  // only recurring detection did. Every dashboard block filtered
+  // `type <> 'transfer'` and nothing else, so a row you had deliberately
+  // excluded still counted in this month's spending, in the six-month trend
+  // and in every label total. Six blocks each re-deciding what spending is,
+  // and one of them wrong.
+  //
+  // A derived column rather than one more condition per query, because
+  // `excluded` is blank on nearly every row and QUERY types a mostly-blank
+  // column by majority and treats blanks as null: `where Z = false` would
+  // drop nearly every row and blank the dashboard. A formula emitting a real
+  // boolean on *every* row — including the ones with no transaction in them —
+  // removes the null case, and the majority case, entirely. See
+  // `inReportsFormula()` in 04_setup.gs for why the blank rows say FALSE
+  // rather than "".
+  'in_reports'              // AC
 ];
 
 var TX_COLUMNS = TX_COLUMNS_CODE.concat(TX_COLUMNS_DERIVED);
+
+/**
+ * review — the unconfirmed backlog, refilled by a run and cleared by you.
+ *
+ * `uid` is what makes the write-back possible and is the one column here that
+ * is not for reading: a review row is a *pointer* at a transaction, so the tab
+ * can be rebuilt from scratch without losing the connection to what it
+ * describes.
+ *
+ * `confirmed` and `category_override` are yours. Everything else is a copy,
+ * and a copy going stale costs nothing because the tab is rewritten rather
+ * than maintained.
+ */
+var REVIEW_COLUMNS = [
+  'uid',                 // A  hidden; the write-back key
+  'booking_date',        // B
+  'account_name',        // C
+  'description',         // D
+  'amount_eur',          // E
+  'guess',               // F  what the cascade decided
+  'why',                 // G  which tier decided it
+  'confirmed',           // H  yours — a checkbox
+  'category_override',   // I  yours — a dropdown
+  'status'               // J  written by the trigger, so a phone gets feedback
+];
 
 /** pending is rewritten wholesale every sync, so nothing here is worth annotating. */
 var PENDING_COLUMNS = TX_COLUMNS_CODE.slice();
@@ -293,7 +344,9 @@ var DEFAULT_CONFIG = [
   ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
-  ['cashflow_horizon_days', 90, 'How far ahead the cashflow projection runs.']
+  ['cashflow_horizon_days', 90, 'How far ahead the cashflow projection runs.'],
+  ['trend_days', 90, 'How far back the net worth chart on the dashboard goes.'],
+  ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.']
 ];
 
 /**

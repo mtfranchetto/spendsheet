@@ -1,15 +1,12 @@
 /**
- * Recurring detection, the cashflow projection, and the dashboard.
+ * Recurring detection and the cashflow projection.
  *
- * The detector is pure and gets tested properly. The dashboard cannot be — no
- * spreadsheet evaluates anything here — so it gets the two checks a string test
- * can actually prove: that every sheet reference carries its `!`, and that the
- * formulas survive translation into a decimal-comma locale. Both of those have
- * shipped broken before, green.
+ * The detector is pure and gets tested properly.
  *
- * The third dashboard check is the one specific to QUERY: its column letters
- * are relative to the **range given**, not to the sheet, so a range that starts
- * anywhere but column A shifts every letter in every query silently.
+ * The dashboard checks used to live here, because the dashboard shipped in
+ * this phase. They moved to `analytics.test.mjs` when it was rebuilt — tests
+ * belong with the code they cover, and there is now enough of that code to
+ * need a file of its own.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -307,138 +304,5 @@ describe('writing the recurring tab', () => {
     c.writeRecurring_({ sheet, items: c.deriveRecurring_(monthly(4)), existing: {} });
 
     expect(c.readRecords_(sheet, c.RECURRING_COLUMNS, 1)[0].active).toBe(true);
-  });
-});
-
-/**
- * Strip quoted text, then look for what should not be there.
- *
- * A QUERY's query string is one long literal full of commas that are *data*.
- * Checking the raw formula for commas would fail on every one of them.
- */
-const outsideQuotes = (formula) => formula.replace(/"[^"]*"/g, '""');
-
-describe('the dashboard formulas', () => {
-  const all = [
-    ['lastSync', ctx.lastSyncFormula()],
-    ['nearestConsent', ctx.nearestConsentFormula()],
-    ['recentRows', ctx.recentRowsFormula()],
-    ['needsReview', ctx.needsReviewFormula()],
-    ['unconfirmed', ctx.unconfirmedFormula()],
-    ['runsOut', ctx.runsOutFormula()],
-    ['monthByCategory', ctx.monthByCategoryFormula()],
-    ['monthlyTrend', ctx.monthlyTrendFormula()],
-    ['labelBreakdown', ctx.labelBreakdownFormula()]
-  ];
-
-  it('follows every sheet name with a "!"', () => {
-    const tabs = Object.values(ctx.TABS).sort((a, b) => b.length - a.length);
-    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-    all.forEach(([name, formula]) => {
-      let rest = outsideQuotes(formula);
-      const dangling = [];
-
-      tabs.forEach((tab) => {
-        rest = rest.replace(new RegExp(escape(tab) + '(?![\\w!])', 'g'), () => {
-          dangling.push(tab);
-          return '~';
-        });
-        rest = rest.split(tab + '!').join('~!');
-      });
-
-      expect(dangling, `${name} references a sheet without "!"`).toEqual([]);
-    });
-  });
-
-  it('gives QUERY a range starting at column A', () => {
-    // QUERY names columns by position *within the range given*, not by their
-    // address on the sheet. A range starting anywhere else shifts every letter
-    // in every query at once, silently.
-    expect(ctx.txQueryRange_()).toContain('!$A$2:$');
-    expect(ctx.monthByCategoryFormula()).toContain(ctx.txQueryRange_());
-    expect(ctx.monthlyTrendFormula()).toContain(ctx.txQueryRange_());
-  });
-
-  it('reads amount_eur and groups by the category formula column', () => {
-    expect(ctx.monthByCategoryFormula()).toContain('sum(' + ctx.colOf(ctx.TX_COLUMNS, 'amount_eur') + ')');
-    expect(ctx.monthByCategoryFormula()).toContain('group by ' + ctx.colOf(ctx.TX_COLUMNS, 'category'));
-  });
-
-  it('keeps transfers out of both spending blocks', () => {
-    // Counting a move between your own accounts inflates a category total while
-    // the net stays right, which is how a reconciliation goes wrong invisibly.
-    [ctx.monthByCategoryFormula(), ctx.monthlyTrendFormula()].forEach((formula) => {
-      expect(formula).toContain(ctx.colOf(ctx.TX_COLUMNS, 'type') + " <> 'transfer'");
-    });
-  });
-
-  it('offsets QUERY\'s zero-based month', () => {
-    expect(ctx.monthlyTrendFormula()).toContain('month(' + ctx.colOf(ctx.TX_COLUMNS, 'booking_date') + ')+1');
-  });
-
-  it('counts unconfirmed rows without comparing a string to a boolean', () => {
-    // Sheets does not coerce across types: `=1=TRUE` is FALSE here where it is
-    // TRUE in Excel, and a criterion string tested against a real boolean is
-    // exactly the shape that has already cost this project a silent miss.
-    const f = ctx.unconfirmedFormula();
-    expect(f).toContain('COUNTA(');
-    expect(f).toContain(',TRUE)');
-    expect(f).not.toContain('"<>TRUE"');
-  });
-
-  it('survives translation into a decimal-comma locale', () => {
-    all.forEach(([name, formula]) => {
-      const localized = ctx.localizeFormula(formula, ';');
-      expect(outsideQuotes(localized), `${name} kept a comma`).not.toContain(',');
-      // And the commas *inside* the query strings must be untouched, or the
-      // select list becomes one column name with a semicolon in it.
-      if (formula.includes('QUERY')) expect(localized).toContain('label ');
-    });
-  });
-
-  it('builds balanced parentheses and quotes', () => {
-    all.forEach(([name, formula]) => {
-      const depth = [...formula].reduce((d, ch) => (ch === '(' ? d + 1 : ch === ')' ? d - 1 : d), 0);
-      expect(depth, `${name} parentheses`).toBe(0);
-      expect([...formula].filter((ch) => ch === '"').length % 2, `${name} quotes`).toBe(0);
-    });
-  });
-
-  it('uses no array literal, which localisation would turn into a column', () => {
-    // `{a,b}` is a row; localizeFormula rewrites the comma to `;`, which makes
-    // it a column. Anything built that way is unusable in a decimal-comma
-    // locale, so nothing here is built that way.
-    all.forEach(([name, formula]) => {
-      expect(formula, `${name} uses an array literal`).not.toMatch(/\{[^}]*,/);
-    });
-  });
-});
-
-describe('the dashboard tab', () => {
-  const c = load();
-  c.setup();
-  const dash = c.__spreadsheet.getSheetByName('dashboard');
-
-  it('puts health where you already look', () => {
-    expect(dash.getRange('A2').getValue()).toBe('Last successful sync');
-    expect(dash.getRange('B2').getFormula()).toContain('_runs!');
-  });
-
-  it('separates the blocks horizontally, so one growing cannot hit another', () => {
-    // A QUERY that outgrows its neighbour's start row shows #REF! across the
-    // whole block rather than as one wrong cell.
-    const columns = [c.DASH.MONTH_COL, c.DASH.TREND_COL, c.DASH.LABEL_COL];
-    expect(new Set(columns).size).toBe(3);
-
-    columns.forEach((column) => {
-      expect(dash.getRange(column + c.DASH.BLOCK_ROW).getFormula()).toContain('QUERY');
-    });
-  });
-
-  it('is rebuilt identically on a second setup()', () => {
-    const before = dash.getRange('B2').getFormula();
-    c.setup();
-    expect(c.__spreadsheet.getSheetByName('dashboard').getRange('B2').getFormula()).toBe(before);
   });
 });

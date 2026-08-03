@@ -120,3 +120,54 @@ describe('setup() reasserts what code owns', () => {
     expect(rules.getLastRow()).toBe(seeded);
   });
 });
+
+/**
+ * A column an upgrade adds is the one case where hiding on a re-run is right.
+ *
+ * `applyColumnVisibility_` otherwise touches nothing after the first run,
+ * because unhiding a column is a decision and re-hiding it would undo that
+ * decision exactly when you are chasing something. A column that did not exist
+ * five seconds ago carries no decision to respect — and `in_reports` is a
+ * thousand rows of FALSE if it lands visible.
+ */
+describe('a column added by an upgrade', () => {
+  /** A book from before the column existed: same tab, one header short. */
+  function olderBook() {
+    const ctx = load();
+    ctx.setup();
+    const tx = ctx.__spreadsheet.getSheetByName('transactions');
+    const column = ctx.colIndex_(ctx.TX_COLUMNS, 'in_reports');
+
+    tx.getRange(1, column).setValue('');
+    tx.showColumns(column);
+    return { ctx, tx, column };
+  }
+
+  it('is hidden, the same way a new book would hide it', () => {
+    const { ctx, tx, column } = olderBook();
+    const report = ctx.setup();
+
+    expect(report.newColumns).toEqual([
+      { tab: 'transactions', name: 'in_reports', index: column }
+    ]);
+    expect(tx.isColumnHiddenByUser(column)).toBe(true);
+  });
+
+  it('leaves a column you unhid yourself unhidden', () => {
+    const ctx = load();
+    ctx.setup();
+    const tx = ctx.__spreadsheet.getSheetByName('transactions');
+    const column = ctx.colIndex_(ctx.TX_COLUMNS, 'category_auto');
+
+    tx.showColumns(column);
+    ctx.setup();
+
+    expect(tx.isColumnHiddenByUser(column)).toBe(false);
+  });
+
+  it('reports nothing on a run that added no column', () => {
+    const ctx = load();
+    ctx.setup();
+    expect(ctx.setup().newColumns).toEqual([]);
+  });
+});

@@ -149,6 +149,12 @@ function runSync_(options) {
   // silently refers to last week is worse than not showing one.
   if (functionExists_('refreshCashflowQuietly_')) refreshCashflowQuietly_();
 
+  // And the review queue, for the same reason: it is a snapshot of what is
+  // unconfirmed, so a night's new transactions belong in it before you go
+  // looking. Refilling it is the one part of the review workflow a phone
+  // cannot do, which is exactly why it happens unattended instead.
+  if (functionExists_('refreshReviewQueueQuietly_')) refreshReviewQueueQuietly_();
+
   var attempted = accounts.length - totals.skipped;
   var result = !attempted ? RUN_RESULT.OK
     : totals.ok === attempted ? RUN_RESULT.OK
