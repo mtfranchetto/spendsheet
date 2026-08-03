@@ -369,11 +369,36 @@ function snapshotToDrive() {
   var values = sheet.getRange(1, 1, Math.max(rows, 1), TX_COLUMNS.length).getValues();
 
   var name = 'transactions-' + dateKey(new Date()) + '.csv';
-  var folder = snapshotFolder_(String(config.snapshot_folder || 'spendsheet-backups'));
-  folder.createFile(name, toCsv_(values), MimeType.CSV);
+  var where = writeSnapshot_(name, toCsv_(values),
+    String(config.snapshot_folder || 'spendsheet-backups'));
 
-  ss.toast(name + ' — ' + (rows - 1) + ' rows', 'Snapshot saved', 15);
-  return { file: name, rows: rows - 1 };
+  ss.toast(name + ' — ' + (rows - 1) + ' rows, in ' + where, 'Snapshot saved', 15);
+  return { file: name, rows: rows - 1, where: where };
+}
+
+/**
+ * The file, in a folder if we are allowed one and in My Drive if not.
+ *
+ * `DriveApp.createFolder` requires the **full `drive` scope**, which the
+ * comment below is right to refuse and wrong to assume `drive.file` covers.
+ * The consequence shipped: on any book that had never snapshotted, the folder
+ * could not be created and the whole call died with *"Specified permissions
+ * are not sufficient to call DriveApp.createFolder"*. Nothing caught it,
+ * because the harness fakes DriveApp and a fake has no scopes to be short of.
+ *
+ * So the folder is an improvement, not a requirement. Losing it costs tidiness;
+ * refusing to write the backup costs the backup.
+ */
+function writeSnapshot_(name, content, folderName) {
+  try {
+    snapshotFolder_(folderName).createFile(name, content, MimeType.CSV);
+    return folderName;
+  } catch (e) {
+    // Left to throw. If neither a folder nor a plain file is permitted then
+    // there is no backup, and saying so beats a toast claiming there is one.
+    DriveApp.createFile(name, content, MimeType.CSV);
+    return 'My Drive';
+  }
 }
 
 /**

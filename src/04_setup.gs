@@ -49,6 +49,7 @@ function runSetup_() {
   buildTable_(ss, TABS.IMPORT_MAP, IMPORT_MAP_COLUMNS, report, DEFAULT_IMPORT_MAP);
   buildTable_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, report, DEFAULT_CATEGORY_MAP);
   buildTable_(ss, TABS.MEMORY, MEMORY_COLUMNS, report);
+  buildTable_(ss, TABS.REMOVED, TX_COLUMNS, report);
   buildTable_(ss, TABS.TESTS, TEST_COLUMNS, report);
 
   // After every tab exists, so a book built by an older version catches up.

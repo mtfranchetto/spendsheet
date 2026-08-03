@@ -14,17 +14,17 @@ const EXPECTED_TABS = [
   'transactions', 'pending', 'accounts', 'rules', 'categories', 'recurring',
   'cashflow', 'cash_entry', 'dashboard', 'labels',
   '_anomalies', '_status', '_runs', '_config', '_import_map', '_category_map',
-  '_memory', '_import_raw', '_import_staged', '_tests'
+  '_memory', '_import_raw', '_import_staged', '_removed', '_tests'
 ];
 
 describe('setup()', () => {
-  it('builds exactly the 20 documented tabs', () => {
+  it('builds exactly the 21 documented tabs', () => {
     const ctx = load();
     ctx.setup();
 
     const names = ctx.__spreadsheet.getSheets().map((s) => s.getName());
     expect(names.sort()).toEqual([...EXPECTED_TABS].sort());
-    expect(names).toHaveLength(20);
+    expect(names).toHaveLength(21);
   });
 
   it('removes the blank starter tab but never a sheet with content', () => {

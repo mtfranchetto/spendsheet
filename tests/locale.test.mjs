@@ -78,7 +78,7 @@ describe('setup() in a decimal-comma locale', () => {
       const names = c.__spreadsheet.getSheets().map((s) => s.getName());
 
       expect(names.some((n) => n.indexOf('probe') !== -1)).toBe(false);
-      expect(names).toHaveLength(20);
+      expect(names).toHaveLength(21);
     }
   });
 

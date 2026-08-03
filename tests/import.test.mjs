@@ -686,19 +686,49 @@ describe('removing synced duplicates of imported rows', () => {
     expect(rowsIn(c)).toEqual(['csv:budgetbakers:import1#4332', 'second-real-charge']);
   });
 
-  it('backs the tab up to Drive before deleting anything', () => {
-    // Version history on a free account is 30 days or 100 revisions, and a
-    // daily sync burns 100 in about three months. This is the only place in
-    // the project that deletes a row of history.
+  it('copies every row to _removed before deleting it', () => {
+    // The only place in the project that deletes a row of history, and version
+    // history on a free account is 30 days or 100 revisions — a daily sync
+    // burns 100 in about three months.
     const c = load();
     c.setup();
     imported(c);
     synced(c);
 
     const result = c.removeSyncedDuplicates();
+    const removed = c.__spreadsheet.getSheetByName('_removed');
 
-    expect(result.snapshot).toMatch(/^transactions-\d{4}-\d{2}-\d{2}\.csv$/);
-    expect(c.__driveFiles.map((f) => f.name)).toContain(result.snapshot);
+    expect(result.kept).toBe(1);
+    expect(removed.getRange('A2').getValue()).toBe('a1b2c3');
+    expect(removed.headers()).toEqual(c.TX_COLUMNS);
+  });
+
+  it('needs no Drive scope, so a book that never snapshotted still works', () => {
+    // DriveApp.createFolder requires the full `drive` scope this project
+    // refuses. Backing up to Drive here meant the delete died on exactly the
+    // books most likely to need it.
+    const c = load({ refuseDriveFolders: true });
+    c.setup();
+    imported(c);
+    synced(c);
+
+    expect(c.removeSyncedDuplicates().removed).toBe(1);
+    expect(c.__driveFiles).toHaveLength(0);
+  });
+
+  it('appends on a second run rather than overwriting the first evidence', () => {
+    const c = load();
+    c.setup();
+    imported(c);
+    synced(c);
+    c.removeSyncedDuplicates();
+
+    imported(c, { uid: 'csv:budgetbakers:import1#4400' });
+    synced(c, { uid: 'later-sync' });
+    c.removeSyncedDuplicates();
+
+    expect(c.readColumn_(c.__spreadsheet.getSheetByName('_removed'), 1).filter(Boolean))
+      .toEqual(['a1b2c3', 'later-sync']);
   });
 
   it('re-baselines the row-loss detector, which would otherwise block every sync', () => {

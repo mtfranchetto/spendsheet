@@ -271,6 +271,7 @@ See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 | `_category_map` | source category → your taxonomy |
 | `_import_raw` | where a CSV lands via File → Import |
 | `_import_staged` | formula-mapped rows, ready to paste-values |
+| `_removed` | same columns as `transactions`. Rows that **Remove synced duplicates** deleted, so putting one back is a paste |
 | `_tests` | smoke test results |
 
 `_runs` is what powers the row-count regression guard: if the row count *decreased* since the last run, that's never legitimate in an append-only tab, so the sync alerts and aborts rather than carrying on.

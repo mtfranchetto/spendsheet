@@ -611,7 +611,21 @@ export function createGoogleStubs(options = {}) {
         if (!folder) throw new Error(`No item with the given ID could be found: ${id}`);
         return folder;
       },
+      /**
+       * `drive.file` covers this; it does not cover createFolder. Modelled
+       * because the difference is invisible to a fake with no scopes, and that
+       * is exactly how a snapshot that could never run shipped green.
+       */
+      createFile: (fileName, content, mime) => {
+        driveFiles.push({ name: fileName, content, mime });
+        return { getName: () => fileName, getId: () => `file-${driveFiles.length}` };
+      },
       createFolder: (name) => {
+        if (options.refuseDriveFolders) {
+          throw new Error('Specified permissions are not sufficient to call ' +
+            'DriveApp.createFolder. Required permissions: ' +
+            'https://www.googleapis.com/auth/drive');
+        }
         const folder = {
           name,
           id: `folder-${folders.length + 1}`,

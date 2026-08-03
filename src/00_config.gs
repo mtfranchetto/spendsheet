@@ -34,6 +34,10 @@ var TABS = {
   MEMORY: '_memory',
   IMPORT_RAW: '_import_raw',
   IMPORT_STAGED: '_import_staged',
+  // Where rows go when something deletes them from `transactions` — which one
+  // thing does, and nothing else ever should. Same schema as `transactions`, so
+  // putting a row back is a paste rather than a reconstruction.
+  REMOVED: '_removed',
   TESTS: '_tests'
 };
 

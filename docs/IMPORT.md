@@ -145,7 +145,9 @@ Two rows per transaction, both counted, every total wrong by the overlap.
 
 The synced copy is the one that goes. Neither is more true — they describe the same money — so the tie is broken by what's attached: the imported row carries the category you gave it in the tool it came from, the tick that says you meant it, and its labels. The synced row carries an `entry_reference` nothing downstream reads.
 
-This is the one place in the project that deletes a row of history, so it snapshots the tab to Drive first, refuses to touch row 2 (where every `ARRAYFORMULA` is anchored), and resets the row-loss detector afterwards — which would otherwise block every future sync, correctly, having watched the tab shrink.
+This is the one place in the project that deletes a row of history, so every row it removes is copied to **`_removed`** first — same columns as `transactions`, so putting one back is a paste. It also refuses to touch row 2 (where every `ARRAYFORMULA` is anchored) and resets the row-loss detector afterwards, which would otherwise block every future sync, correctly, having watched the tab shrink.
+
+The copy goes to a tab rather than to Drive on purpose. `DriveApp.createFolder` needs the full `drive` scope this project deliberately doesn't ask for, so on a book that has never snapshotted the backup fails — and a backup that fails on exactly the books most likely to need one is worse than no backup at all. A tab needs no scope and can't fail for a reason outside the sheet.
 
 ## Other providers
 

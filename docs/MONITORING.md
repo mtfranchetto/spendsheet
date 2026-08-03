@@ -86,6 +86,8 @@ That leaves exactly one spare, so a single impatient "Sync now" after the nightl
 
 **A weekly CSV of `transactions` into Drive**, installed by Install triggers alongside the sync. Folder name is `snapshot_folder` in `_config`; run it on demand with Spendsheet → Snapshot to Drive.
 
+The folder is best-effort. `DriveApp.createFolder` requires the full `drive` scope, which this project refuses for the reasons in [SETUP.md](SETUP.md) — so if Google declines it the CSV is written to My Drive instead and the toast says which. The file is the backup; the folder is tidiness.
+
 Version history is not a backup here. A free account keeps **30 days or 100 revisions, whichever comes first** — and a daily sync burns 100 revisions in roughly three months, so discovering in June that something broke in March means it's genuinely gone.
 
 CSV rather than a copy of the spreadsheet, because the point of this project is that the data outlives the tooling: a CSV opens in anything, forever. Every field is quoted and every date written ISO, so no locale and no stray comma can shift a column on the way back in.

@@ -603,9 +603,19 @@ function commitStagedImport_(plan) {
  * rather than a cleanup that undoes what tonight's sync will do.
  *
  * `transactions` is append-only everywhere else in this project, and this is
- * the single exception. It snapshots to Drive first, refuses to touch row 2,
- * and re-baselines the row-loss detector afterwards — which would otherwise
- * block every future sync, correctly, having watched the tab shrink.
+ * the single exception. Every row it removes is copied to `_removed` first,
+ * it refuses to touch row 2, and it re-baselines the row-loss detector
+ * afterwards — which would otherwise block every future sync, correctly,
+ * having watched the tab shrink.
+ *
+ * The copy goes to a tab rather than to Drive. `snapshotToDrive` was the
+ * obvious choice and it is the wrong one: it needs to create a folder, and
+ * `DriveApp.createFolder` requires the full `drive` scope this project
+ * deliberately does not ask for — so on a book that has never snapshotted, the
+ * backup fails and takes the deletion down with it. A tab in the same
+ * spreadsheet needs no scope at all, cannot fail for a reason outside the
+ * sheet, and is a better artefact besides: the rows are right there to read,
+ * and putting one back is a paste.
  */
 function removeSyncedDuplicates() {
   var ui = SpreadsheetApp.getUi();
@@ -624,7 +634,7 @@ function removeSyncedDuplicates() {
   }
 
   var result = commitSyncedDuplicates_(plan);
-  ss.toast(result.removed + ' rows removed. Backup: ' + result.snapshot + '.',
+  ss.toast(result.removed + ' rows removed, and copied to ' + TABS.REMOVED + ' first.',
     'Duplicates removed', 20);
   return result;
 }
@@ -700,8 +710,8 @@ function describeSyncedDuplicates_(plan) {
   }
 
   lines.push('');
-  lines.push('A CSV of the tab as it stands goes to Drive first. Rows are deleted, not ' +
-    'blanked, so undoing this means the snapshot or File → Version history.');
+  lines.push('Every row is copied to ' + TABS.REMOVED + ' before it goes, with the same ' +
+    'columns as ' + TABS.TRANSACTIONS + ' — so putting one back is a paste.');
   lines.push('');
   lines.push('Continue?');
   return lines.join('\n');
@@ -727,7 +737,10 @@ function commitSyncedDuplicates_(plan) {
       're-run this.');
   }
 
-  var snapshot = snapshotToDrive();
+  // Kept before anything is deleted, and appended rather than cleared, so a
+  // second run does not overwrite the evidence from the first.
+  var kept = appendRows_(sheetOrThrow_(TABS.REMOVED), 1,
+    plan.rows.map(function (record) { return toRow_(TX_COLUMNS, record); }));
 
   var rows = plan.rows.map(function (row) { return row._row; })
     .sort(function (a, b) { return b - a; });
@@ -743,7 +756,7 @@ function commitSyncedDuplicates_(plan) {
   // is the one shrink that was asked for, so the baseline moves with it.
   rememberRowCount_();
 
-  return { removed: removed, snapshot: snapshot.file, plan: plan };
+  return { removed: removed, kept: kept.count, keptAt: kept.row, plan: plan };
 }
 
 /**

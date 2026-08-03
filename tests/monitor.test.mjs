@@ -333,6 +333,22 @@ describe('snapshotToDrive', () => {
     expect(c.__driveFolders).toHaveLength(1);
   });
 
+  it('still writes the file when the folder is refused for want of a scope', () => {
+    // DriveApp.createFolder needs the full `drive` scope, which this project
+    // deliberately does not ask for. That killed every snapshot on a book that
+    // had not made the folder already, and took `Remove synced duplicates`
+    // down with it. The folder is tidiness; the file is the backup.
+    const c = load({ refuseDriveFolders: true });
+    c.setup();
+    addTransactions(c, 2);
+
+    const result = c.snapshotToDrive();
+
+    expect(result.where).toBe('My Drive');
+    expect(c.__driveFiles).toHaveLength(1);
+    expect(c.__driveFiles[0].content.split('\n')[0]).toContain('"uid"');
+  });
+
   it('makes a new folder when the remembered one has been deleted', () => {
     // Not an error worth alerting about: the id simply stops resolving, and
     // the recovery is the same thing the first run did.
