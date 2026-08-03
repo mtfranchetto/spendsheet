@@ -68,7 +68,7 @@ function buildReviewTab_(ss, report) {
   var sheet = ss.getSheetByName(TABS.REVIEW);
   if (!sheet) return;
 
-  var categories = ss.getSheetByName(TABS.CATEGORIES);
+  var categories = categoryListRange_(ss);
   var column = function (name) { return colOf(REVIEW_COLUMNS, name); };
   var whole = function (name) { return column(name) + '2:' + column(name); };
 
@@ -78,9 +78,14 @@ function buildReviewTab_(ss, report) {
   if (categories) {
     sheet.getRange(whole('category_override')).setDataValidation(
       SpreadsheetApp.newDataValidation()
-        .requireValueInRange(categories.getRange('A2:A'), true)
+        .requireValueInRange(categories, true)
         .setAllowInvalid(true).build());
   }
+
+  sheet.getRange(column('category_override') + '1').setNote(
+    'Pick a category to correct the guess to its left.\n\n' +
+    'Choose Transfer to mark a move between your own accounts — a transfer ' +
+    'counts towards net worth but never towards spending.');
 
   formatColumn_(sheet, column('booking_date'), 'yyyy-mm-dd');
   formatColumn_(sheet, column('amount_eur'),

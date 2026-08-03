@@ -109,7 +109,9 @@ function formulaAnchors_() {
     [TABS.STATUS, colOf(STATUS_COLUMNS, 'days_left') + '2'],
     [TABS.STATUS, colOf(STATUS_COLUMNS, 'state') + '2'],
     [TABS.LABELS, colOf(LABEL_COLUMNS, 'transactions') + '2'],
-    [TABS.LABELS, colOf(LABEL_COLUMNS, 'total_eur') + '2']
+    [TABS.LABELS, colOf(LABEL_COLUMNS, 'total_eur') + '2'],
+    // Every category dropdown in the book points at this one column.
+    [TABS.CATEGORIES, colOf(CATEGORY_COLUMNS, 'parent_list') + '2']
   ];
 
   if (typeof DASH !== 'undefined') {
@@ -118,7 +120,8 @@ function formulaAnchors_() {
       anchors.push([TABS.DASHBOARD, 'B' + (DASH.MONTH_ROW + i)]);
     }
     [DASH.ACCOUNTS_COL, DASH.CATEGORY_COL, DASH.CATEGORY_VALUE_COL,
-      DASH.MONTHLY_COL, DASH.TREND_COL, DASH.LABEL_COL].forEach(function (column) {
+      DASH.MONTHLY_COL, DASH.TREND_COL, DASH.LABEL_COL,
+      DASH.REVIEW_COL].forEach(function (column) {
       anchors.push([TABS.DASHBOARD, column + DASH.BLOCK_ROW]);
     });
     anchors.push([TABS.DASHBOARD, nextColumn_(DASH.MONTHLY_COL, 1) + DASH.BLOCK_ROW]);
@@ -176,7 +179,8 @@ function describeInReports_() {
   var first = sheet.getRange(column + '2').getValue();
   if (typeof first !== 'boolean') {
     throw new Error(column + '2 holds ' + (typeof first) + ' "' + first +
-      '", not a boolean — every report gated on it will be empty');
+      '", not a boolean — every report gated on it will be empty. ' +
+      spillReason_(sheet, colIndex_(TX_COLUMNS, 'in_reports'), column));
   }
 
   var last = lastRecordRow_(sheet, colIndex_(TX_COLUMNS, 'uid'));
@@ -186,6 +190,73 @@ function describeInReports_() {
     .getValues().filter(function (row) { return row[0] === true; }).length;
 
   return included + ' of ' + (last - 1) + ' rows count as spending';
+}
+
+/**
+ * Why an array formula anchored at row 2 produced one cell instead of a column.
+ *
+ * `#REF!` in the anchor of an ARRAYFORMULA means one thing: Sheets refused to
+ * expand it because something is already in the way. The cell says `#REF!` and
+ * the reason lives in a tooltip — which is exactly the kind of thing you find
+ * by hovering a cell on a laptop and cannot find at all on a phone, so the
+ * check that noticed the column is broken names the blocking cell too.
+ *
+ * The blocker is almost always a column you added yourself at the position the
+ * schema has since grown into: `buildTable_` writes the header row over it, so
+ * the symptom is one broken formula and a header that changed name, neither of
+ * which points at the other.
+ *
+ * The message has to say the **type** and the **extent**, not just the cell.
+ * A boolean `false` and the text `"false"` print identically once they are
+ * concatenated into a string, and they mean opposite things: one is a column
+ * of ours that got frozen into values, the other is something typed or pasted.
+ * Nor does one cell distinguish a whole column from a single stray paste. The
+ * first version of this message said `AC3 already holds "false"` and was
+ * compatible with four different repairs, which is not a diagnosis.
+ *
+ * Reads the whole column in one call — a scan looking for the first non-empty
+ * cell, one `getValue()` at a time, is a thousand round-trips on a book that
+ * has nothing wrong with it.
+ */
+function spillReason_(sheet, index, column) {
+  var height = sheet.getMaxRows() - 2;
+  if (height < 1) return 'There is no room below ' + column + '2 to expand into.';
+
+  var below = sheet.getRange(3, index, height, 1).getValues();
+  var formulas = sheet.getRange(3, index, height, 1).getFormulas();
+
+  var first = -1;
+  var filled = 0;
+  var written = 0;
+  for (var i = 0; i < below.length; i++) {
+    if (isBlankCell_(below[i][0])) continue;
+    if (first === -1) first = i;
+    filled++;
+    if (formulas[i][0]) written++;
+  }
+  if (first === -1) {
+    return 'Nothing below it is blocking the expansion, so the formula in ' + column +
+      '2 is itself what failed — read it there.';
+  }
+
+  return 'The array cannot expand: ' + column + (first + 3) + ' holds ' +
+    describeCell_(below[first][0]) + ', and ' + filled + ' of the ' + height +
+    ' cells below ' + column + '2 are not empty (' + written + ' of them formulas). ' +
+    'If that column is yours, move it to the right of the schema; if it is left ' +
+    'over, clear ' + column + '3:' + column + '. Then re-run Setup sheet.';
+}
+
+/**
+ * A cell value with its type, because the two that matter here print alike.
+ *
+ * `'' + false` and `'' + 'false'` are both `false` on screen, and the first
+ * means a boolean column of ours turned into values while the second means
+ * text arrived from somewhere else.
+ */
+function describeCell_(value) {
+  if (value instanceof Date) return 'the date ' + value.toISOString().slice(0, 10);
+  if (typeof value === 'string') return 'the text "' + value + '"';
+  return 'the ' + (typeof value) + ' ' + value;
 }
 
 /** Every chart in the book, with the tab it sits on. */

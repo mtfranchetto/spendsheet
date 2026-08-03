@@ -205,7 +205,20 @@ var RULE_COLUMNS = [
   'account_filter', 'category', 'subcategory', 'type', 'enabled'
 ];
 
-var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon'];
+/**
+ * `parent_list` is derived, and exists to be pointed at by a dropdown.
+ *
+ * Column A repeats a parent once per subcategory — twelve `Housing` rows, eight
+ * `Income` — so a validation rule reading A2:A offers seventy-odd entries most
+ * of which are duplicates. That is not a list you pick from, it is a list you
+ * give up on, and the cost was real: `Transfer` is in there, and the way you
+ * mark a transfer is to choose it, and it was unfindable.
+ *
+ * A column rather than a `requireValueInList` built in code, so that adding a
+ * category to the tab updates every dropdown at once instead of on the next
+ * `setup()`.
+ */
+var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon', 'parent_list'];
 
 /**
  * labels — the cross-cutting axis a category cannot express.

@@ -32,11 +32,18 @@ Entirely formulas, so it is correct the moment a row lands rather than being a s
 | **Health** (A3:C8) | last successful sync · nearest consent expiry · rows in the last 7 days · needs-review count · unconfirmed count, **with the date of the oldest one** · projected date you run out |
 | **This month** (A12:C17) | net worth · spent so far · earned so far · net · the same point last month · the difference |
 | **Accounts** (E) | every active account, biggest balance first, with the date its balance was last updated |
+| **Needs review** (Z) | the first ten of the review queue — date, description, amount, guess |
 | **Charts** (A20, A40, A60) | this month by category · spending by month, this year against last · net worth over 90 days |
 
 Health belongs where you already look; a status tab you have to remember to open is how you find out the sync died a fortnight ago. The **oldest unconfirmed date** is new and earns its place: thirty unconfirmed rows from this week is a normal Tuesday, thirty going back to March means the queue stopped being cleared and nothing said so.
 
 **"Same point last month" is month-to-date against month-to-date**, never against a full month. A comparison that flatters you on the 3rd and alarms you on the 30th is worse than no comparison, because it is wrong in a way that feels like information.
+
+### The review block reads the queue, not `transactions`
+
+It is `QUERY(review!…)`, and that is deliberate. Asking `transactions` for unconfirmed rows walks into the trap that produced `in_reports`: `confirmed` is blank on almost every row, `QUERY` types a column by majority, and `where AB = false` against a column Sheets decided was text is either an error or a silent nothing. The `review` tab is built row by row in code, so it has no blank majority to misread — and the two can never disagree, because it is the same queue showing its first ten.
+
+**Read-only, on purpose.** Ticking here would need the `uid` beside each row, and a `QUERY`'s rows move when the data under them changes — the argument in the `review` section below. Act on the `review` tab.
 
 ### The blocks are separated horizontally
 

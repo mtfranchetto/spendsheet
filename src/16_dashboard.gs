@@ -56,6 +56,8 @@ var DASH = {
   MONTHLY_COL: 'O',       // O:Q  month, this year, last year
   TREND_COL: 'S',         // S:T  date, net worth on that date
   LABEL_COL: 'V',         // V:X  label, rows, total
+  REVIEW_COL: 'Z',        // Z:AC date, description, amount, guess
+  REVIEW_ROWS: 10,        // how many of the queue to surface here
 
   CHART_ROWS: [20, 40, 60],
   CHART_COL: 1
@@ -152,7 +154,8 @@ function writeBlocks_(sheet, sep) {
     [DASH.CATEGORY_VALUE_COL, 'Spend', categorySpendFormula()],
     [DASH.MONTHLY_COL, 'Month', monthLabelsFormula()],
     [DASH.TREND_COL, 'Date', trendDatesFormula()],
-    [DASH.LABEL_COL, 'Labels', labelBreakdownFormula()]
+    [DASH.LABEL_COL, 'Labels', labelBreakdownFormula()],
+    [DASH.REVIEW_COL, 'Needs review', reviewQueueFormula()]
   ];
 
   blocks.forEach(function (block) {
@@ -167,13 +170,57 @@ function writeBlocks_(sheet, sep) {
   var monthly = [
     [nextColumn_(DASH.MONTHLY_COL, 1), 'This year', spendByMonthFormula(0)],
     [nextColumn_(DASH.MONTHLY_COL, 2), 'Last year', spendByMonthFormula(-1)],
-    [nextColumn_(DASH.TREND_COL, 1), 'Net worth', trendValuesFormula()]
+    [nextColumn_(DASH.TREND_COL, 1), 'Net worth', trendValuesFormula()],
+    [nextColumn_(DASH.REVIEW_COL, 1), 'Description', ''],
+    [nextColumn_(DASH.REVIEW_COL, 2), 'Amount', ''],
+    [nextColumn_(DASH.REVIEW_COL, 3), 'Guess', '']
   ];
 
+  // Three of these are a header over a column another block's formula already
+  // spills into — the review query returns four columns from one cell — so an
+  // empty formula here means "name this column", not "write nothing here".
+  // Writing it anyway would clear the cell the spill needs.
   monthly.forEach(function (block) {
     sheet.getRange(block[0] + (DASH.BLOCK_ROW - 1)).setValue(block[1]).setFontWeight('bold');
-    sheet.getRange(block[0] + DASH.BLOCK_ROW).setFormula(localizeFormula(block[2], sep));
+    if (block[2]) {
+      sheet.getRange(block[0] + DASH.BLOCK_ROW).setFormula(localizeFormula(block[2], sep));
+    }
   });
+}
+
+/**
+ * The top of the review queue, on the tab you actually open.
+ *
+ * Reads the `review` tab rather than `transactions`, which is the whole trick.
+ * The obvious version — QUERY `transactions` for unconfirmed rows — walks
+ * straight into the trap that produced `in_reports`: `confirmed` is blank on
+ * almost every row, QUERY types a column by majority, and `where AB = false`
+ * against a column Sheets decided was text is either an error or a silent
+ * nothing. `review` is built by code, one row per record, so it has no blank
+ * majority and no type to infer.
+ *
+ * It also means the two can never disagree. This is the same queue, showing
+ * its first ten — not a second opinion about what needs reviewing.
+ *
+ * Read-only, deliberately. Ticking here would need the uid beside each row,
+ * and a QUERY's rows *move* when the data under them changes: confirm the
+ * third and everything below shifts up by one, so the tick you were about to
+ * make lands on a different transaction. That argument is in `17_review.gs`
+ * and it is why the queue is a snapshot. Act on the `review` tab.
+ */
+function reviewQueueFormula() {
+  var first = colOf(REVIEW_COLUMNS, 'booking_date');
+  var last = colOf(REVIEW_COLUMNS, 'why');
+
+  // Query letters are relative to the range, which starts at booking_date.
+  var relative = function (name) {
+    return columnLetter(colIndex_(REVIEW_COLUMNS, name) - colIndex_(REVIEW_COLUMNS, 'booking_date') + 1);
+  };
+
+  return '=IFERROR(QUERY(' + TABS.REVIEW + '!$' + first + '$2:$' + last + ',' +
+    '"select ' + relative('booking_date') + ', ' + relative('description') + ', ' +
+    relative('amount_eur') + ', ' + relative('guess') +
+    ' limit ' + DASH.REVIEW_ROWS + '",0),"")';
 }
 
 /**
@@ -187,13 +234,15 @@ function writeBlocks_(sheet, sep) {
  * live `QUERY`s — two dashboards on one tab, both looking plausible, one of
  * them months out of date.
  *
- * **Columns A to X only**, which is the region the blocks occupy. Anything you
- * have put to the right of them is untouched, and that is the same boundary
- * every other "yours" region in this project uses: `transactions` from P,
- * `_import_staged` past the schema. Charts are not cell content and survive.
+ * The width is **derived from the rightmost block**, not written down, so
+ * adding a block cannot leave a strip of the old layout behind — which is the
+ * bug this function exists to prevent, and the one way of writing it that
+ * cannot commit the bug itself. Anything you have put beyond that is
+ * untouched, the same boundary every other "yours" region in this project
+ * uses. Charts are not cell content and survive.
  */
 function clearGeneratedBlocks_(sheet) {
-  var width = columnIndexOf_(nextColumn_(DASH.LABEL_COL, 2));
+  var width = columnIndexOf_(nextColumn_(DASH.REVIEW_COL, 3));
   sheet.getRange(1, 1, Math.max(sheet.getMaxRows(), 1), width).clearContent();
 }
 

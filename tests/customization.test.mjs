@@ -171,3 +171,72 @@ describe('a column added by an upgrade', () => {
     expect(ctx.setup().newColumns).toEqual([]);
   });
 });
+
+/**
+ * The schema grows rightwards, and so do you — into the same slot.
+ *
+ * This is not hypothetical: `in_reports` landed on column AC of a book that
+ * already had something in AC, and the header row went straight over it. The
+ * cost was two symptoms that do not point at each other — a column of yours
+ * quietly renamed, and an ARRAYFORMULA that cannot expand through data and
+ * reports `#REF!` instead, which emptied every report gated on it.
+ */
+describe('a column of yours in the slot the schema grew into', () => {
+  /** A book from before `in_reports`, with a column of your own where it lands. */
+  function bookWithMineInTheWay(value) {
+    const ctx = load();
+    ctx.setup();
+    const tx = ctx.__spreadsheet.getSheetByName('transactions');
+    const column = ctx.colIndex_(ctx.TX_COLUMNS, 'in_reports');
+
+    tx.getRange(1, column).setValue('my_flag');
+    tx.getRange(3, column).setValue(value);
+    return { ctx, tx, column };
+  }
+
+  it('is shifted right rather than written over', () => {
+    const { ctx, tx, column } = bookWithMineInTheWay('mine');
+    ctx.setup();
+
+    expect(tx.getRange(1, column + 1).getValue()).toBe('my_flag');
+    expect(tx.getRange(3, column + 1).getValue()).toBe('mine');
+  });
+
+  it('leaves the new column an empty slot for its formula to expand into', () => {
+    const { ctx, tx, column } = bookWithMineInTheWay('mine');
+    ctx.setup();
+
+    expect(tx.getRange(1, column).getValue()).toBe('in_reports');
+    expect(tx.getRange(2, column).getFormula()).toContain('ARRAYFORMULA');
+    // The whole point: nothing below the anchor, so the array can expand.
+    expect(tx.getRange(3, column).getValue()).toBe('');
+  });
+
+  it('says which column it moved, because a shift you did not ask for is news', () => {
+    const { ctx, column } = bookWithMineInTheWay('mine');
+
+    expect(ctx.setup().movedColumns).toEqual([
+      { tab: 'transactions', index: column, madeRoomFor: 'in_reports' }
+    ]);
+  });
+
+  it('moves a formula of yours as a formula, not as the value it happened to show', () => {
+    const { ctx, tx, column } = bookWithMineInTheWay('');
+    tx.getRange(3, column).setFormula('=1+1');
+
+    ctx.setup();
+    expect(tx.getRange(3, column + 1).getFormula()).toBe('=1+1');
+  });
+
+  it('does not insert a column when the slot is genuinely empty', () => {
+    const ctx = load();
+    ctx.setup();
+    const tx = ctx.__spreadsheet.getSheetByName('transactions');
+    const before = tx.getMaxColumns();
+
+    tx.getRange(1, ctx.colIndex_(ctx.TX_COLUMNS, 'in_reports')).setValue('');
+
+    expect(ctx.setup().movedColumns).toEqual([]);
+    expect(tx.getMaxColumns()).toBe(before);
+  });
+});

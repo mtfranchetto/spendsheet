@@ -411,10 +411,15 @@ describe('the dashboard tab', () => {
     const mine = load();
     mine.setup();
     const sheet = mine.__spreadsheet.getSheetByName('dashboard');
-    sheet.getRange('Z4').setValue('my own note');
+
+    // Derived from the layout, not written down: a block added to the right
+    // moves this boundary, and a hard-coded column would keep passing while
+    // testing a cell that is now generated.
+    const cell = mine.nextColumn_(mine.DASH.REVIEW_COL, 4) + '4';
+    sheet.getRange(cell).setValue('my own note');
 
     mine.setup();
-    expect(sheet.getRange('Z4').getValue()).toBe('my own note');
+    expect(sheet.getRange(cell).getValue()).toBe('my own note');
   });
 
   it('is rebuilt identically on a second setup()', () => {
@@ -497,6 +502,85 @@ describe('the charts', () => {
  * whole reason they exist. What can be proved is that each one fires on the
  * damage it was written for.
  */
+/**
+ * The two dropdowns and the one block that answer "what do I do here".
+ *
+ * All three exist because reading the sheet did not tell you: the category
+ * list offered seventy entries most of which were duplicates, nothing said
+ * that a transfer is marked by choosing a category, and the backlog lived on
+ * a tab you had to remember to open.
+ */
+describe('what the sheet tells you to do', () => {
+  it('offers each parent category once, not once per subcategory', () => {
+    const c = load();
+    const formula = c.categoryParentsFormula();
+
+    expect(formula).toContain('UNIQUE');
+    // FILTER, not a bare UNIQUE: the column is open-ended, so without it the
+    // list ends in a blank entry for every empty row on the tab.
+    expect(formula).toContain('FILTER');
+    expect(formula).toContain('$A$2:$A');
+  });
+
+  it('points every category dropdown at that one column', () => {
+    const c = load();
+    c.setup();
+
+    const column = c.colOf(c.CATEGORY_COLUMNS, 'parent_list');
+    const list = c.categoryListRange_(c.__spreadsheet).getA1Notation();
+    expect(list.startsWith(column + '2:' + column)).toBe(true);
+  });
+
+  it('says how to mark a transfer, on the column where you would mark one', () => {
+    const c = load();
+    c.setup();
+
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    const note = tx.getRange(c.colOf(c.TX_COLUMNS, 'category_override') + '1').getNote();
+    expect(note).toContain('Transfer');
+
+    const review = c.__spreadsheet.getSheetByName('review');
+    expect(review.getRange(c.colOf(c.REVIEW_COLUMNS, 'category_override') + '1').getNote())
+      .toContain('Transfer');
+  });
+
+  it('reads the review queue rather than asking transactions again', () => {
+    // `confirmed` is blank on almost every row, and QUERY types a column by
+    // majority — the exact trap that produced `in_reports`. The review tab is
+    // built row by row in code, so it has no blank majority to misread.
+    const c = load();
+    const formula = c.reviewQueueFormula();
+
+    expect(formula).toContain('review!');
+    expect(formula).not.toContain('transactions!');
+    expect(formula).toContain('limit ' + c.DASH.REVIEW_ROWS);
+    expect(c.DASH.REVIEW_ROWS).toBeGreaterThanOrEqual(10);
+  });
+
+  it('selects query letters relative to the range, not to the review schema', () => {
+    // The range starts at booking_date, so amount_eur is D there and E on the
+    // tab. Getting this wrong shows the wrong column with no error at all.
+    const c = load();
+    const formula = c.reviewQueueFormula();
+
+    expect(formula).toContain('$B$2:$G');
+    expect(formula).toContain('select A, C, D, E');
+  });
+
+  it('clears far enough right to cover the block it just added', () => {
+    const c = load();
+    c.setup();
+    const sheet = c.__spreadsheet.getSheetByName('dashboard');
+
+    // A stale block left behind by an older layout is two dashboards on one
+    // tab, both plausible. The last generated column must be cleared.
+    const last = c.nextColumn_(c.DASH.REVIEW_COL, 3);
+    sheet.getRange(last + '9').setValue('stale');
+    c.setup();
+    expect(sheet.getRange(last + '9').getValue()).not.toBe('stale');
+  });
+});
+
 describe('the smoke tests for this phase', () => {
   it('lists an anchor on every tab it wrote a formula to', () => {
     const c = load();
@@ -532,6 +616,55 @@ describe('the smoke tests for this phase', () => {
 
     c.__spreadsheet.formulaResults.set(formula, false);
     expect(c.describeInReports_()).toContain('no transactions yet');
+  });
+
+  it('names the cell that stopped the column expanding', () => {
+    // #REF! in the anchor of an ARRAYFORMULA means one thing — something is in
+    // the way — and Sheets says which cell in a tooltip you cannot hover on a
+    // phone. A column you added yourself at the position the schema later grew
+    // into is the case this exists for.
+    const c = load();
+    c.setup();
+
+    const sheet = c.__spreadsheet.getSheetByName('transactions');
+    const column = c.colOf(c.TX_COLUMNS, 'in_reports');
+    c.__spreadsheet.formulaResults.set(sheet.getRange(column + '2').getFormula(), '#REF!');
+
+    expect(() => c.describeInReports_()).toThrow(/Nothing below it is blocking/);
+
+    sheet.getRange(column + '9').setValue('my note');
+    expect(() => c.describeInReports_()).toThrow(
+      new RegExp(column + '9 holds the text "my note"'));
+  });
+
+  it('says whether the blocker is a boolean or the text that prints like one', () => {
+    // `'' + false` and `'' + 'false'` are the same four characters, and they
+    // mean opposite things: ours frozen into values, versus something typed.
+    const c = load();
+    c.setup();
+
+    const sheet = c.__spreadsheet.getSheetByName('transactions');
+    const column = c.colOf(c.TX_COLUMNS, 'in_reports');
+    c.__spreadsheet.formulaResults.set(sheet.getRange(column + '2').getFormula(), '#REF!');
+
+    sheet.getRange(column + '3').setValue(false);
+    expect(() => c.describeInReports_()).toThrow(/holds the boolean false/);
+
+    sheet.getRange(column + '3').setValue('false');
+    expect(() => c.describeInReports_()).toThrow(/holds the text "false"/);
+  });
+
+  it('counts how far the blockage runs, so one stray paste reads differently', () => {
+    const c = load();
+    c.setup();
+
+    const sheet = c.__spreadsheet.getSheetByName('transactions');
+    const column = c.colOf(c.TX_COLUMNS, 'in_reports');
+    c.__spreadsheet.formulaResults.set(sheet.getRange(column + '2').getFormula(), '#REF!');
+
+    sheet.getRange(column + '5').setValue(false);
+    sheet.getRange(column + '6').setValue(false);
+    expect(() => c.describeInReports_()).toThrow(/2 of the \d+ cells below/);
   });
 
   it('names a chart with nothing behind it', () => {

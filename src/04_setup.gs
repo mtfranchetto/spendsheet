@@ -32,7 +32,8 @@ function setup() {
 function runSetup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var report = {
-    created: [], existing: [], seeded: [], added: [], diverged: [], newColumns: []
+    created: [], existing: [], seeded: [], added: [], diverged: [],
+    newColumns: [], movedColumns: []
   };
 
   buildTable_(ss, TABS.TRANSACTIONS, TX_COLUMNS, report);
@@ -291,6 +292,7 @@ function buildTable_(ss, name, headers, report, seed) {
   var isNew = report && report.created.indexOf(name) !== -1;
 
   recordNewColumns_(sh, name, headers, report, isNew);
+  makeRoomForNewColumns_(sh, name, report);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
 
   // Trim the blank columns a new sheet is born with — but ONLY on a new
@@ -335,6 +337,64 @@ function recordNewColumns_(sheet, name, headers, report, isNew) {
     headers.map(function (header, i) {
       return existing.indexOf(header) === -1 ? { tab: name, name: header, index: i + 1 } : null;
     }).filter(function (entry) { return entry; }));
+}
+
+/**
+ * Give a column the schema has just grown into an empty slot to land in.
+ *
+ * The schema only ever grows to the **right**, and the first free column to
+ * the right is exactly where you would have put a column of your own — so
+ * "append to the right is safe" and "a new schema column lands on the right"
+ * are the same slot, and the second silently wins.
+ *
+ * Writing the header row over it loses two things at once: the name of your
+ * column, and the new formula, because an ARRAYFORMULA anchored at row 2
+ * cannot expand through a column that already has data and gives `#REF!`
+ * instead. The two symptoms do not point at each other — you get one broken
+ * formula on one tab and a header that quietly changed name — which is how
+ * `in_reports` shipped looking green and landed as an empty dashboard.
+ *
+ * So: if the slot is occupied, insert a column and let your data shift right.
+ * Inserting is safe here in a way it is never safe mid-schema — the position
+ * is past everything code addresses by letter, and Sheets rewrites the
+ * references in your own formulas as it moves them.
+ *
+ * Entries arrive in ascending order and each insert shifts what follows, which
+ * is why a block of your columns migrates right intact rather than being
+ * interleaved with the new ones.
+ */
+function makeRoomForNewColumns_(sheet, name, report) {
+  if (!report || !report.newColumns) return;
+
+  var height = sheet.getMaxRows() - 1;
+  if (height < 1) return;
+
+  report.newColumns.forEach(function (entry) {
+    if (entry.tab !== name || entry.index > sheet.getMaxColumns()) return;
+
+    // Formulas as well as values. A column of yours built from formulas shows
+    // blank in `getValues()` on every row the formula returns "" for, so a
+    // value-only test calls it empty and flattens it — the one kind of column
+    // where the loss is total rather than recoverable by re-typing.
+    var range = sheet.getRange(2, entry.index, height, 1);
+    var values = range.getValues();
+    var formulas = range.getFormulas();
+    var occupied = values.some(function (row, i) {
+      // Row 2 is where our own anchor lives, so a formula there is ours and
+      // says nothing about whose slot this is — on a re-run it is always
+      // present. Everything below it does say: an array of ours that expanded
+      // leaves computed cells, never stored ones, and one that did not expand
+      // is the very failure being prevented.
+      if (i === 0 && formulas[0][0]) return false;
+      return !isBlankCell_(row[0]) || formulas[i][0];
+    });
+    if (!occupied) return;
+
+    sheet.insertColumnBefore(entry.index);
+    report.movedColumns = (report.movedColumns || []).concat([
+      { tab: name, index: entry.index, madeRoomFor: entry.name }
+    ]);
+  });
 }
 
 /**
@@ -386,6 +446,37 @@ function applyFormulas_(ss, sep) {
   var status = ss.getSheetByName(TABS.STATUS);
   setFormula_(status, colOf(STATUS_COLUMNS, 'days_left'), consentDaysLeftFormula(), sep);
   setFormula_(status, colOf(STATUS_COLUMNS, 'state'), consentStateFormula(), sep);
+
+  var cats = ss.getSheetByName(TABS.CATEGORIES);
+  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'parent_list'), categoryParentsFormula(), sep);
+}
+
+/**
+ * categories.parent_list — each parent once, in the order the tab lists them.
+ *
+ * Sorting was considered and rejected: the seed order groups Income first and
+ * `Other` last, which is the order you think in. Alphabetical would put
+ * `Fees & Taxes` above `Food & Drink` and bury `Transfer` in the middle.
+ */
+/**
+ * The range every category dropdown points at — one place, so they agree.
+ *
+ * Returns null on a book without the tab rather than throwing, because a
+ * missing dropdown is a worse-but-usable sheet and a throw here would take
+ * the whole of `setup()` down with it.
+ */
+function categoryListRange_(ss) {
+  var cats = ss.getSheetByName(TABS.CATEGORIES);
+  if (!cats) return null;
+
+  var column = colOf(CATEGORY_COLUMNS, 'parent_list');
+  return cats.getRange(column + '2:' + column);
+}
+
+function categoryParentsFormula() {
+  var cat = colOf(CATEGORY_COLUMNS, 'category');
+  var range = '$' + cat + '$2:$' + cat;
+  return '=UNIQUE(FILTER(' + range + ',' + range + '<>""))';
 }
 
 /** Write a single array formula into row 2 of a column. Idempotent. */
@@ -821,7 +912,7 @@ function applyValidation_(ss) {
   var cash = ss.getSheetByName(TABS.CASH_ENTRY);
 
   var categoryRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(cats.getRange('A2:A'), true)
+    .requireValueInRange(categoryListRange_(ss), true)
     .setAllowInvalid(true)
     .build();
   var accountRule = SpreadsheetApp.newDataValidation()
@@ -879,6 +970,18 @@ function applyValidation_(ss) {
   // warnings, the opposite of what validation is for. The `labels` tab catches
   // the typo instead: a misspelling shows up there as a label with no
   // transactions against it, next to the real one with all of them.
+
+  // How you mark a transfer, written where you would look for it. There is no
+  // `type` you can type — `type` is derived from the category — so the answer
+  // is a category, and nothing said so anywhere.
+  tx.getRange(colOf(TX_COLUMNS, 'category_override') + '1').setNote(
+    'Pick a category to correct the guess. The list is the parent categories ' +
+    'from the categories tab.\n\n' +
+    'To mark a move between your own accounts, choose Transfer — that is what ' +
+    'sets type to transfer, and a transfer counts towards net worth but never ' +
+    'towards spending.\n\n' +
+    'An override is a stronger statement than a tick, so a row carrying one ' +
+    'counts as confirmed on its own.');
 
   var kindRule = SpreadsheetApp.newDataValidation()
     .requireValueInList([ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, ACCOUNT_KIND.ASSET], true)

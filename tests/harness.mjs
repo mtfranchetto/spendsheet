@@ -103,6 +103,18 @@ class FakeRange {
     return out;
   }
 
+  getFormulas() {
+    const out = [];
+    for (let r = 0; r < this.numRows; r++) {
+      const line = [];
+      for (let c = 0; c < this.numCols; c++) {
+        line.push(this.sheet.formulas.get(`${this.row + r},${this.col + c}`) || '');
+      }
+      out.push(line);
+    }
+    return out;
+  }
+
   getValue() {
     const formula = this.sheet.formulas.get(`${this.row},${this.col}`);
     const results = this.sheet.book && this.sheet.book.formulaResults;
@@ -280,9 +292,25 @@ class FakeSheet {
    */
   _set(r, c, v) {
     const key = this._key(r, c);
+    this._grow(r, c);
     this.formulas.delete(key);
     if (v === '' || v === null || v === undefined) this.cells.delete(key);
     else this.cells.set(key, v);
+  }
+
+  /**
+   * Writing past the edge grows the grid, as Sheets does.
+   *
+   * Not a detail: `buildTable_` has always written more headers than the 26
+   * columns a new sheet is born with, so a fake that left `maxColumns` at 26
+   * reported a sheet narrower than its own contents — and any code that asks
+   * `getMaxColumns()` before touching a column then reads as a no-op in tests
+   * while doing the real thing in the book. `makeRoomForNewColumns_` is
+   * exactly that code.
+   */
+  _grow(r, c) {
+    if (r > this.maxRows) this.maxRows = r;
+    if (c > this.maxColumns) this.maxColumns = c;
   }
 
   getName() { return this.name; }
@@ -340,6 +368,29 @@ class FakeSheet {
       }
     }
     this.maxColumns -= howMany;
+    return this;
+  }
+
+  /**
+   * Shifts values, formulas and notes right, the way `makeRoomForNewColumns_`
+   * needs: it inserts a slot for a column the schema has grown into, and a
+   * fake that moved only the values would let a test claim a user's formula
+   * column survived a shift that had actually flattened it.
+   */
+  insertColumnBefore(index) {
+    const shift = (map) => {
+      for (const key of [...map.keys()].sort((a, b) => Number(b.split(',')[1]) - Number(a.split(',')[1]))) {
+        const [r, c] = key.split(',').map(Number);
+        if (c < index) continue;
+        const v = map.get(key);
+        map.delete(key);
+        map.set(this._key(r, c + 1), v);
+      }
+    };
+    shift(this.cells);
+    shift(this.formulas);
+    shift(this.notes);
+    this.maxColumns += 1;
     return this;
   }
 
