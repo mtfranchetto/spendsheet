@@ -88,7 +88,7 @@ function buildReviewTab_(ss, report) {
     'counts towards net worth but never towards spending.');
 
   formatColumn_(sheet, column('booking_date'), 'yyyy-mm-dd');
-  formatColumn_(sheet, column('amount_eur'),
+  formatColumn_(sheet, column('amount_base'),
     currencyFormat_(readConfig_().base_currency || 'EUR'));
 
   // Written where a phone will show it: tapping a header cell in mobile Sheets
@@ -237,7 +237,7 @@ function reviewRow_(record) {
     booking_date: record.booking_date,
     account_name: record.account_name,
     description: record.description || record.counterparty,
-    amount_eur: record.amount_eur,
+    amount_base: record.amount_base,
     guess: record.category,
     why: record.category_source,
     confirmed: false,

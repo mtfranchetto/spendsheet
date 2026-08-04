@@ -485,7 +485,7 @@ function writeYearOnYear_(sheet, put) {
  */
 function yearToDateSpendFormula_(offset) {
   var year = offset === 0 ? 'YEAR(TODAY())' : 'YEAR(TODAY())' + offset;
-  var amount = txRange_('amount_eur');
+  var amount = txRange_('amount_base');
 
   return '=-SUMIFS(' + amount + ',' +
     txRange_('booking_date') + ',">="&DATE(' + year + ',1,1),' +
@@ -519,7 +519,7 @@ function periodBoundFormula_(edge) {
  */
 function groupedQueryStringFormula() {
   var group = groupColumnExpression_();
-  var amount = q_('amount_eur');
+  var amount = q_('amount_base');
 
   return '="select "&' + group + '&", sum(' + amount + ')' +
     ' where ' + q_('in_reports') + ' = true"' +
@@ -538,7 +538,7 @@ function groupedQueryStringFormula() {
  */
 function monthlyQueryStringFormula() {
   var date = q_('booking_date');
-  var amount = q_('amount_eur');
+  var amount = q_('amount_base');
 
   return '="select year(' + date + '), month(' + date + ')+1, sum(' + amount + ')' +
     ' where ' + q_('in_reports') + ' = true"' +

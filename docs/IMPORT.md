@@ -70,7 +70,7 @@ Every row of `_import_raw` appears. Two columns at the right explain each one:
 - **`include`** — whether it's coming through
 - **`why`** — in words, when it isn't
 
-Excluded rows are blanked across the whole pasteable block, not merely flagged. So you can copy everything without first remembering to filter, and an excluded row shows its reason and nothing else. A row that looks importable and is only kept out by your attention is a worse design.
+Excluded rows are blanked across every mapped column, not merely flagged, so an excluded row shows its reason and nothing else. A row that looks importable and is only kept out by your attention is a worse design.
 
 The reason you'll see is **"already covered by the API for this account"**. The cutoff is derived, not configured: for each account it's the oldest API-sourced row already in `transactions`. Nothing to set, nothing to keep current, and it stays correct when you connect a second bank six months later. Rows on or after it are what the sync already has.
 
@@ -78,22 +78,15 @@ The reason you'll see is **"already covered by the API for this account"**. The 
 
 **Spendsheet → Import staged rows.** It counts what will land, breaks it down by account, names the date range, and says how many rows are excluded and why — then asks before writing anything. Nothing moves until you say yes.
 
-It skips rows already in `transactions`, matching on uid, so running it twice imports nothing the second time. That is the one guarantee the manual paste below could never offer.
+It skips rows already in `transactions`, matching on uid, so running it twice imports nothing the second time. That is the one guarantee the manual paste it replaced could never offer.
 
 It also warns about rows whose `account_name` matched nothing in `accounts`. Those would import unattached and nothing downstream would mention it again.
 
 > **Why this has a menu item when the CSV loader deliberately doesn't.** The rule is that one-time operations get documented rather than coded, and this is the same exception `installCredentials()` earns: a procedure that silently corrupts is a trap, not a procedure. The paste was two blocks that had to land on the same row, values-only both times, after filtering, without crossing column P. Four ways to quietly damage a tab that is never rewritten once written. Loading the file and mapping the columns — the parts that were removed on purpose — are still File → Import and formulas you can read.
 
-<details>
-<summary>Doing it by hand instead</summary>
+There is **no by-hand route any more.** `_import_staged` used to carry a cell spelling out both paste targets with the row number computed live, and it was removed rather than kept as a fallback: it documented the one procedure with four silent ways to corrupt an append-only tab, next to a menu item that does the same job and additionally skips rows already imported. A fallback that is strictly more dangerous than the path beside it is not a fallback.
 
-Cell `T1` of `_import_staged` spells out both targets with the row number computed live, so you don't count by eye. It reads something like:
-
-> `Paste values: A2:O → transactions!A417   then   P2:P → transactions!T417`
-
-Two pastes rather than one, because column P of `transactions` holds the `amount_eur` ARRAYFORMULA and a pasted blank would destroy it. **Paste special → Values only**, both times, at the same row. Filter on `include` first, or the blanked excluded rows paste in as empty rows.
-
-</details>
+That is also why the staged tab is narrower than `transactions`. It no longer mirrors A–O column for column — `Import staged rows` writes each column by name — so the five columns no export can fill (`value_date`, `transaction_date`, `entry_reference`, `bank_transaction_code`, `mcc`) are simply not there. `value_date` was the one worth removing on its own: it was filled with a copy of `booking_date` to keep the block contiguous, which made a fabricated value indistinguishable from something a bank had said.
 
 ## Several files — merge them first
 
@@ -115,14 +108,14 @@ If you'd rather not merge, the steps above run once per file. Three things chang
 
 **Change `import_batch` before each file.** It goes into the uid of every imported row — `csv:budgetbakers:2019#42` — and the number after `#` is the row of `_import_raw`. Leave the batch alone and the second file's row 42 gets the same key as the first file's row 42. Name it after the year and it stays obvious later.
 
-**Clear `_import_raw` before each import, don't just re-import over it.** File → Import → *Replace data at selected cell* replaces the cells the new data lands on and leaves anything past it alone. So importing a 900-row year on top of a 1,400-row year leaves 500 rows of the previous file below it — which stage, look completely normal, and paste in a second time. Select `_import_raw`, ⌘A, Delete, then import.
+**Clear `_import_raw` before each import, don't just re-import over it.** File → Import → *Replace data at selected cell* replaces the cells the new data lands on and leaves anything past it alone. So importing a 900-row year on top of a 1,400-row year leaves 500 rows of the previous file below it — which stage, look completely normal, and import a second time under the new batch name. Select `_import_raw`, ⌘A, Delete, then import.
 
 Then the loop, per file:
 
 1. Clear `_import_raw`, import the year into it
 2. Set `import_batch` to that year
-3. Check `_import_staged` — the paste targets in `T1` recompute themselves, so they're right without counting
-4. Paste both blocks
+3. Check `_import_staged` — particularly `include` and `why`
+4. **Spendsheet → Import staged rows**
 5. Tie out one month against BudgetBakers before doing the next file
 
 That fifth step only matters on the first file. Once one year ties out, the mapping is proven and the rest are mechanical.

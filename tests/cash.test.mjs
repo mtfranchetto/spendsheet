@@ -30,11 +30,17 @@ function withWallet() {
   return c;
 }
 
-/** Type a row into cash_entry, as you would on a phone. */
+/**
+ * Type a row into cash_entry, as you would on a phone.
+ *
+ * Addressed by column *name* rather than by position. The tab's column order
+ * is deliberately not a contract — it is the order you fill the form in, and it
+ * has already been reordered once to put subcategory beside category.
+ */
 function type(c, row, values) {
   const sheet = c.__spreadsheet.getSheetByName('cash_entry');
-  ['date', 'account', 'amount', 'category', 'note'].forEach((name, i) => {
-    if (values[name] !== undefined) sheet.getRange(row, i + 1).setValue(values[name]);
+  Object.keys(values).forEach((name) => {
+    sheet.getRange(row, c.colIndex_(c.CASH_ENTRY_COLUMNS, name)).setValue(values[name]);
   });
 }
 
@@ -288,6 +294,7 @@ describe('typing one entry', () => {
 
     const sheet = c.__spreadsheet.getSheetByName('cash_entry');
     expect(sheet.getRange('B2').getValue()).toBe('');
-    expect(sheet.getRange('E3').getValue()).toBe('still typing this one');
+    expect(sheet.getRange(c.colOf(c.CASH_ENTRY_COLUMNS, 'note') + '3').getValue())
+      .toBe('still typing this one');
   });
 });

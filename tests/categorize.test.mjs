@@ -637,8 +637,8 @@ describe('the label report', () => {
     expect(total).toContain(`transactions!$${column}$2:$${column}`);
   });
 
-  it('sums amount_eur, which is what every report reads', () => {
-    const amount = ctx.colOf(ctx.TX_COLUMNS, 'amount_eur');
+  it('sums amount_base, which is what every report reads', () => {
+    const amount = ctx.colOf(ctx.TX_COLUMNS, 'amount_base');
     expect(total).toContain(`transactions!$${amount}$2:$${amount}`);
     expect(total).not.toContain(`transactions!$${ctx.colOf(ctx.TX_COLUMNS, 'amount')}$2`);
   });
@@ -739,5 +739,57 @@ describe('tidying a retired category', () => {
     const c = load();
     c.setup();
     expect(c.planCategoryTidy_(c.__spreadsheet).error).toMatch(/Nothing to tidy/);
+  });
+});
+
+/**
+ * The dropdowns and the code behind them.
+ *
+ * A validation list written out where it is applied is a second copy of the
+ * vocabulary, and the way a second copy drifts is that the sheet offers a value
+ * nothing understands — which fails as "the rule just doesn't match", with no
+ * error anywhere to find. These assert the list and its reader are in step.
+ */
+describe('the closed vocabularies', () => {
+  const c = load();
+
+  it('offers only rule fields the cascade can actually read', () => {
+    c.RULE_FIELDS.forEach((field) => {
+      expect(c.ruleField_({ description: 'x', counterparty: 'x', mcc: 1,
+        bank_transaction_code: 'x' }, field), field).not.toBeNull();
+    });
+    expect(c.ruleField_({}, 'not_a_field')).toBeNull();
+  });
+
+  it('offers only match types matchesPattern_ implements', () => {
+    // `contains` is the fallback, so a bogus type behaves like it — which is
+    // exactly why an unvalidated column here fails invisibly.
+    c.RULE_MATCH_TYPES.forEach((type) => {
+      expect(c.matchesPattern_('ACME', type, 'ACME'), type).toBe(true);
+    });
+  });
+
+  it('keeps the type list and the type enum the same three values', () => {
+    expect(c.TX_TYPES.slice().sort())
+      .toEqual(Object.values(c.TX_TYPE).slice().sort());
+    expect(c.ACCOUNT_KINDS.slice().sort())
+      .toEqual(Object.values(c.ACCOUNT_KIND).slice().sort());
+  });
+
+  it('seeds no rule that its own dropdowns would reject', () => {
+    // The seed data is the largest body of values in the project and the one
+    // nobody re-reads. A typo here ships as a rule that never fires.
+    c.DEFAULT_RULES.forEach((row) => {
+      const [, field, matchType, , , , , type] = row;
+      expect(c.RULE_FIELDS, `field ${field}`).toContain(field);
+      expect(c.RULE_MATCH_TYPES, `match_type ${matchType}`).toContain(matchType);
+      expect(c.TX_TYPES, `type ${type}`).toContain(type);
+    });
+  });
+
+  it('seeds no category whose kind is not a type', () => {
+    c.DEFAULT_CATEGORIES.forEach((row) => {
+      expect(c.TX_TYPES, `kind ${row[2]}`).toContain(row[2]);
+    });
   });
 });

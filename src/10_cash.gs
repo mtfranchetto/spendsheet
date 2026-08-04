@@ -130,9 +130,11 @@ function drainCashEntries_(existing, now) {
     };
     record.uid = computeCashUid(record, nextCashSequence_());
 
-    // The category you picked is an override, not a guess, so it goes in the
-    // column the cascade is forbidden from touching.
+    // What you picked is an override, not a guess, so it goes in the columns
+    // the cascade is forbidden from touching.
     record._categoryOverride = entry.category || '';
+    record._subcategoryOverride = entry.subcategory || '';
+    record._labels = entry.labels || '';
     record._row = entry._row;
     records.push(record);
   });
@@ -159,20 +161,31 @@ function drainCashEntries_(existing, now) {
 }
 
 /**
- * Write the picked category into `category_override`.
+ * Write what you picked into the columns the cascade never touches.
  *
- * A separate write because it lands in column T, on the far side of the
- * formulas — the block append covers A–O only, and reaching across it would
- * overwrite `amount_eur` with a blank.
+ * Separate writes because these land in T, AD and AA — on the far side of the
+ * formulas. The block append covers A–O only, and reaching across it would
+ * overwrite `amount_base` with a blank.
+ *
+ * Cell by cell rather than one `setValues`, and that is the exception to the
+ * bulk-write rule rather than a lapse from it: these are three non-adjacent
+ * columns, so a single rectangular write would span every formula between them.
+ * The volume is one row per entry typed, which is nothing.
  */
 function writeCashOverrides_(firstRow, records) {
   var sheet = sheetOrThrow_(TABS.TRANSACTIONS);
-  var column = colIndex_(TX_COLUMNS, 'category_override');
+  var fields = [
+    ['_categoryOverride', 'category_override'],
+    ['_subcategoryOverride', 'subcategory_override'],
+    ['_labels', 'labels']
+  ];
 
   records.forEach(function (record, i) {
-    if (record._categoryOverride) {
-      sheet.getRange(firstRow + i, column).setValue(record._categoryOverride);
-    }
+    fields.forEach(function (pair) {
+      if (!record[pair[0]]) return;
+      sheet.getRange(firstRow + i, colIndex_(TX_COLUMNS, pair[1]))
+        .setValue(record[pair[0]]);
+    });
   });
 }
 
@@ -237,8 +250,12 @@ function categoryKinds_() {
  *   takes the same lock the sync does and gives up rather than waiting: giving
  *   up leaves the row for the sync, which is about to append it anyway.
  */
-var CASH_CONFIRM_CELL = 'H2';
-var CASH_CONFIRM_LABEL = 'H1';
+// Deliberately past the last schema column with a blank column between, so
+// that appending one more field to the form cannot land its header on this
+// label — which is exactly what happened when `subcategory` and `labels` were
+// added and `processed` moved into H.
+var CASH_CONFIRM_CELL = 'J2';
+var CASH_CONFIRM_LABEL = 'J1';
 
 function onCashEntryEdit_(sheet, range) {
   // Row 1 is the header and column H is where this function's own confirmation
@@ -287,6 +304,24 @@ function clearDrainedCashRows_(sheet) {
     if (isBlankCell_(stamps[i][0])) continue;
     sheet.getRange(i + 2, 1, 1, CASH_ENTRY_COLUMNS.length).clearContent();
   }
+
+  seedCashEntryDate_(sheet);
+}
+
+/**
+ * Put `=TODAY()` back in the date cell.
+ *
+ * A formula rather than a written-in date, so a tab you opened on Monday and
+ * typed into on Tuesday records Tuesday. `drainCashEntries_` reads it through
+ * `getValues`, which returns the computed date, so nothing downstream knows the
+ * difference.
+ *
+ * Re-seeded after every clear because `clearContent` destroys the formula along
+ * with everything else — which is correct, and means the refill belongs here
+ * rather than only in the builder that runs at setup.
+ */
+function seedCashEntryDate_(sheet) {
+  sheet.getRange(colOf(CASH_ENTRY_COLUMNS, 'date') + '2').setFormula('=TODAY()');
 }
 
 /**
@@ -304,14 +339,21 @@ function buildCashEntryForm_(ss) {
   sheet.getRange(2, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
     .setBackground(DASH_COLOR.INPUT);
 
+  // Only when the row is empty. A date you deliberately backdated, on a row you
+  // are still typing, must survive a `setup()` run.
+  if (isBlankCell_(sheet.getRange(colOf(CASH_ENTRY_COLUMNS, 'date') + '2').getValue())) {
+    seedCashEntryDate_(sheet);
+  }
+
   sheet.getRange(CASH_CONFIRM_LABEL).setValue('Last added').setFontWeight('bold');
   sheet.getRange(CASH_CONFIRM_CELL).setFontColor('#5f6368');
 
   sheet.getRange('A1').setNote(
     'Type one entry on the blue row. It goes into transactions as soon as it ' +
     'has an account and an amount, and the row empties itself.\n\n' +
-    'Leave the date blank for today. Type the amount without a sign — a bare ' +
-    'number is spending, and an Income or Transfer category flips it.\n\n' +
+    'The date is already today; overwrite it to backdate one. Type the amount ' +
+    'without a sign — a bare number is spending, and an Income or Transfer ' +
+    'category flips it.\n\n' +
     'If the row does not clear, nothing is lost: the nightly sync drains it.');
 
   sheet.hideColumns(colIndex_(CASH_ENTRY_COLUMNS, 'processed'));

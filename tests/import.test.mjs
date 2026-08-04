@@ -372,22 +372,20 @@ describe('the staged formulas', () => {
     // invalid one. This is the cheapest check that can, and the symptom it
     // prevents is a whole row of "Formula parse error" with nothing to say
     // which of a dozen columns is at fault.
-    formulas.concat([{ column: 'instructions', formula: ctx.stagedInstructionsFormula() }])
-      .forEach(({ column, formula }) => {
-        expect(danglingSheetRefs(formula), `${column} references a sheet without "!"`).toEqual([]);
-      });
+    formulas.forEach(({ column, formula }) => {
+      expect(danglingSheetRefs(formula), `${column} references a sheet without "!"`).toEqual([]);
+    });
   });
 
   it('builds formulas with balanced parentheses and quotes', () => {
     // Generated string concatenation is exactly where an unbalanced bracket
     // hides, and the symptom in Sheets is a parse error with no line number.
-    formulas.concat([{ column: 'instructions', formula: ctx.stagedInstructionsFormula() }])
-      .forEach(({ column, formula }) => {
-        const depth = [...formula].reduce((d, ch) =>
-          ch === '(' ? d + 1 : ch === ')' ? d - 1 : d, 0);
-        expect(depth, `${column} parentheses`).toBe(0);
-        expect([...formula].filter((ch) => ch === '"').length % 2, `${column} quotes`).toBe(0);
-      });
+    formulas.forEach(({ column, formula }) => {
+      const depth = [...formula].reduce((d, ch) =>
+        ch === '(' ? d + 1 : ch === ')' ? d - 1 : d, 0);
+      expect(depth, `${column} parentheses`).toBe(0);
+      expect([...formula].filter((ch) => ch === '"').length % 2, `${column} quotes`).toBe(0);
+    });
   });
 
   it('survives translation into a decimal-comma locale', () => {
@@ -472,17 +470,34 @@ describe('the staged tab', () => {
   c.setup();
   const staged = c.__spreadsheet.getSheetByName('_import_staged');
 
-  it('puts the pasteable block first, ending where code ownership ends', () => {
-    expect(staged.headers().slice(0, c.TX_COLUMNS_CODE.length)).toEqual(c.TX_COLUMNS_CODE);
-    expect(c.colOf(c.STAGED_COLUMNS, 'imported_at')).toBe(c.colOf(c.TX_COLUMNS, 'imported_at'));
+  it('holds only columns an export can fill, in transactions order', () => {
+    // It no longer mirrors A–O — `importStagedRows` writes by name, so the
+    // alignment that justified five always-empty columns bought nothing. What
+    // has to hold is that every column is one `transactions` knows, and that
+    // they stay in its order, because reading the two side by side is how a
+    // mapping gets checked.
+    const headers = staged.headers().filter((h) => h !== 'include' && h !== 'why');
+    expect(headers).toEqual(c.TX_COLUMNS.filter((name) => headers.includes(name)));
   });
 
-  it('says exactly where to paste, computed rather than counted by eye', () => {
-    const instructions = staged.getRange(1, c.STAGED_COLUMNS.length + 2).getFormula();
-    expect(instructions).toContain('transactions!A');
-    expect(instructions).toContain('COUNTA');
-    // amount_eur is an ARRAYFORMULA a pasted blank would destroy.
-    expect(instructions).toContain('never paste over P');
+  it('stages no column that no export carries', () => {
+    // The five that went. Each is a bank field an export has never had, and
+    // `value_date` was being filled with a copy of `booking_date` purely to
+    // keep the block contiguous.
+    ['value_date', 'transaction_date', 'entry_reference', 'bank_transaction_code', 'mcc']
+      .forEach((name) => {
+        expect(c.STAGED_COLUMNS, `${name} is staged but nothing fills it`).not.toContain(name);
+      });
+  });
+
+  it('offers no by-hand paste route alongside the menu item', () => {
+    // The cell that used to spell out both paste targets. It described the one
+    // procedure with four silent ways to corrupt an append-only tab, and it
+    // could not skip rows already imported the way the menu item does.
+    expect(c.stagedInstructionsFormula).toBeUndefined();
+    for (let col = 1; col <= c.STAGED_COLUMNS.length + 4; col++) {
+      expect(staged.getRange(1, col).getFormula()).toBe('');
+    }
   });
 
   it('seeds the category map so an import has something to map through', () => {
@@ -497,7 +512,7 @@ describe('the staged tab', () => {
  * The formulas above decide *what* imports; this decides what lands in
  * `transactions`. The two failure modes worth pinning are the ones the manual
  * paste could not defend against: a block wide enough to cross the
- * `amount_eur` ARRAYFORMULA, and a second run duplicating the first.
+ * `amount_base` ARRAYFORMULA, and a second run duplicating the first.
  */
 describe('importing the staged rows', () => {
   /** A staged tab with `n` importable rows, bypassing the formulas. */
@@ -540,18 +555,18 @@ describe('importing the staged rows', () => {
       .toBe('Food & Drink');
   });
 
-  it('never writes across amount_eur, which is a formula it would destroy', () => {
+  it('never writes across amount_base, which is a formula it would destroy', () => {
     const c = load();
     c.setup();
     const before = c.__spreadsheet.getSheetByName('transactions')
-      .getRange(2, c.colIndex_(c.TX_COLUMNS, 'amount_eur')).getFormula();
+      .getRange(2, c.colIndex_(c.TX_COLUMNS, 'amount_base')).getFormula();
     expect(before).toContain('ARRAYFORMULA');
 
     staged(c, [row(2)]);
     c.importStagedRows();
 
     expect(c.__spreadsheet.getSheetByName('transactions')
-      .getRange(2, c.colIndex_(c.TX_COLUMNS, 'amount_eur')).getFormula()).toBe(before);
+      .getRange(2, c.colIndex_(c.TX_COLUMNS, 'amount_base')).getFormula()).toBe(before);
   });
 
   it('imports nothing on a second run, which a double paste could not manage', () => {
@@ -755,7 +770,7 @@ describe('removing synced duplicates of imported rows', () => {
 
   it('refuses to take row 2, where every ARRAYFORMULA is anchored', () => {
     // Deleting it does not move the formula, it destroys it — the tab loses
-    // amount_eur and every category column at once.
+    // amount_base and every category column at once.
     const c = load();
     c.setup();
     synced(c);

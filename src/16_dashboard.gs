@@ -75,8 +75,11 @@
  * you see of them is the chart.
  */
 var DASH = {
-  HEALTH_ROW: 3,          // A:C  six rows
+  NEXT_STEP_CELL: 'A2',   //      the one sentence a new book needs
+  HEALTH_ROW: 3,          // A:C
+  HEALTH_ROWS: 5,
   MONTH_ROW: 11,          // A:C  six rows, header on 10
+  MONTH_ROWS: 6,
   REVIEW_ROW: 19,         // A:D  ten rows, header on 18
   REVIEW_ROWS: 10,        // how many of the queue to surface here
 
@@ -128,12 +131,58 @@ function buildDashboard_(ss, sep) {
 
   sheet.getRange('A1').setValue('Spendsheet');
   sheet.getRange('A1').setFontSize(14).setFontWeight('bold');
+  sheet.getRange(DASH.NEXT_STEP_CELL)
+    .setFormula(localizeFormula(nextStepFormula(), sep)).setFontWeight('bold');
 
   writeHealthStrip_(sheet, sep);
   writeMonthStrip_(sheet, sep);
   writeBlocks_(sheet, sep);
   formatDashboard_(sheet);
   hideFeedColumns_(sheet);
+}
+
+/**
+ * The one sentence a book needs, which for a new one is "start here".
+ *
+ * A fresh copy of this project opens on twenty-four tabs and a dashboard
+ * reading `never`, and nothing anywhere says what to do about it. That is the
+ * single biggest thing between this repo and someone else being able to use
+ * it: every other piece of onboarding is written down in `docs/`, and the
+ * person who most needs it is the one who has not opened `docs/` yet.
+ *
+ * So it is a formula on the tab that opens first, and it answers in the order
+ * the answers stop mattering:
+ *
+ *   1. no accounts at all — you have not connected a bank
+ *   2. accounts but no transactions — you have, and not synced
+ *   3. a consent has expired — the sync is running and fetching nothing
+ *   4. the sync has never run — the triggers are not installed
+ *   5. rows are waiting to be categorised
+ *
+ * **Blank when there is nothing to do**, which is the ordinary day and the same
+ * rule `netWorthCaveatFormula` follows: a line printed every day is a line
+ * nobody reads, and its whole value is being unusual.
+ *
+ * It reads the health strip's own cells rather than recomputing what they say.
+ * Two formulas answering "when did the sync last succeed" is how they end up
+ * disagreeing, and this one would be the one you believed.
+ */
+function nextStepFormula() {
+  var health = function (offset) { return '$B$' + (DASH.HEALTH_ROW + offset); };
+  var names = accountsRange_('name');
+  var uids = txRange_('uid');
+
+  return '=IF(COUNTA(' + names + ')=0,' +
+    '"Start here → Spendsheet → Connect a bank",' +
+    'IF(COUNTA(' + uids + ')=0,' +
+    '"Connected. Now run Spendsheet → Sync now",' +
+    'IF(AND(ISNUMBER(' + health(1) + '),' + health(1) + '<=0),' +
+    '"A bank consent has expired — Spendsheet → Connect a bank to reconnect",' +
+    'IF(NOT(ISNUMBER(' + health(0) + ')),' +
+    '"Nothing has synced yet — Spendsheet → Install triggers",' +
+    'IF(' + health(3) + '>0,' +
+    health(3) + '&" transactions need a category — open the review tab",' +
+    '"")))))';
 }
 
 /**
@@ -174,9 +223,12 @@ function writeHealthStrip_(sheet, sep) {
     // to March means the queue stopped being cleared and nothing said so.
     ['Unconfirmed', unconfirmedFormula(), oldestUnconfirmedFormula(),
       '=IF(NOT(ISNUMBER($C$' + (DASH.HEALTH_ROW + 4) + ')),0,' +
-      'IF($C$' + (DASH.HEALTH_ROW + 4) + '<TODAY()-60,1,0))'],
-    ['Projected to run out on', runsOutFormula(), '',
-      '=IF(NOT(ISNUMBER(' + at(5) + ')),"",IF(' + at(5) + '<TODAY()+14,2,IF(' + at(5) + '<TODAY()+30,1,0)))']
+      'IF($C$' + (DASH.HEALTH_ROW + 4) + '<TODAY()-60,1,0))']
+    // There used to be a sixth row here, "Projected to run out on", read off a
+    // ninety-day cashflow projection built from detected recurring payments.
+    // Both went: the projection was the most machinery in the project per
+    // question answered, and the question it answered is one the reports tab
+    // gets at directly. `git log -- src/15_recurring.gs` has it.,
   ];
 
   writeStrip_(sheet, DASH.HEALTH_ROW, rows, sep);
@@ -260,7 +312,7 @@ function writeBlocks_(sheet, sep) {
   // label that is not true of them.
   //
   // `CATEGORY_VALUE_COL` is the odd one and worth explaining: it is the
-  // category block's total again, negated. `amount_eur` is signed, so a
+  // category block's total again, negated. `amount_base` is signed, so a
   // spending total is negative, and a bar chart of negative bars is legible but
   // reads as a mistake. QUERY cannot negate an aggregate — arithmetic on
   // `sum()` is not in the query language — so the sign is flipped in the one
@@ -440,7 +492,7 @@ function reviewQueueFormula() {
 
   return '=IFERROR(QUERY(' + TABS.REVIEW + '!$' + first + '$2:$' + last + ',' +
     '"select ' + relative('booking_date') + ', ' + relative('description') + ', ' +
-    relative('amount_eur') + ', ' + relative('guess') +
+    relative('amount_base') + ', ' + relative('guess') +
     ' limit ' + DASH.REVIEW_ROWS + '",0),"")';
 }
 
@@ -548,18 +600,6 @@ function oldestUnconfirmedFormula() {
     confirmed + '<>TRUE)),"yyyy-mm-dd"),""))';
 }
 
-/**
- * The one number worth reading out of ninety rows of projection.
- *
- * "—" when the projection never goes negative, which is the answer you want
- * most days and reads better than a blank.
- */
-function runsOutFormula() {
-  var date = cashflowRange_('date');
-  var closing = cashflowRange_('closing');
-  return '=IFERROR(MIN(FILTER(' + date + ',' + closing + '<0)),"—")';
-}
-
 // ---------------------------------------------------------------------------
 // This month
 // ---------------------------------------------------------------------------
@@ -574,7 +614,7 @@ function runsOutFormula() {
  * like a right one. So the total is restricted to the base currency and
  * `netWorthCaveatFormula` says out loud how many accounts that left out.
  *
- * Refusing to add them is the same decision `amount_eur` already makes for
+ * Refusing to add them is the same decision `amount_base` already makes for
  * transactions: blank rather than unconverted.
  */
 function netWorthFormula() {
@@ -639,7 +679,7 @@ function spentLastMonthToDateFormula() {
 function monthToDateSum_(offset, sign) {
   var start = offset === 0 ? 'EOMONTH(TODAY(),-1)+1' : 'EOMONTH(TODAY(),' + (offset - 1) + ')+1';
   var end = offset === 0 ? 'TODAY()' : 'EDATE(TODAY(),' + offset + ')';
-  var amount = txRange_('amount_eur');
+  var amount = txRange_('amount_base');
 
   return 'SUMIFS(' + amount + ',' +
     txRange_('booking_date') + ',">="&' + start + ',' +
@@ -694,13 +734,13 @@ function accountsBlockFormula() {
  */
 function monthByCategoryFormula() {
   return '=IFERROR(QUERY(' + txQueryRange_() + ',' +
-    '"select ' + q_('category') + ', sum(' + q_('amount_eur') + ') ' +
+    '"select ' + q_('category') + ', sum(' + q_('amount_base') + ') ' +
     'where ' + q_('in_reports') + ' = true ' +
-    'and ' + q_('amount_eur') + ' < 0 ' +
+    'and ' + q_('amount_base') + ' < 0 ' +
     'and ' + q_('booking_date') + ' >= date \'"&TEXT(EOMONTH(TODAY(),-1)+1,"yyyy-mm-dd")&"\' ' +
     'group by ' + q_('category') + ' ' +
-    'order by sum(' + q_('amount_eur') + ') asc ' +
-    'label ' + q_('category') + ' \'Category\', sum(' + q_('amount_eur') + ') \'Spend\'",0),' +
+    'order by sum(' + q_('amount_base') + ') asc ' +
+    'label ' + q_('category') + ' \'Category\', sum(' + q_('amount_base') + ') \'Spend\'",0),' +
     '"nothing yet")';
 }
 
@@ -747,7 +787,7 @@ function spendByMonthFormula(yearOffset) {
   var year = yearOffset === 0 ? 'YEAR(TODAY())' : 'YEAR(TODAY())' + yearOffset;
   var first = 'DATE(' + year + ',SEQUENCE(12),1)';
   var next = 'DATE(' + year + ',SEQUENCE(12)+1,1)';
-  var amount = txRange_('amount_eur');
+  var amount = txRange_('amount_base');
 
   return '=ARRAYFORMULA(IF(' + first + '>EOMONTH(TODAY(),0),"",' +
     '-SUMIFS(' + amount + ',' +
@@ -767,7 +807,7 @@ function trendDatesFormula() {
  * Net worth on each of those days, derived from `transactions` rather than
  * from a history nobody kept.
  *
- *   balance_at(d) = balance_now − Σ amount_eur booked after d
+ *   balance_at(d) = balance_now − Σ amount_base booked after d
  *
  * A `_balances` snapshot tab would have been a tab, a sync change and a
  * backfill job to produce something strictly worse: it would start
@@ -788,7 +828,7 @@ function trendDatesFormula() {
  *   is the one place in the project that reads every row, and it is correct
  *   precisely because net worth is not a spending question.
  *
- *   **Non-EUR rows contribute nothing**, since `amount_eur` is blank for them,
+ *   **Non-EUR rows contribute nothing**, since `amount_base` is blank for them,
  *   while their balance is in today's total. Those accounts flat-line. Same
  *   trade as the net worth figure itself, and `netWorthCaveatFormula` is what
  *   says so.
@@ -800,7 +840,7 @@ function trendValuesFormula() {
 
   return '=ARRAYFORMULA(IF(LEN(' + dates + ')=0,"",' +
     netWorthFormula().slice(1) + '-' +
-    'SUMIFS(' + txRange_('amount_eur') + ',' +
+    'SUMIFS(' + txRange_('amount_base') + ',' +
     txRange_('booking_date') + ',">"&' + dates + ')))';
 }
 
@@ -861,7 +901,6 @@ function sheetRange_(tab, headers, name) {
 function txRange_(name) { return sheetRange_(TABS.TRANSACTIONS, TX_COLUMNS, name); }
 function runsRange_(name) { return sheetRange_(TABS.RUNS, RUN_COLUMNS, name); }
 function statusRange_(name) { return sheetRange_(TABS.STATUS, STATUS_COLUMNS, name); }
-function cashflowRange_(name) { return sheetRange_(TABS.CASHFLOW, CASHFLOW_COLUMNS, name); }
 function accountsRange_(name) { return sheetRange_(TABS.ACCOUNTS, ACCOUNT_COLUMNS, name); }
 
 /**
@@ -894,12 +933,15 @@ function formatDashboard_(sheet) {
   var config = readConfig_();
   var money = currencyFormat_(config.base_currency || 'EUR');
 
-  sheet.getRange('A' + DASH.HEALTH_ROW + ':A' + (DASH.HEALTH_ROW + 5)).setFontWeight('bold');
-  sheet.getRange('A' + DASH.MONTH_ROW + ':A' + (DASH.MONTH_ROW + 5)).setFontWeight('bold');
+  sheet.getRange('A' + DASH.HEALTH_ROW + ':A' + (DASH.HEALTH_ROW + DASH.HEALTH_ROWS - 1))
+    .setFontWeight('bold');
+  sheet.getRange('A' + DASH.MONTH_ROW + ':A' + (DASH.MONTH_ROW + DASH.MONTH_ROWS - 1))
+    .setFontWeight('bold');
 
   sheet.getRange('B' + DASH.HEALTH_ROW).setNumberFormat('yyyy-mm-dd hh:mm');
-  sheet.getRange('B' + (DASH.HEALTH_ROW + 5)).setNumberFormat('yyyy-mm-dd');
-  sheet.getRange('B' + DASH.MONTH_ROW + ':B' + (DASH.MONTH_ROW + 5)).setNumberFormat(money);
+  sheet.getRange('C' + (DASH.HEALTH_ROW + 4)).setNumberFormat('yyyy-mm-dd');
+  sheet.getRange('B' + DASH.MONTH_ROW + ':B' + (DASH.MONTH_ROW + DASH.MONTH_ROWS - 1))
+    .setNumberFormat(money);
 
   // Stacking the blocks put every money column in C — the review amount, the
   // account balance, the label total — so one range formats all three. It also
@@ -978,11 +1020,19 @@ function accountsUpdatedColumn_() {
 function flagDashboardStates_(sheet) {
   var flag = function (row) { return '=$' + DASH.FLAG_COL + row; };
 
-  var health = sheet.getRange('A' + DASH.HEALTH_ROW + ':C' + (DASH.HEALTH_ROW + 5));
+  var health = sheet.getRange(
+    'A' + DASH.HEALTH_ROW + ':C' + (DASH.HEALTH_ROW + DASH.HEALTH_ROWS - 1));
   var accounts = sheet.getRange('A' + DASH.ACCOUNTS_ROW + ':' + DASH.SYNC_COL +
     (DASH.ACCOUNTS_ROW + DASH.ACCOUNTS_LIMIT));
 
+  // The next-step line is amber whenever it says anything at all, which is the
+  // one rule here that tests its own cell rather than the severity column: it
+  // is already prose, so there is no severity to compute — it either has
+  // something to tell you or it is empty. `LEN(x)>0` carries no comma.
+  var step = sheet.getRange(DASH.NEXT_STEP_CELL + ':C2');
+
   var rules = [
+    [step, '=LEN($' + DASH.NEXT_STEP_CELL + ')>0', DASH_COLOR.WARN],
     [health, flag(DASH.HEALTH_ROW) + '=2', DASH_COLOR.BAD],
     [health, flag(DASH.HEALTH_ROW) + '=1', DASH_COLOR.WARN],
     [accounts, flag(DASH.ACCOUNTS_ROW) + '=2', DASH_COLOR.BAD],
@@ -1013,7 +1063,7 @@ function flagDashboardStates_(sheet) {
  *
  * ## Two blocks rather than one merged list
  *
- * Pending rows live on their own tab with only columns A–O: no `amount_eur`, no
+ * Pending rows live on their own tab with only columns A–O: no `amount_base`, no
  * category, because none of that has been derived for a row the bank has not
  * booked yet. Merging the two into one date-sorted list would need an array
  * literal — `{booked; pending}` — and **this project cannot use array
@@ -1033,11 +1083,26 @@ function flagDashboardStates_(sheet) {
  * neighbour rather than stopping politely at the edge.
  */
 var RECENT = {
-  PENDING_ROW: 5,         // A:E  header on 4; the QUERY's own header on 5
+  FILTER_ROW: 3,          // A:B  Year, Month — the two cells that are yours
+  PENDING_ROW: 8,         // A:E  header on 7; the QUERY's own header on 8
   PENDING_LIMIT: 25,
-  BOOKED_ROW: 34,         // A:E  header on 33; the QUERY's own header on 34
-  BOOKED_LIMIT: 200
+  BOOKED_ROW: 37,         // A:E  header on 36; the QUERY's own header on 37
+  BOOKED_LIMIT: 200,
+
+  // Off to the right and hidden. The year list has to be a *range* rather than
+  // a fixed list because which years you have is a fact about your data; the
+  // month list is a range too, for a different reason — a formula has to turn
+  // the name you picked back into a number, and MATCH against a range is how
+  // that is done without an array literal.
+  YEAR_COL: 'H',
+  MONTH_COL: 'I'
 };
+
+/** The months, in calendar order. `All` first because it is the default. */
+var RECENT_MONTHS = [
+  'All', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
 
 function buildRecent_(ss, sep) {
   var sheet = ss.getSheetByName(TABS.RECENT);
@@ -1046,12 +1111,26 @@ function buildRecent_(ss, sep) {
   // Same argument as `clearGeneratedBlocks_`: this is a view, and a view's
   // layout moves between versions. Overwriting alone would leave the previous
   // arrangement sitting there as orphaned headers and live QUERYs.
+  //
+  // The two filter cells are read back first and restored after, because the
+  // sweep is indiscriminate by design and they are the only cells on the tab
+  // that are yours. Writing the defaults only-when-blank — which is what the
+  // reports tab does — is not enough here: the clear makes them blank every
+  // time, so re-running setup() while you were looking at last March would put
+  // you back on All.
+  var chosen = sheet.getRange('B' + RECENT.FILTER_ROW + ':B' + (RECENT.FILTER_ROW + 1))
+    .getValues();
+
   sheet.getRange(1, 1, Math.max(sheet.getMaxRows(), 1), 5).clearContent();
+  sheet.getRange('B' + RECENT.FILTER_ROW + ':B' + (RECENT.FILTER_ROW + 1))
+    .setValues(chosen);
 
   sheet.getRange('A1').setValue('Recent').setFontSize(14).setFontWeight('bold');
   sheet.getRange('A2').setValue(
     'Newest first. Read-only — correct a category on the review tab, or in ' +
     'transactions itself.');
+
+  writeRecentFilters_(sheet, sep);
 
   [
     [RECENT.PENDING_ROW, 'Pending — not booked yet, amounts can still change',
@@ -1081,23 +1160,23 @@ function recentBookedFormula() {
 
   return '=IFERROR(QUERY(' + txQueryRange_() + ',' +
     '"select ' + date + ', ' + q_('account_name') + ', ' + q_('description') + ', ' +
-    q_('amount_eur') + ', ' + q_('category') + ' ' +
-    'where ' + date + ' is not null ' +
+    q_('amount_base') + ', ' + q_('category') + ' ' +
+    'where ' + date + ' is not null"' + recentWhereFormula_(date) + '&" ' +
     'order by ' + date + ' desc ' +
     'limit ' + RECENT.BOOKED_LIMIT + ' ' +
     'label ' + date + ' \'Date\', ' + q_('account_name') + ' \'Account\', ' +
-    q_('description') + ' \'Description\', ' + q_('amount_eur') + ' \'Amount\', ' +
+    q_('description') + ' \'Description\', ' + q_('amount_base') + ' \'Amount\', ' +
     q_('category') + ' \'Category\'",0),"nothing yet")';
 }
 
 /**
  * The same, for rows the bank has taken but not settled.
  *
- * Shows `amount` and `currency` rather than `amount_eur`, because `pending`
+ * Shows `amount` and `currency` rather than `amount_base`, because `pending`
  * carries only the columns code writes — the derived ones do not exist there.
  * Naming the currency is what keeps that honest: an unconverted foreign amount
  * next to a euro one, with nothing saying which is which, is the mistake
- * `amount_eur` exists to prevent.
+ * `amount_base` exists to prevent.
  */
 function recentPendingFormula() {
   var p = function (name) { return colOf(PENDING_COLUMNS, name); };
@@ -1112,6 +1191,99 @@ function recentPendingFormula() {
     'label ' + date + ' \'Date\', ' + p('account_name') + ' \'Account\', ' +
     p('description') + ' \'Description\', ' + p('amount') + ' \'Amount\', ' +
     p('currency') + ' \'Cur\'",0),"nothing pending")';
+}
+
+/**
+ * Two dropdowns, and the clause they add to the booked query.
+ *
+ * Deliberately **only the booked block**. A pending charge is a handful of rows
+ * from the last few days by definition, so a year filter over it would be a
+ * control that either changes nothing or empties it — a filter that can only
+ * mislead is worse than no filter.
+ *
+ * The year list is a *range* rather than a fixed list, because which years you
+ * have is a fact about your data: hard-coding 2020-2030 offers you years you
+ * have nothing in and stops working in 2031. The month list is fixed, because
+ * there are twelve of them and there always will be.
+ *
+ * `All` is the first entry of both, and choosing it contributes no clause at
+ * all — the same rule the `reports` tab follows, so the default query is short
+ * and the clauses you see are exactly the ones you chose.
+ */
+function writeRecentFilters_(sheet, sep) {
+  var row = RECENT.FILTER_ROW;
+
+  sheet.getRange('A' + row).setValue('Year').setFontWeight('bold');
+  sheet.getRange('A' + (row + 1)).setValue('Month').setFontWeight('bold');
+
+  // Only when blank. Re-running setup() while you are looking at last March
+  // must not put you back on All.
+  if (isBlankCell_(sheet.getRange('B' + row).getValue())) {
+    sheet.getRange('B' + row).setValue('All');
+  }
+  if (isBlankCell_(sheet.getRange('B' + (row + 1)).getValue())) {
+    sheet.getRange('B' + (row + 1)).setValue('All');
+  }
+
+  sheet.getRange('B' + row + ':B' + (row + 1)).setBackground(DASH_COLOR.INPUT);
+
+  sheet.getRange(RECENT.YEAR_COL + '1').setValue('All');
+  sheet.getRange(RECENT.YEAR_COL + '2')
+    .setFormula(localizeFormula(recentYearsFormula(), sep));
+
+  sheet.getRange(1, columnIndexOf_(RECENT.MONTH_COL), RECENT_MONTHS.length, 1)
+    .setValues(RECENT_MONTHS.map(function (name) { return [name]; }));
+
+  sheet.hideColumns(columnIndexOf_(RECENT.YEAR_COL), 2);
+
+  [['B' + row, RECENT.YEAR_COL], ['B' + (row + 1), RECENT.MONTH_COL]]
+    .forEach(function (pair) {
+      sheet.getRange(pair[0]).setDataValidation(
+        SpreadsheetApp.newDataValidation()
+          .requireValueInRange(sheet.getRange(pair[1] + '1:' + pair[1]), true)
+          .setAllowInvalid(false).build());
+    });
+}
+
+/**
+ * Every year you have a transaction in, newest first.
+ *
+ * `SORT(..., 1, FALSE)` because you are far more often looking for something
+ * from this year than from five years ago, and a dropdown you have to scroll
+ * to reach the common answer is a dropdown that has failed at its one job.
+ */
+function recentYearsFormula() {
+  var dates = txRange_('booking_date');
+  return '=IFERROR(SORT(UNIQUE(FILTER(YEAR(' + dates + '),LEN(' + dates + ')>0)),1,FALSE),"")';
+}
+
+/**
+ * The where-clause fragment the two dropdowns contribute, as a formula.
+ *
+ * Concatenated into the query string rather than filtering the result, so the
+ * work happens inside QUERY and the `limit` still means "the newest 200 *of
+ * what you asked for*". Filtering afterwards would cap you at 200 rows overall
+ * and then show whichever of them happened to match — a block that quietly
+ * lies about being the most recent.
+ *
+ * `year()` and `month()` are QUERY's own scalar functions, so this needs no
+ * derived column. QUERY's `month()` is **zero-based** — January is 0 — which is
+ * the kind of off-by-one that produces a report that is right eleven twelfths
+ * of the time, so the index into `RECENT_MONTHS` is what supplies it: `All` at
+ * position 0 makes the list position and the month number line up for free.
+ */
+function recentWhereFormula_(dateColumn) {
+  var year = '$B$' + RECENT.FILTER_ROW;
+  var month = '$B$' + (RECENT.FILTER_ROW + 1);
+
+  var months = '$' + RECENT.MONTH_COL + '$1:$' + RECENT.MONTH_COL;
+
+  // MATCH returns the 1-based row, and `All` occupies the first of them, so
+  // January lands on 2 and subtracting 2 gives QUERY the 0 it wants.
+  return '&IF(' + year + '="All","",' +
+    '" and year(' + dateColumn + ') = "&' + year + ')' +
+    '&IF(' + month + '="All","",' +
+    '" and month(' + dateColumn + ') = "&(MATCH(' + month + ',' + months + ',0)-2))';
 }
 
 /** The same rule as `txQueryRange_`: start at A or every letter above shifts. */

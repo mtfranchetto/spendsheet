@@ -144,7 +144,7 @@ describe('a first sync', () => {
     const c = withAccounts(bank({ booked: [booked()] }));
     c.syncNow();
 
-    // amount_eur is an ARRAYFORMULA anchored in P2. Writing 26 columns
+    // amount_base is an ARRAYFORMULA anchored in P2. Writing 26 columns
     // instead of 15 would silently destroy it.
     expect(tx(c).getRange('P2').getFormula()).toContain('ARRAYFORMULA');
   });

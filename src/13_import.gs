@@ -1,13 +1,22 @@
 /**
  * 13_import.gs — bringing years of history in from another app.
  *
- * **There is no importer here.** Loading a CSV is File → Import, and moving
- * the result into `transactions` is a paste — both one-time human operations,
- * both fast, neither improved by wrapping in a menu item that can only fail in
- * new ways. What this file builds is the tab in between: `_import_staged`, a
- * sheet of formulas that reads whatever landed in `_import_raw`, maps it
- * through `_import_map` and `_category_map`, and shows you the result before
- * any of it becomes history.
+ * **There is no CSV parser here.** Loading a file is File → Import, which is a
+ * one-time human operation and is not improved by wrapping it in a menu item
+ * that can only fail in new ways. What this file builds is the tab in between:
+ * `_import_staged`, a sheet of formulas that reads whatever landed in
+ * `_import_raw`, maps it through `_import_map` and `_category_map`, and shows
+ * you the result before any of it becomes history.
+ *
+ * Committing that result **is** a menu item — `importStagedRows` — and there is
+ * no longer a documented way to do it by hand. The paste it replaced was two
+ * blocks that had to land on the same row, values-only both times, filtered
+ * first, without crossing the `amount_base` ARRAYFORMULA; the tab used to carry
+ * a cell spelling out both targets. Keeping that cell meant the tab advertised
+ * the procedure whose four silent failure modes are the reason the menu item
+ * exists, and it could not offer what the menu item does: uids are matched, so
+ * running it twice imports nothing the second time. One way in, and it is the
+ * one that cannot half-land.
  *
  * That ordering is the point. You **see** which rows are excluded and why,
  * rather than trusting a log written after the fact. And when the mapping is
@@ -42,9 +51,30 @@
  *   appear, so the parse cannot assume a decimal point exists.
  */
 
-/** Columns of `_import_staged`. A–O is the block you paste; the rest explains it. */
-var STAGED_COLUMNS = TX_COLUMNS_CODE
-  .concat(['category_override', 'labels', 'include', 'why']);
+/**
+ * Columns of `_import_staged`. Only the ones an export can actually fill.
+ *
+ * This used to be `TX_COLUMNS_CODE` plus four, so that A–O lined up column for
+ * column with `transactions` and the block could be pasted across in one go.
+ * That alignment was the *only* argument for the five columns no CSV supplies —
+ * `transaction_date`, `entry_reference`, `bank_transaction_code` and `mcc` are
+ * bank fields an export has never carried, and `value_date` was filled with a
+ * copy of `booking_date` to keep the shape.
+ *
+ * `importStagedRows` writes each column by name, so the alignment buys nothing
+ * any more, and five always-empty columns on a tab you read before committing
+ * are five columns of noise in the way of the two that matter. A fabricated
+ * `value_date` was worse than noise: identical to the column beside it and
+ * indistinguishable from something the bank actually said.
+ *
+ * The order still follows `transactions` because reading them side by side is
+ * how you check a mapping — it just no longer has to be a *contiguous* prefix.
+ */
+var STAGED_COLUMNS = [
+  'uid', 'account_id', 'account_name', 'booking_date', 'amount', 'currency',
+  'description', 'counterparty', 'source', 'imported_at',
+  'category_override', 'labels', 'include', 'why'
+];
 
 // ---------------------------------------------------------------------------
 // Reading _import_raw through _import_map
@@ -323,7 +353,6 @@ function stagedFormulas() {
     ['account_id', importAccountIdExpr_()],
     ['account_name', importRawColumn_('account_name')],
     ['booking_date', importDateExpr_(importRawColumn_('booking_date'))],
-    ['value_date', importDateExpr_(importRawColumn_('booking_date'))],
     ['amount', stagedAmountExpression()],
     ['currency', importRawColumn_('currency')],
     ['description', importRawColumn_('description')],
@@ -344,29 +373,6 @@ function stagedFormulas() {
   formulas.push({ column: 'include', formula: stagedIncludeFormula() });
   formulas.push({ column: 'why', formula: stagedWhyFormula() });
   return formulas;
-}
-
-/**
- * Where to paste, computed rather than counted by eye.
- *
- * Two pastes are needed — the A–O block into `transactions!A`, and the
- * category into column T — because column P holds an ARRAYFORMULA that a
- * pasted blank would destroy. Two pastes only go wrong if they land on
- * different rows, so both target cells are spelled out.
- */
-function stagedInstructionsFormula() {
-  var tx = TABS.TRANSACTIONS;
-  var uid = colOf(TX_COLUMNS, 'uid');
-  var row = 'COUNTA(' + tx + '!$' + uid + '$2:$' + uid + ')+2';
-  var last = colOf(TX_COLUMNS_CODE, 'imported_at');
-  var stagedLast = colOf(STAGED_COLUMNS, 'imported_at');
-  var stagedCat = colOf(STAGED_COLUMNS, 'category_override');
-
-  return '="Paste values: A2:' + stagedLast + ' → ' + tx + '!A"&' + row +
-    '&"   then   ' + stagedCat + '2:' + stagedCat + ' → ' + tx + '!' +
-    colOf(TX_COLUMNS, 'category_override') + '"&' + row +
-    '&"   (' + last + ' is the last code-owned column; never paste over ' +
-    colOf(TX_COLUMNS, 'amount_eur') + ')"';
 }
 
 // ---------------------------------------------------------------------------
@@ -522,20 +528,10 @@ function describeStagedPlan_(plan) {
 }
 
 /**
- * Two writes, one row.
- *
- * `category_override` sits in column T of `transactions` while the code block
- * ends at O, and P between them holds the `amount_eur` ARRAYFORMULA. Writing
- * one wide block would overwrite it, so the gap is stepped over rather than
- * filled — which is also why both writes derive their row from the same
- * `appendRows_` result instead of each finding it again.
- */
-
-/**
  * One of the columns beyond the code-owned block, written on its own.
  *
  * They are not contiguous — `category_override` is T and `labels` is AA, with
- * the `amount_eur` ARRAYFORMULA and five other formula columns in between — so
+ * the `amount_base` ARRAYFORMULA and five other formula columns in between — so
  * each is placed separately rather than as one wide block that would overwrite
  * everything it spanned.
  */
@@ -550,8 +546,14 @@ function commitStagedImport_(plan) {
   var tx = sheetOrThrow_(TABS.TRANSACTIONS);
   var width = TX_COLUMNS_CODE.length;
 
+  // A–O still goes across in one write, but the staged tab no longer holds all
+  // fifteen — see STAGED_COLUMNS. The ones it does not hold are bank fields no
+  // export carries, so they land empty rather than absent: `setValues` on an
+  // `undefined` is not a blank cell, it throws.
   var block = plan.rows.map(function (record) {
-    return TX_COLUMNS_CODE.map(function (name) { return record[name]; });
+    return TX_COLUMNS_CODE.map(function (name) {
+      return record[name] === null || record[name] === undefined ? '' : record[name];
+    });
   });
 
   var placed = appendRows_(tx, colIndex_(TX_COLUMNS, 'uid'), block);
@@ -727,7 +729,7 @@ function describeSyncedDuplicates_(plan) {
  * single-row deletes is a few hundred round-trips.
  *
  * Row 2 is where every ARRAYFORMULA in P onward is anchored. Deleting it does
- * not move the formula, it destroys it, and the tab loses `amount_eur` and
+ * not move the formula, it destroys it, and the tab loses `amount_base` and
  * every category column at once — so this refuses rather than repairs.
  */
 function commitSyncedDuplicates_(plan) {

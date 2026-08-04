@@ -11,20 +11,20 @@ import { describe, it, expect } from 'vitest';
 import { load } from './harness.mjs';
 
 const EXPECTED_TABS = [
-  'transactions', 'pending', 'accounts', 'rules', 'categories', 'recurring',
-  'cashflow', 'cash_entry', 'dashboard', 'labels', 'recent', 'reports', 'review',
+  'transactions', 'pending', 'accounts', 'rules', 'categories',
+  'cash_entry', 'dashboard', 'labels', 'recent', 'reports', 'review',
   '_anomalies', '_status', '_runs', '_config', '_import_map', '_category_map',
   '_memory', '_import_raw', '_import_staged', '_removed', '_tests'
 ];
 
 describe('setup()', () => {
-  it('builds exactly the 24 documented tabs', () => {
+  it('builds exactly the 22 documented tabs', () => {
     const ctx = load();
     ctx.setup();
 
     const names = ctx.__spreadsheet.getSheets().map((s) => s.getName());
     expect(names.sort()).toEqual([...EXPECTED_TABS].sort());
-    expect(names).toHaveLength(24);
+    expect(names).toHaveLength(22);
   });
 
   it('removes the blank starter tab but never a sheet with content', () => {
@@ -71,8 +71,8 @@ describe('setup()', () => {
     // A-O are code-owned, P onward belong to formulas and the user.
     expect(headers.slice(0, 15)).toEqual(ctx.TX_COLUMNS_CODE);
     expect(headers[6]).toBe('amount');      // G
-    expect(headers[15]).toBe('amount_eur'); // P
-    expect(headers).toHaveLength(29);
+    expect(headers[15]).toBe('amount_base'); // P
+    expect(headers).toHaveLength(30);
   });
 
   it('hides every _-prefixed tab and no others', () => {
@@ -257,11 +257,11 @@ describe('currency formatting', () => {
   const formatsFor = (c, tab) =>
     c.__spreadsheet.getSheetByName(tab).calls.filter((call) => call.kind === 'numberFormat');
 
-  it('names the currency on amount_eur, which is base currency by construction', () => {
+  it('names the currency on amount_base, which is base currency by construction', () => {
     const c = load();
     c.setup();
 
-    const eur = c.colIndex_(c.TX_COLUMNS, 'amount_eur');
+    const eur = c.colIndex_(c.TX_COLUMNS, 'amount_base');
     const applied = formatsFor(c, 'transactions')
       .filter((call) => call.a1.startsWith(`2,${eur},`));
 
@@ -438,5 +438,85 @@ describe('applySeedDefaults', () => {
 
     c.applySeedDefaults();
     expect(c.lastRecordRow_(mapSheet(c), 1)).toBe(before);
+  });
+});
+
+/**
+ * Dropdowns on every column with a closed vocabulary.
+ *
+ * Typing into one of these is how you get a `starts-with` no rule engine has
+ * heard of, or an `Expense` that does not match `expense` — failures that look
+ * like "the rule just doesn't fire" and have no error anywhere.
+ */
+describe('what you can pick instead of type', () => {
+  const c = load();
+  c.setup();
+  const sheet = (name) => c.__spreadsheet.getSheetByName(name);
+
+  /** The validation rule recorded for a whole column, if there is one. */
+  const ruleFor = (tab, headers, name) => {
+    const letter = c.colOf(headers, name);
+    const target = sheet(tab).getRange(letter + '2:' + letter).a1();
+    const recorded = sheet(tab).calls
+      .filter((call) => call.kind === 'validation' && call.a1 === target);
+    return recorded.length ? recorded[recorded.length - 1].rule : null;
+  };
+
+  it('gives every fixed-vocabulary column a list', () => {
+    const expected = [
+      ['rules', c.RULE_COLUMNS, 'field', c.RULE_FIELDS],
+      ['rules', c.RULE_COLUMNS, 'match_type', c.RULE_MATCH_TYPES],
+      ['rules', c.RULE_COLUMNS, 'type', c.TX_TYPES],
+      ['categories', c.CATEGORY_COLUMNS, 'kind', c.TX_TYPES],
+      ['accounts', c.ACCOUNT_COLUMNS, 'kind', c.ACCOUNT_KINDS],
+      ['_import_map', c.IMPORT_MAP_COLUMNS, 'target_column', c.TX_COLUMNS]
+    ];
+
+    expected.forEach(([tab, headers, name, values]) => {
+      const rule = ruleFor(tab, headers, name);
+      expect(rule, `${tab}.${name}`).not.toBeNull();
+      expect(rule.values, `${tab}.${name}`).toEqual(values);
+    });
+  });
+
+  it('refuses a value off the list where nothing would read it', () => {
+    // A warning triangle on a value the code will never look at is not a
+    // warning, it is a lie about what the sheet accepts.
+    [['rules', c.RULE_COLUMNS, 'field'],
+      ['rules', c.RULE_COLUMNS, 'match_type'],
+      ['rules', c.RULE_COLUMNS, 'type'],
+      ['categories', c.CATEGORY_COLUMNS, 'kind']].forEach(([tab, headers, name]) => {
+      expect(ruleFor(tab, headers, name).allowInvalid, `${tab}.${name}`).toBe(false);
+    });
+  });
+
+  it('allows one off the list where the list is live data', () => {
+    // You may well type a category a moment before adding it to the tab, and
+    // refusing that would make the taxonomy impossible to grow.
+    [['rules', c.RULE_COLUMNS, 'category'],
+      ['_category_map', c.CATEGORY_MAP_COLUMNS, 'category'],
+      ['_category_map', c.CATEGORY_MAP_COLUMNS, 'subcategory']].forEach(
+      ([tab, headers, name]) => {
+        const rule = ruleFor(tab, headers, name);
+        expect(rule, `${tab}.${name}`).not.toBeNull();
+        expect(rule.allowInvalid, `${tab}.${name}`).toBe(true);
+      });
+  });
+
+  it('points the subcategory dropdowns at a derived, sorted column', () => {
+    // Sheets has no dependent dropdown without code, so this is every
+    // subcategory rather than the chosen parent's — still the difference
+    // between picking and remembering whether you wrote Groceries or Grocery.
+    const cats = sheet('categories');
+    const column = c.colOf(c.CATEGORY_COLUMNS, 'child_list');
+
+    expect(cats.getRange(column + '2').getFormula()).toContain('SORT(');
+    expect(cats.getRange(column + '2').getFormula()).toContain('UNIQUE(');
+  });
+
+  it('leaves labels alone, where a list rule would flag every real row', () => {
+    // `kids, travel` is as common as one value, and a warning on every
+    // multi-label row trains you to ignore warnings.
+    expect(ruleFor('transactions', c.TX_COLUMNS, 'labels')).toBeNull();
   });
 });

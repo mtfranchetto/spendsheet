@@ -100,7 +100,7 @@ function smokeTest_(suite, name, fn) {
  */
 function formulaAnchors_() {
   var anchors = [
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'amount_eur') + '2'],
+    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'amount_base') + '2'],
     [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'category') + '2'],
     [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'subcategory') + '2'],
     [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'type') + '2'],
@@ -115,9 +115,12 @@ function formulaAnchors_() {
   ];
 
   if (typeof DASH !== 'undefined') {
-    for (var i = 0; i < 6; i++) {
+    anchors.push([TABS.DASHBOARD, DASH.NEXT_STEP_CELL]);
+    for (var i = 0; i < DASH.HEALTH_ROWS; i++) {
       anchors.push([TABS.DASHBOARD, 'B' + (DASH.HEALTH_ROW + i)]);
-      anchors.push([TABS.DASHBOARD, 'B' + (DASH.MONTH_ROW + i)]);
+    }
+    for (var j = 0; j < DASH.MONTH_ROWS; j++) {
+      anchors.push([TABS.DASHBOARD, 'B' + (DASH.MONTH_ROW + j)]);
     }
     // The stacked blocks all start in A and are told apart by their row.
     [DASH.REVIEW_ROW, DASH.ACCOUNTS_ROW, DASH.LABELS_ROW].forEach(function (row) {

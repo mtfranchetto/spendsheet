@@ -40,7 +40,6 @@ const ALL_FORMULAS = () => [
   ['needsReview', ctx.needsReviewFormula()],
   ['unconfirmed', ctx.unconfirmedFormula()],
   ['oldestUnconfirmed', ctx.oldestUnconfirmedFormula()],
-  ['runsOut', ctx.runsOutFormula()],
   ['netWorth', ctx.netWorthFormula()],
   ['netWorthCaveat', ctx.netWorthCaveatFormula()],
   ['spentThisMonth', ctx.spentThisMonthFormula()],
@@ -161,10 +160,13 @@ describe('in_reports', () => {
     expect(formula()).toContain(`$${excluded}$2:$${excluded}=TRUE`);
   });
 
-  it('is the last column, appended rather than slotted in', () => {
+  it('was appended rather than slotted in, and has stayed put since', () => {
     // Inserting mid-schema renames headers without moving the data underneath.
-    expect(ctx.TX_COLUMNS[ctx.TX_COLUMNS.length - 1]).toBe('in_reports');
+    // It is no longer the last column — subcategory_override was appended
+    // after it — and that is the point: appending is what leaves AC alone.
     expect(ctx.colOf(ctx.TX_COLUMNS, 'in_reports')).toBe('AC');
+    expect(ctx.TX_COLUMNS.indexOf('in_reports'))
+      .toBeGreaterThan(ctx.TX_COLUMNS.indexOf('confirmed'));
   });
 
   it('is what every money block filters on, instead of each inventing its own', () => {
@@ -220,11 +222,11 @@ describe('the month-to-date comparison', () => {
     expect(ctx.netThisMonthFormula()).not.toContain('"<0"');
   });
 
-  it('reads amount_eur, never amount', () => {
+  it('reads amount_base, never amount', () => {
     [ctx.spentThisMonthFormula(), ctx.earnedThisMonthFormula(),
       ctx.spendByMonthFormula(0), ctx.trendValuesFormula(),
       ctx.yearToDateSpendFormula_(0)].forEach((formula) => {
-      expect(formula).toContain(ctx.txRange_('amount_eur'));
+      expect(formula).toContain(ctx.txRange_('amount_base'));
     });
   });
 });
@@ -431,7 +433,9 @@ describe('the dashboard tab', () => {
     const rules = dash.getConditionalFormatRules();
     const flags = rules.map((r) => r.formula).filter((f) => f.includes(c.DASH.FLAG_COL));
 
-    expect(flags.length).toBe(rules.length);
+    // All but the next-step line, which is prose and has no severity to
+    // compute — it either has something to say or it is empty.
+    expect(flags.length).toBe(rules.length - 1);
     flags.forEach((formula) => {
       expect(formula).toMatch(new RegExp(`^=\\$${c.DASH.FLAG_COL}\\d+=[12]$`));
     });
@@ -628,7 +632,7 @@ describe('what the sheet tells you to do', () => {
   });
 
   it('selects query letters relative to the range, not to the review schema', () => {
-    // The range starts at booking_date, so amount_eur is D there and E on the
+    // The range starts at booking_date, so amount_base is D there and E on the
     // tab. Getting this wrong shows the wrong column with no error at all.
     const c = load();
     const formula = c.reviewQueueFormula();
@@ -832,10 +836,10 @@ describe('the recent tab', () => {
       .toBeLessThanOrEqual(c.RECENT.BOOKED_ROW);
   });
 
-  it('reads amount_eur from transactions and the raw amount from pending', () => {
-    // `pending` carries only the columns code writes — no amount_eur exists
+  it('reads amount_base from transactions and the raw amount from pending', () => {
+    // `pending` carries only the columns code writes — no amount_base exists
     // there — so the currency is named beside it rather than implied.
-    expect(c.recentBookedFormula()).toContain(c.colOf(c.TX_COLUMNS, 'amount_eur'));
+    expect(c.recentBookedFormula()).toContain(c.colOf(c.TX_COLUMNS, 'amount_base'));
     expect(c.recentPendingFormula()).toContain("'Cur'");
   });
 
@@ -853,5 +857,62 @@ describe('the recent tab', () => {
     recent.getRange('A' + (c.RECENT.BOOKED_ROW + 1)).setValue('stale');
     c.setup();
     expect(recent.getRange('A' + (c.RECENT.BOOKED_ROW + 1)).getValue()).not.toBe('stale');
+  });
+});
+
+describe('filtering the recent tab', () => {
+  const c = load();
+  c.setup();
+  const recent = c.__spreadsheet.getSheetByName('recent');
+
+  it('filters inside the query, not after it', () => {
+    // Filtering the result would cap you at the newest 200 rows overall and
+    // then show whichever matched — a block that quietly lies about being the
+    // most recent. The clause has to go in before `limit` does its work.
+    const formula = c.recentBookedFormula();
+    expect(formula.indexOf('year(')).toBeLessThan(formula.indexOf('limit'));
+  });
+
+  it('adds no clause at all when both filters say All', () => {
+    // Same rule the reports tab follows: the default query is short, and the
+    // clauses you can see are exactly the ones you chose.
+    expect(c.recentBookedFormula()).toContain('IF($B$3="All","",');
+  });
+
+  it('converts the month name to the zero-based number QUERY wants', () => {
+    // QUERY's month() is zero-based. Getting this wrong is right eleven
+    // twelfths of the time, which is the worst kind of wrong.
+    expect(c.recentBookedFormula()).toContain('-2)');
+    expect(c.RECENT_MONTHS[0]).toBe('All');
+    expect(c.RECENT_MONTHS[1]).toBe('January');
+  });
+
+  it('reads the years out of the data rather than hard-coding a span', () => {
+    // Hard-coded years offer you ones you have nothing in, and stop working.
+    expect(c.recentYearsFormula()).toContain('UNIQUE(');
+    expect(c.recentYearsFormula()).toContain(c.txRange_('booking_date'));
+    // Newest first: a dropdown you scroll to reach the common answer has
+    // failed at its one job.
+    expect(c.recentYearsFormula()).toContain(',1,FALSE)');
+  });
+
+  it('hides both lists and leaves the two cells that are yours blue', () => {
+    expect(recent.isColumnHiddenByUser(c.columnIndexOf_(c.RECENT.YEAR_COL))).toBe(true);
+    expect(recent.isColumnHiddenByUser(c.columnIndexOf_(c.RECENT.MONTH_COL))).toBe(true);
+
+    const backgrounds = recent.calls.filter((call) => call.kind === 'background');
+    expect(backgrounds.some((call) => call.b === c.DASH_COLOR.INPUT)).toBe(true);
+  });
+
+  it('keeps your selection across a setup() run', () => {
+    recent.getRange('B' + c.RECENT.FILTER_ROW).setValue('2025');
+    c.setup();
+    expect(recent.getRange('B' + c.RECENT.FILTER_ROW).getValue()).toBe('2025');
+  });
+
+  it('leaves the pending block unfiltered', () => {
+    // Pending is a handful of rows from the last few days by definition, so a
+    // year filter over it either changes nothing or empties it.
+    expect(c.recentPendingFormula()).not.toContain('year(');
   });
 });

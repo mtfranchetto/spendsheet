@@ -21,8 +21,6 @@ var TABS = {
   // into. It was originally specified as `_labels`; it also gained a spend
   // report, which is not something to hide behind a tab you must unhide first.
   LABELS: 'labels',
-  RECURRING: 'recurring',
-  CASHFLOW: 'cashflow',
   DASHBOARD: 'dashboard',
   CASH_ENTRY: 'cash_entry',
   ANOMALIES: '_anomalies',
@@ -81,7 +79,7 @@ var TX_COLUMNS_CODE = [
 ];
 
 var TX_COLUMNS_DERIVED = [
-  'amount_eur',             // P  every report reads THIS, never `amount`
+  'amount_base',            // P  every report reads THIS, never `amount`
   'category_auto',          // Q  formula, from rules
   'subcategory_auto',       // R  formula
   'category_source',        // S  which cascade tier decided it
@@ -129,7 +127,18 @@ var TX_COLUMNS_DERIVED = [
   // removes the null case, and the majority case, entirely. See
   // `inReportsFormula()` in 04_setup.gs for why the blank rows say FALSE
   // rather than "".
-  'in_reports'              // AC
+  'in_reports',             // AC
+  // Setting `category_override` used to blank the subcategory outright: the
+  // auto value belonged to a category you had just overruled, so keeping it
+  // would have been worse. That left no way to say "Food & Drink, and it was
+  // Groceries" — the correction you most often want to make is a *pair*, and
+  // only half of it was expressible.
+  //
+  // Appended after `in_reports` rather than slotted next to `category_override`
+  // where it reads better. Inserting mid-schema renames every header to its
+  // right without moving the data underneath them, which is the one edit this
+  // tab can never survive.
+  'subcategory_override'    // AD
 ];
 
 var TX_COLUMNS = TX_COLUMNS_CODE.concat(TX_COLUMNS_DERIVED);
@@ -151,7 +160,7 @@ var REVIEW_COLUMNS = [
   'booking_date',        // B
   'account_name',        // C
   'description',         // D
-  'amount_eur',          // E
+  'amount_base',         // E
   'guess',               // F  what the cascade decided
   'why',                 // G  which tier decided it
   'confirmed',           // H  yours — a checkbox
@@ -222,8 +231,15 @@ var RULE_COLUMNS = [
  * A column rather than a `requireValueInList` built in code, so that adding a
  * category to the tab updates every dropdown at once instead of on the next
  * `setup()`.
+ *
+ * `child_list` is the same trick for subcategories. Sheets has no dependent
+ * dropdown without code behind it, so this offers every subcategory rather
+ * than only the chosen parent's — which is still the difference between
+ * picking from a list and remembering whether you called it `Groceries` or
+ * `Grocery`. A misspelling here is not caught by anything: it becomes a
+ * subcategory with one transaction against it, sitting next to the real one.
  */
-var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon', 'parent_list'];
+var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon', 'parent_list', 'child_list'];
 
 /**
  * labels — the cross-cutting axis a category cannot express.
@@ -240,14 +256,18 @@ var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon', 'parent_list'
  */
 var LABEL_COLUMNS = ['label', 'description', 'transactions', 'total_eur'];
 
-var RECURRING_COLUMNS = [
-  'key', 'account_id', 'category', 'avg_amount', 'cadence_days',
-  'occurrences', 'last_seen', 'next_expected', 'confidence', 'active'
+/**
+ * cash_entry — the one tab whose column *order* is not a contract.
+ *
+ * Everything else in this book is append-only or rewritten wholesale from a
+ * fixed schema, so moving a column would rename a header without moving the
+ * data under it. This tab holds one row you are in the middle of typing, and
+ * clears it seconds later, so the order is free to be the order you fill it in.
+ * `processed` sits last and hidden because it is machinery.
+ */
+var CASH_ENTRY_COLUMNS = [
+  'date', 'account', 'amount', 'category', 'subcategory', 'note', 'labels', 'processed'
 ];
-
-var CASHFLOW_COLUMNS = ['date', 'opening', 'expected_in', 'expected_out', 'closing'];
-
-var CASH_ENTRY_COLUMNS = ['date', 'account', 'amount', 'category', 'note', 'processed'];
 
 var ANOMALY_COLUMNS = ['detected_at', 'account_id', 'kind', 'detail', 'raw_json'];
 
@@ -273,7 +293,7 @@ var ANOMALY_KIND = {
   DUP_ENTRY_REF: 'dup_entry_ref',      // same ref, different amount/date — provider bug
   AMOUNT_CHANGED: 'amount_changed',
   UNMAPPED_COLUMN: 'unmapped_column',
-  NON_EUR: 'non_eur',                  // no rate yet, so amount_eur is blank not wrong
+  NON_BASE: 'non_base',                  // no rate yet, so amount_base is blank not wrong
   MISSING_BALANCE: 'missing_balance',
   UNKNOWN_BALANCE_TYPE: 'unknown_balance_type',
   NO_ACCOUNTS: 'no_accounts',          // a session we cannot read accounts out of
@@ -342,9 +362,34 @@ var CATEGORY_SOURCE = {
 var TX_TYPE = { EXPENSE: 'expense', INCOME: 'income', TRANSFER: 'transfer' };
 var ACCOUNT_KIND = { BANK: 'bank', CASH: 'cash', ASSET: 'asset' };
 
+/**
+ * The closed vocabularies, named once so a dropdown and the code that reads it
+ * cannot be two different lists.
+ *
+ * A validation list written out at the point it is applied is a second copy,
+ * and the way a second copy drifts is that the sheet cheerfully offers a value
+ * nothing understands — which then fails as "the rule just doesn't match",
+ * with no error anywhere. `tests/categorize.test.mjs` asserts that every entry
+ * here is one the cascade actually honours, which is the only way a list and
+ * its reader stay in step without a person remembering.
+ *
+ * `TX_TYPES` is the same three values `TX_TYPE` holds. Both exist because one
+ * is how code refers to a single value and the other is what a dropdown needs,
+ * and deriving the array from the object at every call site reads worse than
+ * this does.
+ */
+var TX_TYPES = [TX_TYPE.EXPENSE, TX_TYPE.INCOME, TX_TYPE.TRANSFER];
+var ACCOUNT_KINDS = [ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, ACCOUNT_KIND.ASSET];
+
+/** What a rule can look at. Anything else, and `ruleField_` returns null. */
+var RULE_FIELDS = ['description', 'counterparty', 'mcc', 'bank_transaction_code'];
+
+/** How it looks. `contains` is the fallback, so it is listed first. */
+var RULE_MATCH_TYPES = ['contains', 'equals', 'starts_with', 'regex'];
+
 /** Non-secret settings, seeded into _config. Secrets live in Script Properties. */
 var DEFAULT_CONFIG = [
-  ['base_currency', 'EUR', 'Reporting currency. Every report reads amount_eur.'],
+  ['base_currency', 'EUR', 'Reporting currency. Sets which rows get an amount_base, and every symbol shown.'],
   ['timezone', 'Europe/Rome', 'Used for date stamping.'],
   ['sync_window_days', 90, 'Days of history requested on a routine sync.'],
   ['stale_threshold_days', 2, 'selfCheck alerts if the last success is older than this.'],

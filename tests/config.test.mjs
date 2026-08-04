@@ -64,7 +64,7 @@ describe('colOf', () => {
     expect(ctx.colOf(ctx.TX_COLUMNS, 'uid')).toBe('A');
     expect(ctx.colOf(ctx.TX_COLUMNS, 'amount')).toBe('G');
     expect(ctx.colOf(ctx.TX_COLUMNS, 'imported_at')).toBe('O');
-    expect(ctx.colOf(ctx.TX_COLUMNS, 'amount_eur')).toBe('P');
+    expect(ctx.colOf(ctx.TX_COLUMNS, 'amount_base')).toBe('P');
     expect(ctx.colOf(ctx.TX_COLUMNS, 'excluded')).toBe('Z');
     expect(ctx.colOf(ctx.ACCOUNT_COLUMNS, 'balance')).toBe('J');
   });
@@ -77,7 +77,7 @@ describe('colOf', () => {
 describe('the column contract', () => {
   it('keeps code-owned columns in A-O and derived ones from P', () => {
     expect(ctx.TX_COLUMNS_CODE).toHaveLength(15);
-    expect(ctx.TX_COLUMNS).toHaveLength(29);
+    expect(ctx.TX_COLUMNS).toHaveLength(30);
     expect(ctx.TX_COLUMNS.slice(0, 15)).toEqual(ctx.TX_COLUMNS_CODE);
   });
 
@@ -142,10 +142,10 @@ describe('accountBalanceFormula', () => {
     expect(f).toContain('SUMIF(transactions!');
   });
 
-  it('sums amount_eur, not amount', () => {
-    // Every report reads amount_eur from day one. Summing `amount` here
+  it('sums amount_base, not amount', () => {
+    // Every report reads amount_base from day one. Summing `amount` here
     // would silently mix currencies into a single figure.
-    const eur = ctx.colOf(ctx.TX_COLUMNS, 'amount_eur');
+    const eur = ctx.colOf(ctx.TX_COLUMNS, 'amount_base');
     expect(f).toContain(`transactions!$${eur}$2:$${eur}`);
     expect(f).not.toContain('transactions!$G$2:$G');
   });
@@ -202,7 +202,7 @@ describe('the menu', () => {
     expect(names).toContain('Sync now');              // phase 4
     expect(names).toContain('Import staged rows');     // phase 6
     expect(names).toContain('Re-categorise all');      // phase 7
-    expect(names).toContain('Detect recurring');       // phase 9
+    expect(names).toContain('Refresh review queue');    // phase 10
 
     // The real invariant, now that every declared entry has landed: the menu
     // shows an item only when the function behind it exists. It used to be

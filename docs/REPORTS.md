@@ -31,7 +31,8 @@ It is **one column wide and stacked vertically**, in the order you need it:
 
 | | |
 |---|---|
-| **Health** (A3:C8) | last successful sync · nearest consent expiry · rows in the last 7 days · needs-review count · unconfirmed count, **with the date of the oldest one** · projected date you run out |
+| **Next step** (A2) | the one sentence a book needs — blank when there is nothing to do |
+| **Health** (A3:C7) | last successful sync · nearest consent expiry · rows in the last 7 days · needs-review count · unconfirmed count, **with the date of the oldest one** |
 | **This month** (A11:C16) | net worth · spent so far · earned so far · net · the same point last month · the difference |
 | **Needs review** (A19:D28) | the first ten of the review queue — date, description, amount, guess |
 | **Charts** (A31, A51, A71) | this month by category · spending by month, this year against last · net worth over 90 days |
@@ -68,6 +69,8 @@ An account row goes red or amber as a whole, and the **Sync** column beside it s
 
 **Every conditional-format rule on the dashboard is `=$G<row>=2` or `=$G<row>=1`.** All of the thinking is in that hidden severity column, and that is forced rather than stylistic: a conditional-format rule does not pass through `localizeFormula`, so **it cannot contain a comma** — which rules out `AND`, `IF`, `OR` and `VLOOKUP`, i.e. everything you would reach for. It also means the thresholds can live in `_config` (`consent_warning_days`, `stale_balance_days`) instead of being frozen as literals inside a rule no test can evaluate.
 
+**A2 says what to do next**, and it is the whole of onboarding. A fresh copy of this project opens on twenty-two tabs and a dashboard reading `never`, with nothing saying what to do about it — and the person who most needs `docs/` is the one who has not opened it. So it answers in the order the answers stop mattering: no accounts → *Connect a bank*; accounts but no rows → *Sync now*; a consent expired → *reconnect*; nothing ever synced → *Install triggers*; rows waiting → *open the review tab*. Blank on the ordinary day, which is the same rule the net worth caveat follows: a line printed every day is a line nobody reads.
+
 Health belongs where you already look; a status tab you have to remember to open is how you find out the sync died a fortnight ago. The **oldest unconfirmed date** is new and earns its place: thirty unconfirmed rows from this week is a normal Tuesday, thirty going back to March means the queue stopped being cleared and nothing said so.
 
 **"Same point last month" is month-to-date against month-to-date**, never against a full month. A comparison that flatters you on the 3rd and alarms you on the 30th is worse than no comparison, because it is wrong in a way that feels like information.
@@ -84,14 +87,14 @@ An account's `balance` is in **that account's** currency, and Fineco alone suppl
 
 So net worth sums only accounts that are **active**, **included in net worth**, and **in the base currency** — and column C says how many active accounts that left out, whenever it left out any. Blank on the ordinary day, because a caveat printed every day is a caveat nobody reads.
 
-Same decision `amount_eur` already makes for transactions: blank rather than unconverted.
+Same decision `amount_base` already makes for transactions: blank rather than unconverted.
 
 ### The net worth chart is derived, not recorded
 
 There is no balance history tab, and there deliberately never will be:
 
 ```
-balance_at(d) = balance_now − Σ amount_eur booked after d
+balance_at(d) = balance_now − Σ amount_base booked after d
 ```
 
 A snapshot tab would have been a tab, a sync change and a backfill job, to produce something strictly worse — it would start accumulating from the day it shipped, where this reaches back as far as the transactions do. It would not have helped where derivation is weakest either: an `asset` balance only moves when you type a new number into `balance_manual`, so a daily snapshot of one flat-lines exactly as this does.
@@ -100,7 +103,7 @@ Three things it costs, worth knowing before the line looks wrong:
 
 - **It is anchored to today.** A missing transaction shifts the whole curve by that amount rather than showing a step. The shape and the current value stay right, which is what a trend is for.
 - **It counts transfers.** A move between your own accounts changes a balance, so it belongs — this is the one place in the project that reads every row, and it is correct precisely because net worth is not a spending question.
-- **Non-EUR rows contribute nothing**, since `amount_eur` is blank for them, while their balance is in today's figure. Those accounts flat-line.
+- **Non-EUR rows contribute nothing**, since `amount_base` is blank for them, while their balance is in today's figure. Those accounts flat-line.
 
 Change the window with `trend_days` in `_config` and re-run **Setup sheet** — the chart's range is fixed when the chart is created, so a formula that resized itself would leave the plot reading a range that no longer matches.
 
@@ -114,12 +117,17 @@ Newest first, which `transactions` itself can never be.
 
 Two blocks, not one merged list:
 
-- **Pending** (A5) — taken but not settled. Date, account, description, amount, currency.
-- **Booked** (A34) — the last 200. Date, account, description, `amount_eur`, category.
+- **Year / Month** (B3:B4) — two dropdowns, `All` by default
+- **Pending** (A8) — taken but not settled. Date, account, description, amount, currency.
+- **Booked** (A37) — the last 200 of whatever the filters say. Date, account, description, `amount_base`, category.
+
+The filters apply **inside** the query, before `limit`. Filtering the result instead would cap you at the newest 200 rows overall and then show whichever of them matched — a block that quietly lies about being the most recent. The year list is read out of your own data, newest first, rather than hard-coded: a fixed span offers you years you have nothing in and stops working eventually. `All` contributes no clause at all.
+
+**Only the booked block is filtered.** A pending charge is a handful of rows from the last few days by definition, so a year filter over it either changes nothing or empties it, and a control that can only mislead is worse than no control.
 
 They are separate for a reason that starts as a constraint and ends as the better layout. Merging them would need an array literal — `{booked; pending}` — and **this project cannot use array literals**: `localizeFormula` rewrites unquoted commas at the write boundary so a decimal-comma locale gets something it can parse, and an array literal's separators mean something. The rewrite would corrupt it silently.
 
-But a pending charge is a different kind of fact anyway. The amount can still change, it counts towards no total on the dashboard, and `pending` carries only columns A–O — no `amount_eur`, no category, because none of that has been derived for a row the bank has not booked. An interleaved list would need a column saying which is which, read on every row. Two blocks say it once, and the pending one names its currency rather than implying euros.
+But a pending charge is a different kind of fact anyway. The amount can still change, it counts towards no total on the dashboard, and `pending` carries only columns A–O — no `amount_base`, no category, because none of that has been derived for a row the bank has not booked. An interleaved list would need a column saying which is which, read on every row. Two blocks say it once, and the pending one names its currency rather than implying euros.
 
 Read-only. Correct a category on `review`, or in `transactions` itself.
 
@@ -170,7 +178,7 @@ The eight inputs (six filters, two custom dates) carry `DASH_COLOR.INPUT`, the s
 
 A chart is configuration pointed at a range, so it stays live as the formulas underneath recalculate. Nothing needs refreshing.
 
-The one wrinkle: `amount_eur` is signed, so a spending total is negative, and a bar chart of negative bars is legible but reads as a mistake. `QUERY` cannot negate an aggregate — arithmetic on `sum()` is not in the query language — so there is one extra column next to each result that flips the sign, and that is what the chart plots. The table beside it shows the signed truth.
+The one wrinkle: `amount_base` is signed, so a spending total is negative, and a bar chart of negative bars is legible but reads as a mistake. `QUERY` cannot negate an aggregate — arithmetic on `sum()` is not in the query language — so there is one extra column next to each result that flips the sign, and that is what the chart plots. The table beside it shows the signed truth.
 
 ---
 

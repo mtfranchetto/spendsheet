@@ -35,7 +35,7 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `12_monitor.gs` | the six failure detectors, alerting, Drive snapshots. |
 | `13_import.gs` | formula builders for `_import_staged`. No importer — see the governing rule. |
 | `14_categorize.gs` | the cascade: merchant keys, learned memory, transfer pairing, confirming. |
-| `15_recurring.gs` | cadence detection and the forward cashflow projection. Both pure at the core. |
+| *(15 is free)* | `15_recurring.gs` held cadence detection and a 90-day cashflow projection. Both were removed — the most machinery in the project per question answered, and the question is one `reports` reaches directly. `git log -- src/15_recurring.gs`. |
 | `16_dashboard.gs` | every formula on the dashboard and on `recent` — the two read-only views. Called from `setup()` through `functionExists_`. |
 | `17_analytics.gs` | period arithmetic, the `reports` tab, and every chart in the book. |
 | `17_review.gs` | the review queue and the `onEdit` write-back. |
@@ -79,7 +79,7 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 - **`transactions` is never sorted, and no column is ever inserted mid-schema.** Both break row identity and every formula reference silently. Append to the right is fine — that is why `connection_id` is the last `accounts` column rather than sitting next to `provider`.
 - **Code owns `transactions` A–O; formulas and the user own P onward.** Sync appends, never rewrites. A row already in the sheet is never touched again.
 - **The sign is never in the amount.** Direction is `credit_debit_indicator`, applied to `Math.abs(...)` — on transactions *and* independently on balances. Both are places where getting it wrong inverts a total while looking plausible.
-- **Every report reads `amount_eur`, never `amount`.**
+- **Every report reads `amount_base`, never `amount`.**
 
 ## Testing
 

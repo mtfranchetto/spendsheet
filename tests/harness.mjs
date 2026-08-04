@@ -292,7 +292,7 @@ class FakeSheet {
   /**
    * Writing a value destroys any formula in that cell, exactly as in Sheets —
    * including when the value is blank, which is the case that matters. A
-   * paste or a setValues one column too wide is how the `amount_eur`
+   * paste or a setValues one column too wide is how the `amount_base`
    * ARRAYFORMULA gets silently deleted, and a fake that kept the formula
    * alive underneath the value would call that write harmless. Being more
    * forgiving than the real thing is the worst direction for a double to be

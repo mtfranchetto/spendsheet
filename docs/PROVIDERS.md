@@ -97,6 +97,6 @@ Two consequences worth knowing before you connect it:
 
 **Rename them, or the import can't find them.** `_import_staged` joins `_import_raw` to `accounts` on the account *name*, and four identically named rows resolve to whichever comes first. Give them distinct names — `Fineco EUR`, `Fineco CHF` and so on — matching what your export calls them. A name you type is never overwritten; `upsertAccounts_` only replaces its own `"<provider> account"` placeholder.
 
-**Set `include_in_net_worth` FALSE on the non-EUR three.** `balance` is `balance_api` unconverted, so a CHF balance would be summed as though it were euros. Transactions are already safe — `amount_eur` is deliberately blank for any row whose currency isn't the base one, so reports skip them rather than adding them up wrongly — but the balance column has no such guard.
+**Set `include_in_net_worth` FALSE on the non-EUR three.** `balance` is `balance_api` unconverted, so a CHF balance would be summed as though it were euros. Transactions are already safe — `amount_base` is deliberately blank for any row whose currency isn't the base one, so reports skip them rather than adding them up wrongly — but the balance column has no such guard.
 
 If the foreign-currency pockets are empty or unused, setting `active` FALSE as well stops syncing them entirely. That is three fewer accounts against a rate limit budgeted at roughly four unattended calls per account per day, where one full sync of one account is three.

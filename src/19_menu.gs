@@ -28,8 +28,6 @@ var MENU_ITEMS = [
   { name: 'Re-categorise all', fn: 'recategorizeAll' },
   { name: 'Confirm visible rows', fn: 'confirmVisibleRows' },
   { name: 'Learn from corrections', fn: 'learnFromCorrections' },
-  { name: 'Detect recurring', fn: 'detectRecurringMenu' },
-  { name: 'Rebuild cashflow', fn: 'rebuildCashflow' },
   { separator: true },
   { name: 'Setup sheet', fn: 'setup' },
   { name: 'Update mappings to defaults', fn: 'applySeedDefaults' },

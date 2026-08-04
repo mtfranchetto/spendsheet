@@ -182,16 +182,29 @@ describe('a column added by an upgrade', () => {
  * reports `#REF!` instead, which emptied every report gated on it.
  */
 describe('a column of yours in the slot the schema grew into', () => {
-  /** A book from before `in_reports`, with a column of your own where it lands. */
-  function bookWithMineInTheWay(value) {
+  /**
+   * A book one column short of the current schema, with a column of your own
+   * sitting exactly where the next one lands.
+   *
+   * Derived from the *last* schema column rather than naming `in_reports`,
+   * which is the column the incident happened to. Two more have been appended
+   * since, and a test naming one of them would go on passing while exercising
+   * a slot the schema no longer grows into.
+   */
+  function bookWithMineInTheWay(value, name) {
     const ctx = load();
     ctx.setup();
     const tx = ctx.__spreadsheet.getSheetByName('transactions');
-    const column = ctx.colIndex_(ctx.TX_COLUMNS, 'in_reports');
+    const last = name || ctx.TX_COLUMNS[ctx.TX_COLUMNS.length - 1];
+    const column = ctx.colIndex_(ctx.TX_COLUMNS, last);
+
+    // Blank the header, which is what a book built before the column looks
+    // like. Without this the column is not new and nothing makes room.
+    tx.getRange(1, column).setValue('');
 
     tx.getRange(1, column).setValue('my_flag');
     tx.getRange(3, column).setValue(value);
-    return { ctx, tx, column };
+    return { ctx, tx, column, last };
   }
 
   it('is shifted right rather than written over', () => {
@@ -203,20 +216,23 @@ describe('a column of yours in the slot the schema grew into', () => {
   });
 
   it('leaves the new column an empty slot for its formula to expand into', () => {
-    const { ctx, tx, column } = bookWithMineInTheWay('mine');
+    // Named explicitly rather than derived, because this assertion is about a
+    // column that carries an ARRAYFORMULA and the schema's last column is a
+    // field you type into. `in_reports` is also the column it happened to.
+    const { ctx, tx, column, last } = bookWithMineInTheWay('mine', 'in_reports');
     ctx.setup();
 
-    expect(tx.getRange(1, column).getValue()).toBe('in_reports');
+    expect(tx.getRange(1, column).getValue()).toBe(last);
     expect(tx.getRange(2, column).getFormula()).toContain('ARRAYFORMULA');
     // The whole point: nothing below the anchor, so the array can expand.
     expect(tx.getRange(3, column).getValue()).toBe('');
   });
 
   it('says which column it moved, because a shift you did not ask for is news', () => {
-    const { ctx, column } = bookWithMineInTheWay('mine');
+    const { ctx, column, last } = bookWithMineInTheWay('mine');
 
     expect(ctx.setup().movedColumns).toEqual([
-      { tab: 'transactions', index: column, madeRoomFor: 'in_reports' }
+      { tab: 'transactions', index: column, madeRoomFor: last }
     ]);
   });
 

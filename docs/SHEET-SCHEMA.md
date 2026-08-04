@@ -16,7 +16,7 @@ That single rule is what makes manual corrections safe, keeps the sync logic tri
 Two further rules that cost nothing and remove entire categories of failure:
 
 - **`transactions` is never sorted.** Sorting a *subset* of it, or inserting a column mid-sheet, breaks row identity and every formula reference simultaneously and silently. No amount of careful scripting prevents this, because it isn't the script doing it. Sort and filter through filter views or `QUERY()` on another tab instead. This is also why the dashboard is formula-driven off `transactions` rather than being a rearrangement of it.
-- **Every report reads `amount_eur`, never `amount`.**
+- **Every report reads `amount_base`, never `amount`.**
 
 ## Customising it, and what `setup()` does on a re-run
 
@@ -53,7 +53,7 @@ It also names **orphans**: mappings pointing at a category that isn't in `catego
 | | Why |
 |---|---|
 | Header row text | code addresses columns by position and reads row 1 to confirm the contract. A renamed header makes the sheet lie about itself |
-| The formulas in `amount_eur`, `category`, `subcategory`, `type`, `balance` | these are the contract, not decoration |
+| The formulas in `amount_base`, `category`, `subcategory`, `type`, `balance` | these are the contract, not decoration |
 | Number formats on date and amount columns; bold header styling | cosmetic, rewritten each time |
 | Data validation on the dropdown ranges | |
 | Tab order of the nine main tabs | your own tabs keep their relative position after them |
@@ -100,7 +100,7 @@ Append-only. **Booked transactions only** (see `pending` below).
 
 | | Column | Owner | Notes |
 |---|---|---|---|
-| P | `amount_eur` | formula | **what every report reads.** `= amount` when the currency matches, blank otherwise |
+| P | `amount_base` | formula | **what every report reads.** `= amount` when the currency matches, blank otherwise |
 | Q | `category_auto` | cascade | tiers 2–5 |
 | R | `subcategory_auto` | cascade | |
 | S | `category_source` | cascade | which tier decided — `override`/`transfer`/`memory`/`mcc`/`rule`/`unclassified` |
@@ -115,11 +115,11 @@ Append-only. **Booked transactions only** (see `pending` below).
 | AB | `confirmed` | **you** | you agreed with the category. The only rows memory is learned from |
 | AC | `in_reports` | formula | whether the row counts as spending. **Every money block reads this** |
 
-`amount_eur` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry plus a dashboard count is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
+`amount_base` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry plus a dashboard count is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
 
 `type` is derived, never stored, so recategorising a row fixes its type for free — and it's what keeps transfers out of spending reports.
 
-**`in_reports` is the one place that decides what counts as spending**, and it exists because there used to be six. Every dashboard block filtered `type <> 'transfer'` and nothing else, so `excluded` — a documented column you can tick — was honoured by recurring detection and by nothing you actually look at. A row you had deliberately excluded still counted in this month's spending, in the trend, and in every label total.
+**`in_reports` is the one place that decides what counts as spending**, and it exists because there used to be six. Every dashboard block filtered `type <> 'transfer'` and nothing else, so `excluded` — a documented column you can tick — was honoured by one thing you never look at and by nothing you do. A row you had deliberately excluded still counted in this month's spending, in the trend, and in every label total.
 
 It is a column rather than one more condition per query for a reason worth knowing before you write another report: `excluded` is blank on nearly every row, and `QUERY` infers a column's type from what is in it and treats blanks as null. `where Z = false` would drop nearly every row and blank the whole block. A formula that emits a real boolean on **every** row — including the ones with no transaction in them — removes both the null case and the majority-type case. That is also why the empty rows say `FALSE` rather than `""`: on a new book, thirty booleans among nine hundred empty strings is a *text* column, and `= true` would match nothing.
 
@@ -176,7 +176,7 @@ Three balance columns rather than one is what lets you **add a manual account by
 
 ```
 kind = bank  → balance_api
-kind = cash  → opening_balance + SUMIF(transactions, this account, amount_eur)
+kind = cash  → opening_balance + SUMIF(transactions, this account, amount_base)
 kind = asset → balance_manual
 ```
 
@@ -277,7 +277,7 @@ See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 | `_import_map` | CSV header → target column, per preset |
 | `_category_map` | source category → your taxonomy |
 | `_import_raw` | where a CSV lands via File → Import |
-| `_import_staged` | formula-mapped rows, ready to paste-values |
+| `_import_staged` | formula-mapped rows, and `include`/`why` for each. Only the columns an export can fill, so it is narrower than `transactions` |
 | `_removed` | same columns as `transactions`. Rows that **Remove synced duplicates** deleted, so putting one back is a paste |
 | `_tests` | smoke test results |
 
@@ -297,9 +297,7 @@ The category you pick lands in `category_override`, not `category_auto`: you cho
 
 A row missing an account or an amount is **left unprocessed rather than rejected** — on a phone that's someone mid-typing, not an error. It's picked up whenever it's finished, and the run message says how many are waiting so it can't sit there unnoticed. Columns can be filled in any order; a row whose date you haven't typed yet is still visible to the drain.
 
-### `recurring`, `cashflow`, `dashboard`
-
-**`recurring`** — `key` · `account_id` · `category` · `avg_amount` · `cadence_days` · `occurrences` · `last_seen` · `next_expected` · `confidence` · `active`. Rebuilt by **Detect recurring**.
+### `dashboard`, `recent`
 
 An item needs **three occurrences** at a recognisable cadence. Two is a coincidence: with one gap between them, every pair fits *some* cadence perfectly, so the detector can't tell a subscription from two unrelated payments a month apart.
 
@@ -307,13 +305,11 @@ Weekly, fortnightly, 4-weekly, quarterly and yearly are matched on the **median*
 
 `active` is **yours**, and it survives a re-detect. It's how you say "yes this repeats, and no, don't forecast it" — and it's the column the projection reads.
 
-**`cashflow`** — `date` · `opening` · `expected_in` · `expected_out` · `closing`, one row per day for `cashflow_horizon_days` (default 90). Rebuilt after every sync, since the balances it starts from have just moved.
-
 Opening is **liquid** balance, not net worth: bank and cash only. A projection asks whether money runs out, and a flat you can't sell by Thursday doesn't stop that happening.
 
 **`dashboard`**, **`reports`** and **`review`** have a page of their own: [`docs/REPORTS.md`](REPORTS.md). The short version is that all three are formulas, checkboxes and dropdowns — never a menu item — because **custom menus, sidebars and dialogs do not exist in the Google Sheets mobile app**, and those are the tabs you open on a phone.
 
-`review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_eur` · `guess` · `why` · `confirmed` · `category_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
+`review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_base` · `guess` · `why` · `confirmed` · `category_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
 
 **`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app. One blue input row, drained on the edit that completes it and again by the daily trigger. `processed` is hidden; the row it stamps is cleared moments later.
 

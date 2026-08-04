@@ -42,8 +42,6 @@ function runSetup_() {
   buildTable_(ss, TABS.RULES, RULE_COLUMNS, report, DEFAULT_RULES);
   buildTable_(ss, TABS.CATEGORIES, CATEGORY_COLUMNS, report, DEFAULT_CATEGORIES);
   buildTable_(ss, TABS.LABELS, LABEL_COLUMNS, report, DEFAULT_LABELS);
-  buildTable_(ss, TABS.RECURRING, RECURRING_COLUMNS, report);
-  buildTable_(ss, TABS.CASHFLOW, CASHFLOW_COLUMNS, report);
   buildTable_(ss, TABS.CASH_ENTRY, CASH_ENTRY_COLUMNS, report);
   buildTable_(ss, TABS.ANOMALIES, ANOMALY_COLUMNS, report);
   buildTable_(ss, TABS.STATUS, STATUS_COLUMNS, report);
@@ -415,11 +413,6 @@ function buildImportStaged_(ss, sep, report) {
   stagedFormulas().forEach(function (entry) {
     setFormula_(sheet, colOf(STAGED_COLUMNS, entry.column), entry.formula, sep);
   });
-
-  // Past the schema, so it can say where to paste without being in the way of
-  // what you are pasting.
-  sheet.getRange(1, STAGED_COLUMNS.length + 2)
-    .setFormula(localizeFormula(stagedInstructionsFormula(), sep));
 }
 
 // ---------------------------------------------------------------------------
@@ -428,7 +421,7 @@ function buildImportStaged_(ss, sep, report) {
 
 function applyFormulas_(ss, sep) {
   var tx = ss.getSheetByName(TABS.TRANSACTIONS);
-  setFormula_(tx, colOf(TX_COLUMNS, 'amount_eur'), amountEurFormula(), sep);
+  setFormula_(tx, colOf(TX_COLUMNS, 'amount_base'), amountEurFormula(), sep);
   setFormula_(tx, colOf(TX_COLUMNS, 'category'), categoryFormula(), sep);
   setFormula_(tx, colOf(TX_COLUMNS, 'subcategory'), subcategoryFormula(), sep);
   setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula(), sep);
@@ -452,6 +445,7 @@ function applyFormulas_(ss, sep) {
 
   var cats = ss.getSheetByName(TABS.CATEGORIES);
   setFormula_(cats, colOf(CATEGORY_COLUMNS, 'parent_list'), categoryParentsFormula(), sep);
+  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_list'), categoryChildrenFormula(), sep);
 }
 
 /**
@@ -469,16 +463,41 @@ function applyFormulas_(ss, sep) {
  * the whole of `setup()` down with it.
  */
 function categoryListRange_(ss) {
+  return derivedCategoryRange_(ss, 'parent_list');
+}
+
+/** The same, for subcategories. Every one of them, not the chosen parent's. */
+function subcategoryListRange_(ss) {
+  return derivedCategoryRange_(ss, 'child_list');
+}
+
+function derivedCategoryRange_(ss, name) {
   var cats = ss.getSheetByName(TABS.CATEGORIES);
   if (!cats) return null;
 
-  var column = colOf(CATEGORY_COLUMNS, 'parent_list');
+  var column = colOf(CATEGORY_COLUMNS, name);
   return cats.getRange(column + '2:' + column);
 }
 
 function categoryParentsFormula() {
-  var cat = colOf(CATEGORY_COLUMNS, 'category');
-  var range = '$' + cat + '$2:$' + cat;
+  return uniqueColumnFormula_(colOf(CATEGORY_COLUMNS, 'category'));
+}
+
+/**
+ * Sorted, where the parents deliberately are not.
+ *
+ * The parent list keeps the seed order because that order is Income first and
+ * `Other` last, which is how you think about them. Subcategories have no such
+ * order — they arrive grouped by parent, so an unsorted list means scrolling
+ * past twelve `Housing` children to reach a `Transport` one you can already
+ * name. Alphabetical is the only order a flat list of eighty can usefully have.
+ */
+function categoryChildrenFormula() {
+  return '=SORT(' + uniqueColumnFormula_(colOf(CATEGORY_COLUMNS, 'subcategory')).slice(1) + ')';
+}
+
+function uniqueColumnFormula_(letter) {
+  var range = '$' + letter + '$2:$' + letter;
   return '=UNIQUE(FILTER(' + range + ',' + range + '<>""))';
 }
 
@@ -570,7 +589,7 @@ function discardProbe_(ss, name, previous) {
 }
 
 /**
- * amount_eur — the column every report reads, never `amount`.
+ * amount_base — the column every report reads, never `amount`.
  *
  * In v1 this is just `amount` when the currency already matches, and blank
  * otherwise. Blank rather than unconverted: a non-EUR figure summed as if it
@@ -608,12 +627,29 @@ function categoryFormula() {
  * subcategory: it reads as real and rolls up wrongly. There is deliberately
  * no subcategory_override column; if you need that precision, put it in notes.
  */
+/**
+ * subcategory — yours, then blank, then the cascade's.
+ *
+ * The middle branch is the one worth explaining. A `category_override` you
+ * typed overrules the cascade's *category*, and the cascade's subcategory
+ * belonged to the category you just overruled — `Groceries` under a row you
+ * have moved to `Transport` is not a detail, it is wrong. So an override with
+ * no subcategory beside it blanks the subcategory rather than keeping a stale
+ * one.
+ *
+ * `subcategory_override` is how you say the other half. Without it the only
+ * expressible correction was "this category, and no subcategory at all", which
+ * is not what anyone means by correcting a row.
+ */
 function subcategoryFormula() {
   var a = colOf(TX_COLUMNS, 'uid');
   var auto = colOf(TX_COLUMNS, 'subcategory_auto');
   var ovr = colOf(TX_COLUMNS, 'category_override');
+  var sub = colOf(TX_COLUMNS, 'subcategory_override');
+
   return '=ARRAYFORMULA(IF(LEN($' + a + '$2:$' + a + ')=0,"",' +
-    'IF(LEN($' + ovr + '$2:$' + ovr + ')>0,"",$' + auto + '$2:$' + auto + ')))';
+    'IF(LEN($' + sub + '$2:$' + sub + ')>0,$' + sub + '$2:$' + sub + ',' +
+    'IF(LEN($' + ovr + '$2:$' + ovr + ')>0,"",$' + auto + '$2:$' + auto + '))))';
 }
 
 /**
@@ -685,7 +721,7 @@ function inReportsFormula() {
  * lot of machinery to buy a constraint that "keep label names distinct" already
  * satisfies.
  *
- * `total_eur` reads `amount_eur` because every report does. It is signed, so a
+ * `total_eur` reads `amount_base` because every report does. It is signed, so a
  * label covering both a purchase and its refund nets out, which is the honest
  * figure for "what did this cost".
  *
@@ -705,7 +741,7 @@ function labelCountFormula() {
 function labelTotalFormula() {
   var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
   return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
-    'SUMIFS(' + txColumnRange_('amount_eur') + ',' +
+    'SUMIFS(' + txColumnRange_('amount_base') + ',' +
     txLabelsRange_() + ',"*"&' + label + '&"*",' +
     txColumnRange_('in_reports') + ',TRUE)))';
 }
@@ -747,7 +783,7 @@ function accountBalanceFormula() {
   var man = colOf(ACCOUNT_COLUMNS, 'balance_manual');
 
   var txAccount = TABS.TRANSACTIONS + '!$' + colOf(TX_COLUMNS, 'account_id') + '$2:$' + colOf(TX_COLUMNS, 'account_id');
-  var txAmount = TABS.TRANSACTIONS + '!$' + colOf(TX_COLUMNS, 'amount_eur') + '$2:$' + colOf(TX_COLUMNS, 'amount_eur');
+  var txAmount = TABS.TRANSACTIONS + '!$' + colOf(TX_COLUMNS, 'amount_base') + '$2:$' + colOf(TX_COLUMNS, 'amount_base');
   var idRange = '$' + id + '$2:$' + id;
 
   return '=ARRAYFORMULA(IF(LEN(' + idRange + ')=0,"",' +
@@ -809,7 +845,7 @@ function configLookup_(key, fallbackLiteral) {
 /**
  * Which columns carry a currency symbol, and which must not.
  *
- * Only a column guaranteed to be in one currency can name it. `amount_eur`
+ * Only a column guaranteed to be in one currency can name it. `amount_base`
  * qualifies by construction — its formula is blank whenever the row's
  * currency isn't the base one, which is the whole reason that column exists.
  * `cash_entry.amount` qualifies because cash entries have no currency field
@@ -842,8 +878,8 @@ function applyFormats_(ss) {
 
     // Unqualified: the row's own currency, whatever that is.
     if (headers.indexOf('amount') !== -1) formatColumn_(sh, colOf(headers, 'amount'), '#,##0.00');
-    if (headers.indexOf('amount_eur') !== -1) {
-      formatColumn_(sh, colOf(headers, 'amount_eur'), baseFormat);
+    if (headers.indexOf('amount_base') !== -1) {
+      formatColumn_(sh, colOf(headers, 'amount_base'), baseFormat);
     }
     formatColumn_(sh, colOf(headers, 'imported_at'), 'yyyy-mm-dd hh:mm');
   });
@@ -858,7 +894,7 @@ function applyFormats_(ss) {
   formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'date'), 'yyyy-mm-dd');
   formatColumn_(cash, colOf(CASH_ENTRY_COLUMNS, 'amount'), baseFormat);
 
-  // Qualified for the same reason amount_eur is: the column sums amount_eur,
+  // Qualified for the same reason amount_base is: the column sums amount_base,
   // which is blank on any row that is not in the base currency.
   var labels = ss.getSheetByName(TABS.LABELS);
   if (labels) formatColumn_(labels, colOf(LABEL_COLUMNS, 'total_eur'), baseFormat);
@@ -925,12 +961,31 @@ function applyValidation_(ss) {
 
   cash.getRange(colOf(CASH_ENTRY_COLUMNS, 'account') + '2:' + colOf(CASH_ENTRY_COLUMNS, 'account'))
     .setDataValidation(accountRule);
-  cash.getRange(colOf(CASH_ENTRY_COLUMNS, 'category') + '2:' + colOf(CASH_ENTRY_COLUMNS, 'category'))
-    .setDataValidation(categoryRule);
+  cash.getRange(whole_(CASH_ENTRY_COLUMNS, 'category')).setDataValidation(categoryRule);
 
   var tx = ss.getSheetByName(TABS.TRANSACTIONS);
-  tx.getRange(colOf(TX_COLUMNS, 'category_override') + '2:' + colOf(TX_COLUMNS, 'category_override'))
-    .setDataValidation(categoryRule);
+  tx.getRange(whole_(TX_COLUMNS, 'category_override')).setDataValidation(categoryRule);
+
+  var subcategories = subcategoryListRange_(ss);
+  if (subcategories) {
+    var subcategoryRule = SpreadsheetApp.newDataValidation()
+      .requireValueInRange(subcategories, true).setAllowInvalid(true).build();
+    tx.getRange(whole_(TX_COLUMNS, 'subcategory_override')).setDataValidation(subcategoryRule);
+    cash.getRange(whole_(CASH_ENTRY_COLUMNS, 'subcategory')).setDataValidation(subcategoryRule);
+  }
+
+  // The one place a label gets a dropdown. `transactions.labels` deliberately
+  // does not — it holds `kids, travel` as often as one value, and a list rule
+  // would flag every multi-label row. A cash entry is one thing you are
+  // logging right now, so the common case is one label, and `allowInvalid`
+  // leaves typing two of them open.
+  var labels = ss.getSheetByName(TABS.LABELS);
+  if (labels) {
+    cash.getRange(whole_(CASH_ENTRY_COLUMNS, 'labels')).setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInRange(labels.getRange(whole_(LABEL_COLUMNS, 'label')), true)
+        .setAllowInvalid(true).build());
+  }
 
   // The sign rule, written where a phone will show it: tapping a header cell
   // in mobile Sheets reveals its note. Documentation nobody has to find.
@@ -986,12 +1041,103 @@ function applyValidation_(ss) {
     'An override is a stronger statement than a tick, so a row carrying one ' +
     'counts as confirmed on its own.');
 
-  var kindRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList([ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, ACCOUNT_KIND.ASSET], true)
-    .setAllowInvalid(false)
+  accounts.getRange(whole_(ACCOUNT_COLUMNS, 'kind'))
+    .setDataValidation(listRule_(ACCOUNT_KINDS, false));
+
+  applyClosedListValidation_(ss, checkbox);
+}
+
+/**
+ * Every remaining column whose values come from a fixed set.
+ *
+ * The principle, stated once because it applies to all of them: **a column with
+ * a closed vocabulary should be a dropdown, and the dropdown's list should be
+ * the same object the code reads.** Typing into one of these is how you get a
+ * `starts-with` that no rule engine has ever heard of, or an `Expense` that
+ * does not match `expense` — failures that look like "the rule just doesn't
+ * fire" and have no error anywhere to find.
+ *
+ * `setAllowInvalid` is the judgement call in each case, and it splits cleanly:
+ *
+ *   **false** where the code has a fixed `if` chain and anything else is
+ *   meaningless — `rules.field`, `rules.match_type`, `rules.type`,
+ *   `categories.kind`, `_import_map.target_column`, `accounts.kind`. A warning
+ *   triangle on a value nothing will ever read is not a warning, it is a lie.
+ *
+ *   **true** where the list is a *convenience over live data* and being off it
+ *   is legitimate — every category and subcategory dropdown, and the account
+ *   filter. You may well be typing a category a moment before you add it to the
+ *   `categories` tab, and refusing that would make the tab impossible to grow.
+ *
+ * Two columns are deliberately left alone. `transactions.labels` holds
+ * `kids, travel` as often as one value, and a list rule would flag every
+ * multi-label row — which trains you to ignore warnings, the opposite of what
+ * validation is for. `accounts.currency` is ISO 4217: a hundred and eighty
+ * entries is not a list you pick from, and the wrong one is caught anyway,
+ * because a row whose currency is not the base currency gets no `amount_base`.
+ */
+function applyClosedListValidation_(ss, checkbox) {
+  var categoryRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(categoryListRange_(ss), true).setAllowInvalid(true).build();
+  var subcategoryRule = subcategoryListRange_(ss)
+    ? SpreadsheetApp.newDataValidation()
+      .requireValueInRange(subcategoryListRange_(ss), true).setAllowInvalid(true).build()
+    : null;
+
+  var rules = ss.getSheetByName(TABS.RULES);
+  if (rules) {
+    rules.getRange(whole_(RULE_COLUMNS, 'field'))
+      .setDataValidation(listRule_(RULE_FIELDS, false));
+    rules.getRange(whole_(RULE_COLUMNS, 'match_type'))
+      .setDataValidation(listRule_(RULE_MATCH_TYPES, false));
+    rules.getRange(whole_(RULE_COLUMNS, 'type'))
+      .setDataValidation(listRule_(TX_TYPES, false));
+    rules.getRange(whole_(RULE_COLUMNS, 'category')).setDataValidation(categoryRule);
+    if (subcategoryRule) {
+      rules.getRange(whole_(RULE_COLUMNS, 'subcategory')).setDataValidation(subcategoryRule);
+    }
+    // A rule you switched off is a rule you are still deciding about, so this
+    // is a checkbox rather than the word `false` — which `isTruthyCell_` would
+    // read correctly and which nobody can see at a glance.
+    rules.getRange(whole_(RULE_COLUMNS, 'enabled')).setDataValidation(checkbox);
+  }
+
+  var cats = ss.getSheetByName(TABS.CATEGORIES);
+  if (cats) {
+    cats.getRange(whole_(CATEGORY_COLUMNS, 'kind'))
+      .setDataValidation(listRule_(TX_TYPES, false));
+  }
+
+  // The only thing a source header can usefully map to is a column that exists.
+  var importMap = ss.getSheetByName(TABS.IMPORT_MAP);
+  if (importMap) {
+    importMap.getRange(whole_(IMPORT_MAP_COLUMNS, 'target_column'))
+      .setDataValidation(listRule_(TX_COLUMNS, false));
+  }
+
+  var categoryMap = ss.getSheetByName(TABS.CATEGORY_MAP);
+  if (categoryMap) {
+    categoryMap.getRange(whole_(CATEGORY_MAP_COLUMNS, 'category'))
+      .setDataValidation(categoryRule);
+    if (subcategoryRule) {
+      categoryMap.getRange(whole_(CATEGORY_MAP_COLUMNS, 'subcategory'))
+        .setDataValidation(subcategoryRule);
+    }
+  }
+
+}
+
+/** `B2:B` for a named column, which is what every whole-column rule wants. */
+function whole_(headers, name) {
+  var letter = colOf(headers, name);
+  return letter + '2:' + letter;
+}
+
+function listRule_(values, allowInvalid) {
+  return SpreadsheetApp.newDataValidation()
+    .requireValueInList(values, true)
+    .setAllowInvalid(Boolean(allowInvalid))
     .build();
-  accounts.getRange(colOf(ACCOUNT_COLUMNS, 'kind') + '2:' + colOf(ACCOUNT_COLUMNS, 'kind'))
-    .setDataValidation(kindRule);
 }
 
 /**
@@ -1007,8 +1153,8 @@ function applyProtection_(ss) {
   protectRange_(ss.getSheetByName(TABS.TRANSACTIONS),
     'A2:' + colOf(TX_COLUMNS, 'imported_at'), 'spendsheet: written by sync');
   protectRange_(ss.getSheetByName(TABS.TRANSACTIONS),
-    colOf(TX_COLUMNS, 'amount_eur') + '2:' + colOf(TX_COLUMNS, 'amount_eur'),
-    'spendsheet: formula (amount_eur)');
+    colOf(TX_COLUMNS, 'amount_base') + '2:' + colOf(TX_COLUMNS, 'amount_base'),
+    'spendsheet: formula (amount_base)');
   protectRange_(ss.getSheetByName(TABS.TRANSACTIONS),
     colOf(TX_COLUMNS, 'category') + '2:' + colOf(TX_COLUMNS, 'type'),
     'spendsheet: formula (category)');
@@ -1063,7 +1209,7 @@ function protectRange_(sheet, a1, description) {
  */
 var TX_VISIBLE_COLUMNS = [
   'account_name', 'booking_date', 'amount', 'description', 'counterparty',
-  'amount_eur', 'category_source', 'category_override', 'category',
+  'amount_base', 'category_source', 'category_override', 'category',
   'labels', 'confirmed'
 ];
 
@@ -1136,7 +1282,7 @@ function orderTabs_(ss) {
   var order = [
     TABS.DASHBOARD, TABS.RECENT, TABS.REPORTS, TABS.REVIEW, TABS.TRANSACTIONS,
     TABS.PENDING, TABS.ACCOUNTS, TABS.CASH_ENTRY, TABS.RULES,
-    TABS.CATEGORIES, TABS.LABELS, TABS.RECURRING, TABS.CASHFLOW
+    TABS.CATEGORIES, TABS.LABELS
   ];
   order.forEach(function (name, i) {
     var sh = ss.getSheetByName(name);
