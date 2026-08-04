@@ -192,3 +192,102 @@ describe('through a sync', () => {
     expect(c.syncNow().message).toMatch(/1 cash entry is missing/);
   });
 });
+
+/**
+ * The form.
+ *
+ * `cash_entry` used to be a tab you appended to, drained hours later by the
+ * nightly sync. For roughly one entry a day that is a queue of one and a delay
+ * you cannot see the end of. The row now lands on the edit that completes it.
+ */
+describe('typing one entry', () => {
+  /** What Apps Script hands a simple trigger. */
+  const edit = (c, row, column) => c.onEdit({
+    range: c.__spreadsheet.getSheetByName('cash_entry').getRange(row, column)
+  });
+
+  it('lands in transactions on the edit that completes the row', () => {
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5, category: 'Food & Drink' });
+    edit(c, 2, 3);
+
+    const rows = c.readRecords_(tx(c), c.TX_COLUMNS).filter((r) => r.source === 'manual');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amount).toBe(-3.5);
+  });
+
+  it('empties the row so the tab is ready for the next one', () => {
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5, category: 'Food & Drink' });
+    edit(c, 2, 3);
+
+    const sheet = c.__spreadsheet.getSheetByName('cash_entry');
+    expect(sheet.getRange('B2').getValue()).toBe('');
+    expect(sheet.getRange('C2').getValue()).toBe('');
+  });
+
+  it('says what happened, where a phone can see it', () => {
+    // A simple onEdit fails silently and no toast survives on mobile, so the
+    // only feedback that works is a cell.
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5 });
+    edit(c, 2, 3);
+
+    expect(String(c.__spreadsheet.getSheetByName('cash_entry')
+      .getRange(c.CASH_CONFIRM_CELL).getValue())).toContain('added');
+  });
+
+  it('leaves a half-typed row exactly alone', () => {
+    // A date typed and an amount not yet is someone mid-entry, not an error.
+    const c = withWallet();
+    type(c, 2, { account: 'wallet' });
+    edit(c, 2, 2);
+
+    const sheet = c.__spreadsheet.getSheetByName('cash_entry');
+    expect(sheet.getRange('B2').getValue()).toBe('wallet');
+    expect(c.readRecords_(tx(c), c.TX_COLUMNS).filter((r) => r.source === 'manual'))
+      .toHaveLength(0);
+  });
+
+  it('does not retrigger on its own confirmation', () => {
+    // The confirmation is written to a cell on the same sheet, which is an
+    // edit. Without the column guard this recurses.
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5 });
+
+    const column = c.columnIndexOf_(c.CASH_CONFIRM_CELL.charAt(0));
+    edit(c, 2, column);
+
+    expect(c.readRecords_(tx(c), c.TX_COLUMNS).filter((r) => r.source === 'manual'))
+      .toHaveLength(0);
+  });
+
+  it('ignores the header row', () => {
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5 });
+    edit(c, 1, 1);
+
+    expect(c.readRecords_(tx(c), c.TX_COLUMNS).filter((r) => r.source === 'manual'))
+      .toHaveLength(0);
+  });
+
+  it('still drains through the sync when the trigger never fired', () => {
+    // The immediate path is an optimisation over a mechanism that already
+    // worked. A simple onEdit fails silently, so the backstop is the point.
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5 });
+
+    expect(drain(c).inserted).toBe(1);
+  });
+
+  it('clears only the rows that made it in', () => {
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5 });
+    type(c, 3, { note: 'still typing this one' });
+    edit(c, 2, 3);
+
+    const sheet = c.__spreadsheet.getSheetByName('cash_entry');
+    expect(sheet.getRange('B2').getValue()).toBe('');
+    expect(sheet.getRange('E3').getValue()).toBe('still typing this one');
+  });
+});

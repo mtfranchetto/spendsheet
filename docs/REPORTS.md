@@ -27,13 +27,46 @@ Entirely formulas, so it is correct the moment a row lands rather than being a s
 
 ### What is on it
 
+It is **one column wide and stacked vertically**, in the order you need it:
+
 | | |
 |---|---|
 | **Health** (A3:C8) | last successful sync · nearest consent expiry · rows in the last 7 days · needs-review count · unconfirmed count, **with the date of the oldest one** · projected date you run out |
-| **This month** (A12:C17) | net worth · spent so far · earned so far · net · the same point last month · the difference |
-| **Accounts** (E) | every active account, biggest balance first, with the date its balance was last updated |
-| **Needs review** (Z) | the first ten of the review queue — date, description, amount, guess |
-| **Charts** (A20, A40, A60) | this month by category · spending by month, this year against last · net worth over 90 days |
+| **This month** (A11:C16) | net worth · spent so far · earned so far · net · the same point last month · the difference |
+| **Needs review** (A19:D28) | the first ten of the review queue — date, description, amount, guess |
+| **Charts** (A31, A51, A71) | this month by category · spending by month, this year against last · net worth over 90 days |
+| **Accounts** (A92:F107) | every active account, biggest balance first, with when its balance last moved and **what is wrong with it, if anything** |
+| **Labels** (A111:C126) | spend per label |
+
+### Why it is vertical, when it used to be horizontal
+
+The blocks used to sit in their own column bands — A, E, K, O, S, V, Z — because a `QUERY` that outgrows its neighbour's start row collides, and a collision shows as `#REF!` across a whole block rather than as one wrong cell.
+
+That reasoning was right and the layout was still wrong: **the phone scrolls vertically**, and a dashboard twenty-nine columns wide is one you cannot read on the device it is most often opened on. Avoiding a collision by spreading sideways solved a real problem by creating a worse one.
+
+So the collision is prevented at the source instead. **Every block that can grow carries an explicit `limit`**, and the slot below it is sized to that limit with room over. A bounded block cannot reach its neighbour — a stronger guarantee than separation was, which only moved the collision somewhere you would not notice it.
+
+### The hidden feed, G:S
+
+Three of the blocks existed only to be plotted: the category totals, the twelve-month pair, and the ninety-day net worth series. Reading those as rows was never the point, and ninety rows of dates is most of what "the dashboard is endless numbers" meant.
+
+They are still on the tab, because a chart reads a range and the range has to be somewhere — but they live in G:S and are **hidden on every run**, not once. That is deliberately not the contract the hidden `transactions` columns use: those are columns you might legitimately want to see, where this is chart plumbing. If you unhide it, the next **Setup sheet** puts it back.
+
+`G` is the odd one: it holds a severity number, and it is what makes the colours work.
+
+### Colour means three things and no more
+
+| | |
+|---|---|
+| **Red** | act now — a consent has expired, the sync has stopped |
+| **Amber** | act soon — a consent is lapsing, a backlog is forming, a balance has stopped moving |
+| **Blue** | this cell is yours; type or pick here |
+
+Nothing is coloured for being fine. Green-when-healthy spends your attention every day to say what silence already says, and it is what makes a red one stop registering.
+
+An account row goes red or amber as a whole, and the **Sync** column beside it says which of the three things is wrong in words. A red row you have to go and investigate is a red row you learn to scroll past. A cash tin or a flat reads `—` rather than "no consent": it is not failing to sync, it has nothing to sync.
+
+**Every conditional-format rule on the dashboard is `=$G<row>=2` or `=$G<row>=1`.** All of the thinking is in that hidden severity column, and that is forced rather than stylistic: a conditional-format rule does not pass through `localizeFormula`, so **it cannot contain a comma** — which rules out `AND`, `IF`, `OR` and `VLOOKUP`, i.e. everything you would reach for. It also means the thresholds can live in `_config` (`consent_warning_days`, `stale_balance_days`) instead of being frozen as literals inside a rule no test can evaluate.
 
 Health belongs where you already look; a status tab you have to remember to open is how you find out the sync died a fortnight ago. The **oldest unconfirmed date** is new and earns its place: thirty unconfirmed rows from this week is a normal Tuesday, thirty going back to March means the queue stopped being cleared and nothing said so.
 
@@ -44,10 +77,6 @@ Health belongs where you already look; a status tab you have to remember to open
 It is `QUERY(review!…)`, and that is deliberate. Asking `transactions` for unconfirmed rows walks into the trap that produced `in_reports`: `confirmed` is blank on almost every row, `QUERY` types a column by majority, and `where AB = false` against a column Sheets decided was text is either an error or a silent nothing. The `review` tab is built row by row in code, so it has no blank majority to misread — and the two can never disagree, because it is the same queue showing its first ten.
 
 **Read-only, on purpose.** Ticking here would need the `uid` beside each row, and a `QUERY`'s rows move when the data under them changes — the argument in the `review` section below. Act on the `review` tab.
-
-### The blocks are separated horizontally
-
-They grow downwards, and a `QUERY` that outgrew its neighbour's start row would collide — which shows as `#REF!` across the whole block, not as one wrong cell. The charts are anchored below the left-hand strips, which is the only region of the tab where nothing ever grows.
 
 ### Net worth, and what it refuses to add
 
@@ -74,6 +103,25 @@ Three things it costs, worth knowing before the line looks wrong:
 - **Non-EUR rows contribute nothing**, since `amount_eur` is blank for them, while their balance is in today's figure. Those accounts flat-line.
 
 Change the window with `trend_days` in `_config` and re-run **Setup sheet** — the chart's range is fixed when the chart is created, so a formula that resized itself would leave the plot reading a range that no longer matches.
+
+---
+
+## `recent`
+
+Newest first, which `transactions` itself can never be.
+
+`transactions` is append-only and **never sorted** — a partial sort destroys row identity and every formula reference at once — so the newest row is the bottom row of four thousand, and the tab holding the truth is the one tab you cannot skim. This sorts a copy.
+
+Two blocks, not one merged list:
+
+- **Pending** (A5) — taken but not settled. Date, account, description, amount, currency.
+- **Booked** (A34) — the last 200. Date, account, description, `amount_eur`, category.
+
+They are separate for a reason that starts as a constraint and ends as the better layout. Merging them would need an array literal — `{booked; pending}` — and **this project cannot use array literals**: `localizeFormula` rewrites unquoted commas at the write boundary so a decimal-comma locale gets something it can parse, and an array literal's separators mean something. The rewrite would corrupt it silently.
+
+But a pending charge is a different kind of fact anyway. The amount can still change, it counts towards no total on the dashboard, and `pending` carries only columns A–O — no `amount_eur`, no category, because none of that has been derived for a row the bank has not booked. An interleaved list would need a column saying which is which, read on every row. Two blocks say it once, and the pending one names its currency rather than implying euros.
+
+Read-only. Correct a category on `review`, or in `transactions` itself.
 
 ---
 
@@ -112,6 +160,12 @@ A filter set to **All** contributes no clause at all, so the default query is sh
 
 **Show more than thirty groups.** A chart of four hundred merchants is a smear. The cap is in the query, and the block says so.
 
+### The blue cells are the ones you change
+
+Nothing else on the tab is editable — every other cell is a formula or a label — and until recently nothing said so. A dropdown looks exactly like a result until you happen to tap it, which is how a filtering UI becomes a tab people scroll past.
+
+The eight inputs (six filters, two custom dates) carry `DASH_COLOR.INPUT`, the same blue the two cells that are yours on `review` use, so "blue means mine" is one rule across the book. A flat background rather than a conditional-format rule: which cells are inputs is a fact about the layout, not about the data.
+
 ### Charts read blocks, blocks read `transactions`
 
 A chart is configuration pointed at a range, so it stays live as the formulas underneath recalculate. Nothing needs refreshing.
@@ -132,6 +186,8 @@ The unconfirmed backlog, small enough to fit on one screen, with the two cells t
 
 Tick, or pick a different category, or both. Either one writes straight back to `transactions`, and `status` says whether it landed.
 
+**A row you have done goes grey and struck through, and stays put.** It leaves when the queue is next refilled — by the nightly sync, or by **Refresh review queue**. That is the snapshot design working, not a failure to notice your tick: see below for why a self-refilling queue would be a trap. The two cells that are yours are blue, the same blue `reports` uses for its filters.
+
 **An override on its own is enough.** Typing the category is a stronger statement than ticking a box next to it, and `Learn from corrections` counts a row carrying one as confirmed either way.
 
 ### Why it is filled by a run rather than by a `QUERY`
@@ -144,7 +200,7 @@ Refilling happens **on every nightly sync**, so the list you find in the morning
 
 ### The `onEdit` trigger
 
-The write-back is a **simple `onEdit`** — a function of that name, no installation step. It is the only mechanism that fires from the mobile app.
+The write-back is a **simple `onEdit`** — a function of that name, no installation step. It is the only mechanism that fires from the mobile app, and it now serves two tabs: this one and `cash_entry`.
 
 This reopens a decision `00_config.gs` argues against. The `confirmed` comment there rejects an `onEdit` trigger as *"no extra information"*, and that is exactly right where it was made: a row carrying a `category_override` already tells you everything a tick would. It does not extend to here, where the tick **is** the only signal there is and the alternative is no phone workflow at all.
 
@@ -165,7 +221,9 @@ Charts are built **on the run that creates the tab, and never again**. An `Embed
 
 That means a book that already has a `dashboard` tab gets the new blocks from **Setup sheet** and no charts. **Spendsheet → Rebuild charts** is the explicit way to ask for them, and it says it will discard your layout before it does.
 
-The blocks themselves do move between versions, so `setup()` **blanks columns A–X of the dashboard** before rewriting them — otherwise the previous arrangement sits there as orphaned headers and live `QUERY`s, two dashboards on one tab, both plausible and one months out of date. Anything you have put to the right of column X is untouched, which is the same boundary every other "yours" region uses.
+The blocks themselves do move between versions, so `setup()` **blanks columns A–S of the dashboard** before rewriting them — otherwise the previous arrangement sits there as orphaned headers and live `QUERY`s, two dashboards on one tab, both plausible and one months out of date. Anything you have put to the right of column S is untouched, which is the same boundary every other "yours" region uses. That boundary is derived from the rightmost generated column rather than written down — adding a block cannot leave a strip of the old layout behind.
+
+The layout moved a long way in this version: if your dashboard was built by an older one, **Setup sheet** then **Rebuild charts**, in that order. The charts read ranges that the rebuild has to have written first.
 
 `in_reports` also lands as a new column on `transactions`. It is hidden for you on the upgrade run — the only case where `setup()` changes a column's visibility after the first run, because a column that did not exist five seconds ago carries no decision to respect.
 

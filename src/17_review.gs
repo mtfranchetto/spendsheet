@@ -98,12 +98,58 @@ function buildReviewTab_(ss, report) {
     'Or pick a different category first — an override is a stronger statement ' +
     'than a tick and counts as confirmed on its own.\n\n' +
     'Either one writes straight back to transactions, and the status column ' +
-    'says whether it landed. The list itself is refilled by a run.');
+    'says whether it landed. The list itself is refilled by a run.\n\n' +
+    'A row you have done goes grey and stays put. It leaves when the queue is ' +
+    'next refilled — by the nightly sync, or by Spendsheet → Refresh review ' +
+    'queue.');
+
+  markReviewInputs_(sheet);
 
   if (!report || report.created.indexOf(TABS.REVIEW) === -1) return;
 
   sheet.hideColumns(colIndex_(REVIEW_COLUMNS, 'uid'));
   sheet.setColumnWidth(colIndex_(REVIEW_COLUMNS, 'description'), 320);
+}
+
+/**
+ * Which cells are yours, and which rows you have already dealt with.
+ *
+ * A row you tick **stays on the tab** until the queue is next refilled, and
+ * that is the design rather than a bug: the queue is a snapshot keyed by a
+ * hidden `uid`, because a self-refilling `QUERY` would move its rows the
+ * instant you confirmed one and land your next tick on a different
+ * transaction. See the file header.
+ *
+ * But "correct and confusing" is still confusing. Nothing on the tab
+ * distinguished a row you had done from one you had not, so the honest
+ * complaint is that ten ticked rows look exactly like ten waiting ones. Grey
+ * and struck through is what a done row should look like, and it costs one
+ * rule.
+ *
+ * The condition is `=$H2=TRUE`, with **no comma**, for the reason
+ * `flagDashboardStates_` sets out at length: a conditional-format rule does not
+ * pass through `localizeFormula`, so a comma in one is a silent parse failure
+ * in a decimal-comma locale. `confirmed` is a real checkbox, so it holds a real
+ * boolean and needs no coercion — and the comparison is written against `TRUE`
+ * rather than as a bare cell reference, because Sheets will not coerce `1` to
+ * `TRUE` and a bare reference is exactly where that bites.
+ */
+function markReviewInputs_(sheet) {
+  var column = function (name) { return colOf(REVIEW_COLUMNS, name); };
+  var first = colIndex_(REVIEW_COLUMNS, 'confirmed');
+  var width = colIndex_(REVIEW_COLUMNS, 'category_override') - first + 1;
+
+  sheet.getRange(2, first, Math.max(sheet.getMaxRows() - 1, 1), width)
+    .setBackground(DASH_COLOR.INPUT);
+
+  var done = SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=$' + column('confirmed') + '2=TRUE')
+    .setFontColor('#9aa0a6')
+    .setStrikethrough(true)
+    .setRanges([sheet.getRange('A2:' + column('status'))])
+    .build();
+
+  sheet.setConditionalFormatRules([done]);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +290,21 @@ function onEdit(e) {
     if (!e || !e.range) return;
 
     var sheet = e.range.getSheet();
-    if (!sheet || sheet.getName() !== TABS.REVIEW) return;
+    if (!sheet) return;
 
-    applyReviewEdit_(sheet, e.range);
+    // Two tabs now, dispatched by name. Both return immediately on every other
+    // edit in the book, which is the first thing a simple trigger must do —
+    // this runs on every keystroke-sized change anyone makes to any tab.
+    if (sheet.getName() === TABS.REVIEW) {
+      applyReviewEdit_(sheet, e.range);
+      return;
+    }
+
+    if (sheet.getName() === TABS.CASH_ENTRY && functionExists_('onCashEntryEdit_')) {
+      onCashEntryEdit_(sheet, e.range);
+    }
   } catch (err) {
-    logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'review write-back failed: ' + err.message, '');
+    logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'onEdit write-back failed: ' + err.message, '');
   }
 }
 

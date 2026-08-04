@@ -289,7 +289,7 @@ See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 
 ### Typing a cash entry
 
-`cash_entry` is `date` · `account` · `amount` · `category` · `note` · `processed`, drained into `transactions` at the end of every sync.
+`cash_entry` is `date` · `account` · `amount` · `category` · `note` · `processed`, and it is a **form rather than a queue**: you type on the blue row 2, and a simple `onEdit` moves it into `transactions` and empties the row again the moment it has an account and an amount. The sync still drains it at the end of every run, which is the backstop — a simple trigger fails silently, so the row staying put is how a failed one is recovered rather than lost.
 
 **Type the amount without a sign.** A bare number is spending, which is what almost every cash entry is — standing in a bar you type `3`, not `-3`. Picking an **Income** or **Transfer** category counts it the other way, so an ATM withdrawal *adds* to the wallet while the matching debit on the bank side nets the pair to zero. A minus sign you type deliberately always wins, which is how you record cash going back into a bank. The rule is also a note on the `amount` header, visible by tapping it in mobile Sheets.
 
@@ -315,6 +315,8 @@ Opening is **liquid** balance, not net worth: bank and cash only. A projection a
 
 `review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_eur` · `guess` · `why` · `confirmed` · `category_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
 
-**`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app; drained into `transactions` by the daily trigger.
+**`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app. One blue input row, drained on the edit that completes it and again by the daily trigger. `processed` is hidden; the row it stamps is cleared moments later.
+
+**`recent`** — no schema of its own. Two `QUERY` blocks over `pending` and `transactions`, newest first, because `transactions` is append-only and never sorted.
 
 Cash entry is a Sheets tab rather than a Google Form because **Forms has no native mobile app and cannot submit offline at all**, whereas Sheets has a real offline mode. Logging a €3 coffee happens standing in a bar, sometimes with no signal.

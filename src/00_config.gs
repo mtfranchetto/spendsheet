@@ -45,6 +45,11 @@ var TABS = {
   // cells that are yours next to each row. The only surface in this project
   // you can act on from a phone.
   REVIEW: 'review',
+  // Newest first, pending on top of booked. `transactions` is append-only and
+  // never sorted, so the only way to see the latest thing you spent is a view
+  // that sorts a copy — which is what this is, and why it is two QUERYs rather
+  // than a tab anything writes to.
+  RECENT: 'recent',
   TESTS: '_tests'
 };
 
@@ -345,6 +350,7 @@ var DEFAULT_CONFIG = [
   ['stale_threshold_days', 2, 'selfCheck alerts if the last success is older than this.'],
   ['empty_run_threshold_days', 3, 'Alert after this many consecutive days of 0 rows.'],
   ['consent_warning_days', 7, 'Warn when a bank consent has fewer days left than this.'],
+  ['stale_balance_days', 3, 'Colour an account on the dashboard when its balance is older than this.'],
   ['alert_email', '', 'Leave blank to use the account owner address.'],
   ['fetch_pending', 'yes', 'Set to no per-account to save one API call/day.'],
   ['max_calls_per_account_per_day', 4, 'Most ASPSPs cap unattended fetching here.'],

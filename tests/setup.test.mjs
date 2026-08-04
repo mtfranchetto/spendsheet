@@ -12,19 +12,19 @@ import { load } from './harness.mjs';
 
 const EXPECTED_TABS = [
   'transactions', 'pending', 'accounts', 'rules', 'categories', 'recurring',
-  'cashflow', 'cash_entry', 'dashboard', 'labels', 'reports', 'review',
+  'cashflow', 'cash_entry', 'dashboard', 'labels', 'recent', 'reports', 'review',
   '_anomalies', '_status', '_runs', '_config', '_import_map', '_category_map',
   '_memory', '_import_raw', '_import_staged', '_removed', '_tests'
 ];
 
 describe('setup()', () => {
-  it('builds exactly the 23 documented tabs', () => {
+  it('builds exactly the 24 documented tabs', () => {
     const ctx = load();
     ctx.setup();
 
     const names = ctx.__spreadsheet.getSheets().map((s) => s.getName());
     expect(names.sort()).toEqual([...EXPECTED_TABS].sort());
-    expect(names).toHaveLength(23);
+    expect(names).toHaveLength(24);
   });
 
   it('removes the blank starter tab but never a sheet with content', () => {

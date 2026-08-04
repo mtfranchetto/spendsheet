@@ -244,7 +244,7 @@ describe('the net worth trend', () => {
   it('covers as many days as the chart is built for', () => {
     const days = ctx.trendDays_();
     expect(ctx.trendDatesFormula()).toContain(`SEQUENCE(${days},1,TODAY()-${days - 1},1)`);
-    expect(ctx.trendValuesFormula()).toContain(`$${ctx.DASH.TREND_COL}$${ctx.DASH.BLOCK_ROW + days - 1}`);
+    expect(ctx.trendValuesFormula()).toContain(`$${ctx.DASH.TREND_COL}$${ctx.DASH.FEED_ROW + days - 1}`);
   });
 
   it('falls back to 90 days rather than to nothing when the setting is blank', () => {
@@ -360,18 +360,43 @@ describe('the dashboard tab', () => {
     expect(dash.getRange('B' + c.DASH.HEALTH_ROW).getFormula()).toContain('_runs!');
   });
 
-  it('separates the blocks horizontally, so one growing cannot hit another', () => {
-    // A QUERY that outgrows its neighbour's start row shows #REF! across the
-    // whole block rather than as one wrong cell.
-    const columns = [
-      c.DASH.ACCOUNTS_COL, c.DASH.CATEGORY_COL, c.DASH.CATEGORY_VALUE_COL,
-      c.DASH.MONTHLY_COL, c.DASH.TREND_COL, c.DASH.LABEL_COL
+  it('bounds every stacked block, so one growing cannot reach the next', () => {
+    // The vertical stack replaced column separation, and this is the property
+    // that made that safe: a QUERY with no `limit` grows until it lands #REF!
+    // across the block below it. The slot each one sits in has to be at least
+    // as tall as what the query can return.
+    const blocks = [
+      [c.DASH.REVIEW_ROW, c.DASH.REVIEW_ROWS, c.DASH.ACCOUNTS_ROW],
+      [c.DASH.ACCOUNTS_ROW, c.DASH.ACCOUNTS_LIMIT, c.DASH.LABELS_ROW],
+      [c.DASH.LABELS_ROW, c.DASH.LABELS_LIMIT, Infinity]
     ];
-    expect(new Set(columns).size).toBe(6);
 
-    columns.forEach((column) => {
-      expect(dash.getRange(column + c.DASH.BLOCK_ROW).getFormula()).not.toBe('');
+    blocks.forEach(([row, limit, next]) => {
+      const formula = dash.getRange('A' + row).getFormula();
+      expect(formula, `block at row ${row}`).not.toBe('');
+      expect(formula, `block at row ${row}`).toMatch(new RegExp(`limit ${limit}\\b`));
+      // +1 for the QUERY's own header row, +1 for the next block's title.
+      expect(row + limit + 2, `block at row ${row} fits above ${next}`)
+        .toBeLessThanOrEqual(next);
     });
+  });
+
+  it('keeps the readable blocks inside the width of a phone', () => {
+    // The whole reason the layout turned vertical. Anything past E is either
+    // hidden feed or nothing at all.
+    expect(c.columnIndexOf_(c.DASH.SYNC_COL)).toBeLessThanOrEqual(6);
+    expect(c.columnIndexOf_(c.DASH.FEED_COL)).toBe(7);
+  });
+
+  it('hides every feed column, on every run', () => {
+    // Not "once, and respect your choice afterwards" — the feed is ninety rows
+    // of dates whose only reader is a chart.
+    const first = c.columnIndexOf_(c.DASH.FEED_COL);
+    const last = c.columnIndexOf_(c.nextColumn_(c.DASH.TREND_COL, 1));
+
+    for (let i = first; i <= last; i++) {
+      expect(dash.isColumnHiddenByUser(i), `column ${i}`).toBe(true);
+    }
   });
 
   it('anchors the charts below the only column with a fixed height', () => {
@@ -381,15 +406,60 @@ describe('the dashboard tab', () => {
     c.DASH.CHART_ROWS.forEach((row) => expect(row).toBeGreaterThan(lastText));
   });
 
-  it('flags a stale balance without a comma in the rule', () => {
+  it('writes every format rule without a comma in it', () => {
     // localizeFormula translates the formulas written into *cells*. A
     // conditional-format rule does not pass through that boundary, so
     // `=AND(a,b)` would be a parse failure with nowhere to show #ERROR! — the
-    // rule would simply never fire.
+    // rule would simply never fire and the thing it watches would go on
+    // looking fine. Checked across every tab that has rules, not just this
+    // one, because the trap is the boundary rather than the tab.
+    const review = c.__spreadsheet.getSheetByName('review');
+
+    [dash, review].forEach((sheet) => {
+      const rules = sheet.getConditionalFormatRules();
+      expect(rules.length).toBeGreaterThan(0);
+      rules.forEach((rule) => {
+        expect(rule.formula, rule.formula).not.toContain(',');
+      });
+    });
+  });
+
+  it('compares the severity flag to a number rather than testing it', () => {
+    // All the thinking lives in the hidden flag column precisely so the rule
+    // can be an equality: `AND`, `IF` and `VLOOKUP` all need a comma, and
+    // `consent_warning_days` lives in _config where only a VLOOKUP reaches.
     const rules = dash.getConditionalFormatRules();
-    expect(rules).toHaveLength(1);
-    expect(rules[0].formula).not.toContain(',');
-    expect(rules[0].formula.endsWith('>0')).toBe(true);
+    const flags = rules.map((r) => r.formula).filter((f) => f.includes(c.DASH.FLAG_COL));
+
+    expect(flags.length).toBe(rules.length);
+    flags.forEach((formula) => {
+      expect(formula).toMatch(new RegExp(`^=\\$${c.DASH.FLAG_COL}\\d+=[12]$`));
+    });
+  });
+
+  it('colours an account red when its consent has gone, not when it is quiet', () => {
+    // A stale balance is a weekend and a quiet current account as often as it
+    // is a failure. Colouring those red is how red stops meaning anything.
+    const severity = dash.getRange(c.DASH.FLAG_COL + c.DASH.ACCOUNTS_ROW).getFormula();
+
+    expect(severity).toContain('consent_warning_days');
+    expect(severity).toContain('stale_balance_days');
+
+    // The expired branch is 2; the stale-balance branch is 1.
+    const expired = severity.indexOf('2,');
+    const stale = severity.indexOf('stale_balance_days');
+    expect(expired).toBeGreaterThan(-1);
+    expect(expired).toBeLessThan(stale);
+  });
+
+  it('says in words what the colour only says is wrong', () => {
+    // A red row you have to go and investigate is a red row you scroll past.
+    const sync = dash.getRange(c.DASH.SYNC_COL + c.DASH.ACCOUNTS_ROW).getFormula();
+
+    expect(sync).toContain('reconnect');
+    // A cash tin is not failing to sync; it has nothing to sync.
+    expect(sync).toContain('"—"');
+    expect(sync).toContain(c.ACCOUNT_KIND.BANK);
   });
 
   it('sweeps away a block from a layout that has since moved', () => {
@@ -415,7 +485,7 @@ describe('the dashboard tab', () => {
     // Derived from the layout, not written down: a block added to the right
     // moves this boundary, and a hard-coded column would keep passing while
     // testing a cell that is now generated.
-    const cell = mine.nextColumn_(mine.DASH.REVIEW_COL, 4) + '4';
+    const cell = mine.nextColumn_(mine.DASH.TREND_COL, 4) + '4';
     sheet.getRange(cell).setValue('my own note');
 
     mine.setup();
@@ -459,7 +529,7 @@ describe('the charts', () => {
     [...dash.getCharts(), ...reports.getCharts()].forEach((chart) => {
       if (!chart.numHeaders) return;
       const [start] = chart.ranges[0].split(':');
-      expect(Number(start.replace(/\D/g, ''))).toBe(c.DASH.BLOCK_ROW - 1);
+      expect(Number(start.replace(/\D/g, ''))).toBe(c.DASH.FEED_ROW - 1);
     });
   });
 
@@ -574,7 +644,7 @@ describe('what the sheet tells you to do', () => {
 
     // A stale block left behind by an older layout is two dashboards on one
     // tab, both plausible. The last generated column must be cleared.
-    const last = c.nextColumn_(c.DASH.REVIEW_COL, 3);
+    const last = c.nextColumn_(c.DASH.TREND_COL, 1);
     sheet.getRange(last + '9').setValue('stale');
     c.setup();
     expect(sheet.getRange(last + '9').getValue()).not.toBe('stale');
@@ -723,5 +793,65 @@ describe('the reports tab', () => {
     const before = reports.snapshot();
     c.setup();
     expect(c.__spreadsheet.getSheetByName('reports').snapshot()).toEqual(before);
+  });
+});
+
+/**
+ * `recent` — the view that exists because `transactions` is never sorted.
+ *
+ * A partial sort destroys row identity and every formula reference at once, so
+ * the record of truth is append-only and the newest row is the bottom row of
+ * four thousand. Sorting a copy is the only safe way to skim it.
+ */
+describe('the recent tab', () => {
+  const c = load();
+  c.setup();
+  const recent = c.__spreadsheet.getSheetByName('recent');
+
+  it('sorts newest first, which is the whole point', () => {
+    [c.recentBookedFormula(), c.recentPendingFormula()].forEach((formula) => {
+      expect(formula).toMatch(/order by \w+ desc/);
+    });
+  });
+
+  it('tests for null rather than comparing a mostly-empty column to text', () => {
+    // Several tabs carry an open-ended ARRAYFORMULA, so a range reaches the
+    // sheet's last row rather than the last record and QUERY types a column by
+    // majority. `<> ''` is the trap that produced in_reports; `is not null`
+    // needs no agreement about the column's type.
+    [c.recentBookedFormula(), c.recentPendingFormula()].forEach((formula) => {
+      expect(formula).toContain('is not null');
+      expect(formula).not.toContain("<> ''");
+    });
+  });
+
+  it('bounds both blocks so the booked one cannot land on the pending one', () => {
+    expect(c.recentPendingFormula()).toContain(`limit ${c.RECENT.PENDING_LIMIT}`);
+    expect(c.recentBookedFormula()).toContain(`limit ${c.RECENT.BOOKED_LIMIT}`);
+    expect(c.RECENT.PENDING_ROW + c.RECENT.PENDING_LIMIT + 2)
+      .toBeLessThanOrEqual(c.RECENT.BOOKED_ROW);
+  });
+
+  it('reads amount_eur from transactions and the raw amount from pending', () => {
+    // `pending` carries only the columns code writes — no amount_eur exists
+    // there — so the currency is named beside it rather than implied.
+    expect(c.recentBookedFormula()).toContain(c.colOf(c.TX_COLUMNS, 'amount_eur'));
+    expect(c.recentPendingFormula()).toContain("'Cur'");
+  });
+
+  it('builds every reference whole, with its !', () => {
+    // `TABS.PENDING + '$A$2'` reads correctly at the call site and produces
+    // something that does not parse. That has shipped once already.
+    expect(c.pendingQueryRange_()).toBe(
+      'pending!$A$2:$' + c.colOf(c.PENDING_COLUMNS, 'imported_at'));
+  });
+
+  it('writes both blocks and sweeps a layout that has since moved', () => {
+    expect(recent.getRange('A' + c.RECENT.PENDING_ROW).getFormula()).toContain('pending!');
+    expect(recent.getRange('A' + c.RECENT.BOOKED_ROW).getFormula()).toContain('transactions!');
+
+    recent.getRange('A' + (c.RECENT.BOOKED_ROW + 1)).setValue('stale');
+    c.setup();
+    expect(recent.getRange('A' + (c.RECENT.BOOKED_ROW + 1)).getValue()).not.toBe('stale');
   });
 });

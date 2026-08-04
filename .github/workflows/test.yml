@@ -9,9 +9,18 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to a commit SHA rather than a tag, with the tag in a comment.
+      # A tag is a movable pointer: whoever controls the action repository can
+      # repoint `v7` at new code, and every workflow that trusts it runs that
+      # code on the next push — with this repository's contents already checked
+      # out. Nothing here holds a secret worth stealing, but the repo is going
+      # public and a public workflow is a public example.
+      #
+      # The cost is that Dependabot-style updates become a real diff you read
+      # rather than one you never see. That is the point.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm

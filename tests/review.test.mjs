@@ -274,7 +274,7 @@ describe('the write-back', () => {
     expect(() => c.onEdit(broken)).not.toThrow();
     const anomalies = c.readRecords_(c.__spreadsheet.getSheetByName('_anomalies'),
       c.ANOMALY_COLUMNS, 1);
-    expect(anomalies.at(-1).detail).toContain('review write-back failed');
+    expect(anomalies.at(-1).detail).toContain('onEdit write-back failed');
   });
 });
 

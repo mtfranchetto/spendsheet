@@ -201,7 +201,7 @@ function buildDashboardCharts_(ss) {
 
   clearCharts_(sheet);
 
-  var first = DASH.BLOCK_ROW;
+  var first = DASH.FEED_ROW;
   var trendEnd = first + trendDays_() - 1;
 
   // "Where did it go", in one look. Two ranges rather than one because the
@@ -642,4 +642,36 @@ function formatReports_(sheet) {
   // is left as text rather than being wrapped into invisibility.
   sheet.getRange('E' + REPORT.QUERY_ROW + ':E' + (REPORT.QUERY_ROW + 1))
     .setNumberFormat('@');
+
+  markReportInputs_(sheet);
+}
+
+/**
+ * The eight cells on this tab that are yours, coloured so they read as inputs.
+ *
+ * Nothing else here is editable — every other cell is a formula or a label —
+ * and until now nothing said so. A dropdown looks exactly like a result until
+ * you happen to tap it, which is how a filtering UI becomes a tab people scroll
+ * past. `DASH_COLOR.INPUT` is the same blue the `review` tab uses for the two
+ * cells you act on there, so "blue means this one is mine" is one rule across
+ * the book rather than a per-tab convention.
+ *
+ * A flat background rather than a conditional-format rule: which cells are
+ * inputs is a fact about the layout, not about the data, so there is nothing
+ * for a rule to test and nothing that can make it stop being true.
+ */
+function markReportInputs_(sheet) {
+  var last = REPORT.FILTER_ROW + REPORT_FILTERS.length - 1;
+
+  sheet.getRange('B' + REPORT.FILTER_ROW + ':B' + last)
+    .setBackground(DASH_COLOR.INPUT);
+  sheet.getRange('B' + REPORT.CUSTOM_ROW + ':B' + (REPORT.CUSTOM_ROW + 1))
+    .setBackground(DASH_COLOR.INPUT);
+
+  sheet.getRange('A1').setNote(
+    'The blue cells are the ones you change. Everything else is a formula.\n\n' +
+    'Custom from / Custom to are read only when Period is Custom, so a date ' +
+    'left in one of them does nothing until you choose it.\n\n' +
+    'E6 holds the query the block below actually runs — read it when a report ' +
+    'comes back empty and you want to know whether it is the filter or the data.');
 }

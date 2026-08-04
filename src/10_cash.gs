@@ -199,3 +199,122 @@ function categoryKinds_() {
   });
   return kinds;
 }
+
+// ---------------------------------------------------------------------------
+// One row, and it lands straight away
+// ---------------------------------------------------------------------------
+
+/**
+ * `cash_entry` as a form rather than as a spreadsheet.
+ *
+ * The original design was a tab you appended rows to, drained by the nightly
+ * sync. Mechanically that is still what happens, and it is still the backstop.
+ * As an *interface* it was wrong for the actual usage, which is roughly one
+ * entry a day: you typed a row, nothing visible happened, and it appeared in
+ * `transactions` some hours later. A whole tab to hold a queue of one, with a
+ * delay you cannot see the end of.
+ *
+ * So there is one input row — row 2 — and the moment it has the two things
+ * that make it a transaction, a simple `onEdit` drains it and empties the row
+ * again. Type, and it is in. What you typed is then on `recent`, at the top,
+ * which is where you would look anyway.
+ *
+ * Three things this deliberately keeps:
+ *
+ *   **The sync still drains.** If the trigger fails — and a simple `onEdit`
+ *   fails silently, with nowhere on a phone for an error to appear — the row
+ *   stays exactly where it is and the next sync picks it up. The immediate
+ *   path is an optimisation over a mechanism that already worked, never a
+ *   replacement for it. That is why it reuses `drainCashEntries_` whole rather
+ *   than writing a second, faster path to `transactions`.
+ *
+ *   **A row is only cleared after the append has landed.** Same ordering as
+ *   `processed`: a failure halfway leaves the entry there to be retried.
+ *
+ *   **A lock.** This is the one `onEdit` in the project that *appends* to
+ *   `transactions` rather than rewriting two cells of an existing row, so the
+ *   argument that it cannot collide with a running sync no longer holds. It
+ *   takes the same lock the sync does and gives up rather than waiting: giving
+ *   up leaves the row for the sync, which is about to append it anyway.
+ */
+var CASH_CONFIRM_CELL = 'H2';
+var CASH_CONFIRM_LABEL = 'H1';
+
+function onCashEntryEdit_(sheet, range) {
+  // Row 1 is the header and column H is where this function's own confirmation
+  // goes — writing there must not retrigger it.
+  if (range.getRow() < 2) return;
+  if (range.getColumn() >= columnIndexOf_(CASH_CONFIRM_CELL.charAt(0))) return;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+
+  try {
+    var now = new Date();
+    var result = drainCashEntries_(readExistingIndex_(sheetOrThrow_(TABS.TRANSACTIONS)), now);
+    if (!result.inserted) return;
+
+    clearDrainedCashRows_(sheet);
+    sheet.getRange(CASH_CONFIRM_CELL).setValue(
+      result.inserted + ' added ' + Utilities.formatDate(
+        now, readConfig_().timezone || 'Europe/Rome', 'HH:mm') + ' — see recent');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Empty the rows that made it into `transactions`.
+ *
+ * Only the ones carrying a `processed` stamp, which `drainCashEntries_` writes
+ * last of all. An incomplete row — a date typed, an amount not yet — is
+ * someone mid-entry and is left exactly alone.
+ *
+ * This is the one behaviour the old design had that is genuinely lost: a
+ * processed row used to stay on the tab as a record of what you had entered.
+ * It is not much of a loss, because that record is `transactions` and it is
+ * one tap away on `recent`, and it is what buys the tab being empty and ready
+ * every time you open it.
+ */
+function clearDrainedCashRows_(sheet) {
+  var last = sheet.getLastRow();
+  if (last < 2) return;
+
+  var column = colIndex_(CASH_ENTRY_COLUMNS, 'processed');
+  var stamps = sheet.getRange(2, column, last - 1, 1).getValues();
+
+  for (var i = stamps.length - 1; i >= 0; i--) {
+    if (isBlankCell_(stamps[i][0])) continue;
+    sheet.getRange(i + 2, 1, 1, CASH_ENTRY_COLUMNS.length).clearContent();
+  }
+}
+
+/**
+ * The form's presentation: one obvious row, and nothing that looks like data.
+ *
+ * `processed` is hidden because it is now machinery rather than a column you
+ * read — the row it stamps is cleared moments later. It stays in the schema
+ * because the sync's drain still writes it, and because it is what
+ * `clearDrainedCashRows_` reads to know which rows are safe to empty.
+ */
+function buildCashEntryForm_(ss) {
+  var sheet = ss.getSheetByName(TABS.CASH_ENTRY);
+  if (!sheet) return;
+
+  sheet.getRange(2, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
+    .setBackground(DASH_COLOR.INPUT);
+
+  sheet.getRange(CASH_CONFIRM_LABEL).setValue('Last added').setFontWeight('bold');
+  sheet.getRange(CASH_CONFIRM_CELL).setFontColor('#5f6368');
+
+  sheet.getRange('A1').setNote(
+    'Type one entry on the blue row. It goes into transactions as soon as it ' +
+    'has an account and an amount, and the row empties itself.\n\n' +
+    'Leave the date blank for today. Type the amount without a sign — a bare ' +
+    'number is spending, and an Income or Transfer category flips it.\n\n' +
+    'If the row does not clear, nothing is lost: the nightly sync drains it.');
+
+  sheet.hideColumns(colIndex_(CASH_ENTRY_COLUMNS, 'processed'));
+  sheet.setColumnWidth(colIndex_(CASH_ENTRY_COLUMNS, 'note'), 280);
+  sheet.setColumnWidth(columnIndexOf_(CASH_CONFIRM_CELL.charAt(0)), 220);
+}

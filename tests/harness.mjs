@@ -174,6 +174,7 @@ class FakeRange {
 
   setFontWeight(w) { this.sheet.record('fontWeight', { a1: this.a1(), w }); return this; }
   setBackground(b) { this.sheet.record('background', { a1: this.a1(), b }); return this; }
+  setFontColor(c) { this.sheet.record('fontColor', { a1: this.a1(), c }); return this; }
 
   protect() {
     const p = new FakeProtection(this);
@@ -240,9 +241,16 @@ class FakeChartBuilder {
 }
 
 class FakeConditionalFormatRuleBuilder {
-  constructor() { this.rule = { formula: null, background: null, ranges: [] }; }
+  constructor() {
+    this.rule = {
+      formula: null, background: null, fontColor: null,
+      strikethrough: false, ranges: []
+    };
+  }
   whenFormulaSatisfied(formula) { this.rule.formula = formula; return this; }
   setBackground(colour) { this.rule.background = colour; return this; }
+  setFontColor(colour) { this.rule.fontColor = colour; return this; }
+  setStrikethrough(on) { this.rule.strikethrough = on; return this; }
   setRanges(ranges) { this.rule.ranges = ranges.map((r) => r.getA1Notation()); return this; }
   build() { return this.rule; }
 }

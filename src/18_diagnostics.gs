@@ -119,14 +119,26 @@ function formulaAnchors_() {
       anchors.push([TABS.DASHBOARD, 'B' + (DASH.HEALTH_ROW + i)]);
       anchors.push([TABS.DASHBOARD, 'B' + (DASH.MONTH_ROW + i)]);
     }
-    [DASH.ACCOUNTS_COL, DASH.CATEGORY_COL, DASH.CATEGORY_VALUE_COL,
-      DASH.MONTHLY_COL, DASH.TREND_COL, DASH.LABEL_COL,
-      DASH.REVIEW_COL].forEach(function (column) {
-      anchors.push([TABS.DASHBOARD, column + DASH.BLOCK_ROW]);
+    // The stacked blocks all start in A and are told apart by their row.
+    [DASH.REVIEW_ROW, DASH.ACCOUNTS_ROW, DASH.LABELS_ROW].forEach(function (row) {
+      anchors.push([TABS.DASHBOARD, 'A' + row]);
     });
-    anchors.push([TABS.DASHBOARD, nextColumn_(DASH.MONTHLY_COL, 1) + DASH.BLOCK_ROW]);
-    anchors.push([TABS.DASHBOARD, nextColumn_(DASH.MONTHLY_COL, 2) + DASH.BLOCK_ROW]);
-    anchors.push([TABS.DASHBOARD, nextColumn_(DASH.TREND_COL, 1) + DASH.BLOCK_ROW]);
+    anchors.push([TABS.DASHBOARD, DASH.SYNC_COL + DASH.ACCOUNTS_ROW]);
+    anchors.push([TABS.DASHBOARD, DASH.CONSENT_COL + DASH.ACCOUNTS_ROW]);
+    anchors.push([TABS.DASHBOARD, DASH.FLAG_COL + DASH.ACCOUNTS_ROW]);
+
+    // The hidden feed. Every one of these is a chart's domain or series, and a
+    // chart whose range went blank does not say so — it just stops having bars.
+    [DASH.CATEGORY_COL, DASH.CATEGORY_VALUE_COL, DASH.MONTHLY_COL,
+      nextColumn_(DASH.MONTHLY_COL, 1), nextColumn_(DASH.MONTHLY_COL, 2),
+      DASH.TREND_COL, nextColumn_(DASH.TREND_COL, 1)].forEach(function (column) {
+      anchors.push([TABS.DASHBOARD, column + DASH.FEED_ROW]);
+    });
+  }
+
+  if (typeof RECENT !== 'undefined') {
+    anchors.push([TABS.RECENT, 'A' + RECENT.PENDING_ROW]);
+    anchors.push([TABS.RECENT, 'A' + RECENT.BOOKED_ROW]);
   }
 
   if (typeof REPORT !== 'undefined') {
