@@ -373,20 +373,34 @@ function makeRoomForNewColumns_(sheet, name, report) {
   report.newColumns.forEach(function (entry) {
     if (entry.tab !== name || entry.index > sheet.getMaxColumns()) return;
 
+    var range = sheet.getRange(2, entry.index, height, 1);
+    var values = range.getValues();
+    var formulas = range.getFormulas();
+
+    // A formula in row 2 settles it: the column is already ours, and every
+    // value under it is that formula's spill.
+    //
+    // The rows below cannot be consulted at all, because a spilled cell and a
+    // cell you typed are indistinguishable through this API — `getValues()`
+    // returns the computed value for both, and `getFormulas()` returns `''`
+    // for both, since only the anchor holds the formula. An earlier version
+    // asserted the opposite ("an array of ours that expanded leaves computed
+    // cells, never stored ones") and read a live spill as somebody's data.
+    //
+    // What made that reachable was a **rename**. `recordNewColumns_` calls a
+    // column new when its name is absent from the header row, so renaming
+    // `amount_eur` to `amount_base` presented an occupied, working, spilling
+    // column as a new one — and this function dutifully inserted a column to
+    // get out of the way of our own output. Every derived column shifted one
+    // place right of its header, which is the single edit this tab cannot
+    // survive, and it took two tabs' worth of formulas down with it.
+    if (formulas[0][0]) return;
+
     // Formulas as well as values. A column of yours built from formulas shows
     // blank in `getValues()` on every row the formula returns "" for, so a
     // value-only test calls it empty and flattens it — the one kind of column
     // where the loss is total rather than recoverable by re-typing.
-    var range = sheet.getRange(2, entry.index, height, 1);
-    var values = range.getValues();
-    var formulas = range.getFormulas();
     var occupied = values.some(function (row, i) {
-      // Row 2 is where our own anchor lives, so a formula there is ours and
-      // says nothing about whose slot this is — on a re-run it is always
-      // present. Everything below it does say: an array of ours that expanded
-      // leaves computed cells, never stored ones, and one that did not expand
-      // is the very failure being prevented.
-      if (i === 0 && formulas[0][0]) return false;
       return !isBlankCell_(row[0]) || formulas[i][0];
     });
     if (!occupied) return;

@@ -139,6 +139,10 @@ describe('a column added by an upgrade', () => {
     const column = ctx.colIndex_(ctx.TX_COLUMNS, 'in_reports');
 
     tx.getRange(1, column).setValue('');
+    // A book from before the column existed has no anchor of ours in row 2
+    // either. Leaving one there modelled a state that cannot occur, and it is
+    // the state `makeRoomForNewColumns_` now reads as proof the column is ours.
+    tx.getRange(2, column).setFormula('');
     tx.showColumns(column);
     return { ctx, tx, column };
   }
@@ -198,9 +202,12 @@ describe('a column of yours in the slot the schema grew into', () => {
     const last = name || ctx.TX_COLUMNS[ctx.TX_COLUMNS.length - 1];
     const column = ctx.colIndex_(ctx.TX_COLUMNS, last);
 
-    // Blank the header, which is what a book built before the column looks
-    // like. Without this the column is not new and nothing makes room.
+    // Blank the header and the anchor, which is what a book built before the
+    // column looks like. Without the header the column is not new and nothing
+    // makes room; without clearing row 2, an anchor of ours sits over somebody
+    // else's column, which is a state no real book can be in.
     tx.getRange(1, column).setValue('');
+    tx.getRange(2, column).setFormula('');
 
     tx.getRange(1, column).setValue('my_flag');
     tx.getRange(3, column).setValue(value);
@@ -242,6 +249,37 @@ describe('a column of yours in the slot the schema grew into', () => {
 
     ctx.setup();
     expect(tx.getRange(3, column + 1).getFormula()).toBe('=1+1');
+  });
+
+  /**
+   * A rename is the case that got this wrong on a real book.
+   *
+   * `recordNewColumns_` calls a column new when its name is absent from the
+   * header row, so renaming `amount_eur` to `amount_base` presented a live,
+   * spilling column of ours as a new one. The occupancy test then read the
+   * spill as somebody's data — a spilled cell reports a value and no formula,
+   * exactly like a typed one — and inserted a column to get out of the way of
+   * our own output, shifting every derived column one place off its header.
+   */
+  it('does not insert a column when a rename makes an existing one look new', () => {
+    const ctx = load();
+    ctx.setup();
+    const tx = ctx.__spreadsheet.getSheetByName('transactions');
+    const column = ctx.colIndex_(ctx.TX_COLUMNS, 'amount_base');
+    const before = tx.getMaxColumns();
+
+    // The old name on the header, our anchor still in row 2, and the values it
+    // spilled sitting underneath — which is what `getValues()` sees there.
+    tx.getRange(1, column).setValue('amount_eur');
+    tx.getRange(3, column).setValue(12.5);
+    tx.getRange(4, column).setValue(-4);
+
+    const report = ctx.setup();
+
+    expect(report.movedColumns || []).toEqual([]);
+    expect(tx.getMaxColumns()).toBe(before);
+    expect(tx.getRange(1, column).getValue()).toBe('amount_base');
+    expect(tx.getRange(2, column).getFormula()).toContain('ARRAYFORMULA');
   });
 
   it('does not insert a column when the slot is genuinely empty', () => {
