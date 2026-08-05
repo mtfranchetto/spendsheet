@@ -793,3 +793,49 @@ describe('the closed vocabularies', () => {
     });
   });
 });
+
+/**
+ * A subcategory has to name exactly one parent.
+ *
+ * `category` resolves a `subcategory_override` through a VLOOKUP, which takes
+ * the first match. And `child_list` — the range every subcategory dropdown
+ * points at — is a SORTED UNIQUE list, so two parents sharing a child name are
+ * one indistinguishable entry before the lookup is even reached.
+ *
+ * The seed had two: `Home` under both Shopping and Insurance, `Books` under
+ * both Shopping and Education. Renamed rather than disambiguated at lookup
+ * time, because "which Home did you mean" is not a question a dropdown asks.
+ */
+describe('the subcategory vocabulary', () => {
+  const c = load();
+
+  it('gives every subcategory exactly one parent', () => {
+    const parents = new Map();
+    c.DEFAULT_CATEGORIES.forEach(([category, subcategory]) => {
+      if (!parents.has(subcategory)) parents.set(subcategory, new Set());
+      parents.get(subcategory).add(category);
+    });
+
+    const ambiguous = [...parents.entries()]
+      .filter(([, set]) => set.size > 1)
+      .map(([child, set]) => `${child} under ${[...set].join(' and ')}`);
+
+    expect(ambiguous).toEqual([]);
+  });
+
+  it('leaves no seeded rule or mapping pointing at a name that was renamed', () => {
+    const known = new Set(c.DEFAULT_CATEGORIES.map(([parent, child]) => `${parent}|${child}`));
+
+    // A rule carries category at 5 and subcategory at 6; a category map row
+    // carries them at 2 and 3. Either would quietly stop matching the tab.
+    c.DEFAULT_RULES.forEach((rule) => {
+      if (!rule[6]) return;
+      expect(known, `rule ${rule[0]}: ${rule[5]} / ${rule[6]}`)
+        .toContain(`${rule[5]}|${rule[6]}`);
+    });
+    c.DEFAULT_CATEGORY_MAP.forEach((row) => {
+      if (!row[3]) return;
+      expect(known, `${row[1]}: ${row[2]} / ${row[3]}`).toContain(`${row[2]}|${row[3]}`);
+    });
+  });
+});

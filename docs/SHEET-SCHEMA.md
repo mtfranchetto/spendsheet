@@ -104,9 +104,9 @@ Append-only. **Booked transactions only** (see `pending` below).
 | Q | `category_auto` | cascade | tiers 2–5 |
 | R | `subcategory_auto` | cascade | |
 | S | `category_source` | cascade | which tier decided — `override`/`transfer`/`memory`/`mcc`/`rule`/`unclassified` |
-| T | `category_override` | **you** | code never touches this |
-| U | `category` | formula | override if present, else auto |
-| V | `subcategory` | formula | blank when you override — a subcategory from a different parent rolls up wrongly |
+| T | `category_override` | **you** | code never touches this. Sets the parent and leaves the subcategory blank |
+| U | `category` | formula | `category_override`, else the parent of `subcategory_override`, else auto |
+| V | `subcategory` | formula | `subcategory_override`, else blank when you set a category, else auto |
 | W | `type` | formula | `expense`/`income`/`transfer`, from the category's `kind` |
 | X | `transfer_group` | cascade | pairs the two legs of an internal move |
 | Y | `notes` | **you** | |
@@ -114,6 +114,7 @@ Append-only. **Booked transactions only** (see `pending` below).
 | AA | `labels` | **you** | comma-separated, cross-cutting. Never affects a total |
 | AB | `confirmed` | **you** | you agreed with the category. The only rows memory is learned from |
 | AC | `in_reports` | formula | whether the row counts as spending. **Every money block reads this** |
+| AD | `subcategory_override` | **you** | the one to reach for — it names the category too |
 
 `amount_base` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry plus a dashboard count is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
 
@@ -289,29 +290,29 @@ See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 
 ### Typing a cash entry
 
-`cash_entry` is `date` · `account` · `amount` · `category` · `note` · `processed`, and it is a **form rather than a queue**: you type on the blue row 2, and a simple `onEdit` moves it into `transactions` and empties the row again the moment it has an account and an amount. The sync still drains it at the end of every run, which is the backstop — a simple trigger fails silently, so the row staying put is how a failed one is recovered rather than lost.
+`cash_entry` is `date` · `account` · `amount` · `category` · `subcategory` · `note` · `labels` · `processed`, and it is a **form rather than a queue**: you type on the blue row 2, and a simple `onEdit` moves it into `transactions` and empties the row again the moment it has an account and an amount. The sync still drains it at the end of every run, which is the backstop — a simple trigger fails silently, so the row staying put is how a failed one is recovered rather than lost.
 
 **Type the amount without a sign.** A bare number is spending, which is what almost every cash entry is — standing in a bar you type `3`, not `-3`. Picking an **Income** or **Transfer** category counts it the other way, so an ATM withdrawal *adds* to the wallet while the matching debit on the bank side nets the pair to zero. A minus sign you type deliberately always wins, which is how you record cash going back into a bank. The rule is also a note on the `amount` header, visible by tapping it in mobile Sheets.
 
 The category you pick lands in `category_override`, not `category_auto`: you chose it, so the cascade doesn't get to overrule it.
 
+### Correcting a category is one choice, not two
+
+Pick a **subcategory** and the category follows. Every subcategory names exactly one parent in the `categories` tab, so `Groceries` already says `Food & Drink`, and asking you to set both was asking you to type something the sheet could work out. `subcategory_override` is the column to reach for — on `review`, on `transactions`, and on `cash_entry`.
+
+`category_override` stays for the one thing the pair cannot express: a row that belongs to a parent and to none of its children in particular. Set it and the subcategory goes blank, because a subcategory inherited from a parent you have just overruled reads as real and rolls up wrongly.
+
+This makes a subcategory's **name** load-bearing: it has to identify one parent. The dropdown is a sorted, de-duplicated list of every subcategory in the tab, so two parents sharing a child name were always one indistinguishable entry — the seed had `Home` under both Shopping and Insurance, and `Books` under both Shopping and Education. They are now `Home insurance` and `Textbooks`. If you add your own and collide, the smoke test **every subcategory names one category** says so by name; nothing else will, because the lookup silently takes the first match.
+
 A row missing an account or an amount is **left unprocessed rather than rejected** — on a phone that's someone mid-typing, not an error. It's picked up whenever it's finished, and the run message says how many are waiting so it can't sit there unnoticed. Columns can be filled in any order; a row whose date you haven't typed yet is still visible to the drain.
 
 ### `dashboard`, `recent`
 
-An item needs **three occurrences** at a recognisable cadence. Two is a coincidence: with one gap between them, every pair fits *some* cadence perfectly, so the detector can't tell a subscription from two unrelated payments a month apart.
-
-Weekly, fortnightly, 4-weekly, quarterly and yearly are matched on the **median** gap — one missed payment leaves a double-length gap that would drag a mean far enough to match nothing, and a subscription you paused for a month is still a subscription. Monthly is detected separately, by **day-of-month stability**, because Jan 15 → Feb 15 is 31 days and Feb 15 → Mar 15 is 28. Both explanations are scored and the better one wins; a tie goes to monthly, which is the case where a charge on the 15th also fits 4-weekly exactly.
-
-`active` is **yours**, and it survives a re-detect. It's how you say "yes this repeats, and no, don't forecast it" — and it's the column the projection reads.
-
-Opening is **liquid** balance, not net worth: bank and cash only. A projection asks whether money runs out, and a flat you can't sell by Thursday doesn't stop that happening.
-
 **`dashboard`**, **`reports`** and **`review`** have a page of their own: [`docs/REPORTS.md`](REPORTS.md). The short version is that all three are formulas, checkboxes and dropdowns — never a menu item — because **custom menus, sidebars and dialogs do not exist in the Google Sheets mobile app**, and those are the tabs you open on a phone.
 
-`review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_base` · `guess` · `why` · `confirmed` · `category_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
+`review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_base` · `guess` · `why` · `confirmed` · `category_override` · `subcategory_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
 
-**`cash_entry`** — `date` · `account` · `amount` · `category` · `note` · `processed`, with dropdowns, designed for the Sheets mobile app. One blue input row, drained on the edit that completes it and again by the daily trigger. `processed` is hidden; the row it stamps is cleared moments later.
+**`cash_entry`** — `date` · `account` · `amount` · `category` · `subcategory` · `note` · `labels` · `processed`, with dropdowns, designed for the Sheets mobile app. One blue input row, drained on the edit that completes it and again by the daily trigger. `processed` is hidden; the row it stamps is cleared moments later.
 
 **`recent`** — no schema of its own. Two `QUERY` blocks over `pending` and `transactions`, newest first, because `transactions` is append-only and never sorted.
 

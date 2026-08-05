@@ -151,9 +151,19 @@ var TX_COLUMNS = TX_COLUMNS_CODE.concat(TX_COLUMNS_DERIVED);
  * can be rebuilt from scratch without losing the connection to what it
  * describes.
  *
- * `confirmed` and `category_override` are yours. Everything else is a copy,
- * and a copy going stale costs nothing because the tab is rewritten rather
- * than maintained.
+ * `confirmed`, `category_override` and `subcategory_override` are yours.
+ * Everything else is a copy, and a copy going stale costs nothing because the
+ * tab is rewritten rather than maintained.
+ *
+ * `subcategory_override` is the one you normally touch. A subcategory names
+ * its parent, so picking `Groceries` sets the category to `Food & Drink` on
+ * its own — correcting a row is one choice, not two. `category_override` stays
+ * for the case the pair cannot express: a row that belongs to a parent and to
+ * none of its children in particular.
+ *
+ * Inserted mid-list rather than appended, which is safe *here* and nowhere
+ * else: this tab is rebuilt wholesale from `transactions` on every refresh, so
+ * no row survives a schema change to be misaligned by one.
  */
 var REVIEW_COLUMNS = [
   'uid',                 // A  hidden; the write-back key
@@ -163,9 +173,10 @@ var REVIEW_COLUMNS = [
   'amount_base',         // E
   'guess',               // F  what the cascade decided
   'why',                 // G  which tier decided it
-  'confirmed',           // H  yours — a checkbox
-  'category_override',   // I  yours — a dropdown
-  'status'               // J  written by the trigger, so a phone gets feedback
+  'confirmed',              // H  yours — a checkbox
+  'category_override',      // I  yours — a dropdown
+  'subcategory_override',   // J  yours — a dropdown, and the one to reach for
+  'status'                  // K  written by the trigger, so a phone gets feedback
 ];
 
 /** pending is rewritten wholesale every sync, so nothing here is worth annotating. */
@@ -239,7 +250,34 @@ var RULE_COLUMNS = [
  * `Grocery`. A misspelling here is not caught by anything: it becomes a
  * subcategory with one transaction against it, sitting next to the real one.
  */
-var CATEGORY_COLUMNS = ['category', 'subcategory', 'kind', 'icon', 'parent_list', 'child_list'];
+/**
+ * categories — the taxonomy, plus the derived columns the dropdowns point at.
+ *
+ * `child_key` and `child_parent` are a reversed copy of `subcategory` and
+ * `category`, and they exist for one reason: VLOOKUP cannot look left, and
+ * INDEX/MATCH does not vectorise inside an ARRAYFORMULA. Picking a subcategory
+ * has to name its parent, and this is the only pair of columns a single
+ * vectorised lookup can cross.
+ *
+ * Which makes a subcategory's name load-bearing: it must identify exactly one
+ * parent. `child_list` was already a SORTED UNIQUE list, so two parents sharing
+ * a child name have always collapsed to one indistinguishable dropdown entry —
+ * `Insurance > Home` and `Shopping > Home` were one choice, and the seed had
+ * two such pairs. Both were renamed rather than disambiguated at lookup time,
+ * because "which Home did you mean" is not a question a dropdown can ask.
+ * `tests/categorize.test.mjs` fails on a duplicate, and so does a smoke test,
+ * because the tab is yours to extend.
+ */
+var CATEGORY_COLUMNS = [
+  'category',      // A
+  'subcategory',   // B
+  'kind',          // C
+  'icon',          // D
+  'parent_list',   // E  UNIQUE(category), seed order
+  'child_list',    // F  SORTED(UNIQUE(subcategory))
+  'child_key',     // G  = subcategory, so a lookup can start here
+  'child_parent'   // H  = category, the answer that lookup returns
+];
 
 /**
  * labels — the cross-cutting axis a category cannot express.
@@ -522,11 +560,11 @@ var DEFAULT_CATEGORIES = [
   ['Entertainment', 'Accommodation', 'expense', '🏨'],
   ['Entertainment', 'Holiday', 'expense', '🏖️'],
   ['Education', 'Courses', 'expense', '🎓'],
-  ['Education', 'Books', 'expense', '📖'],
+  ['Education', 'Textbooks', 'expense', '📖'],
   // Insurance is its own parent rather than a child of Health. Home and
   // vehicle cover are the bulk of it for most people, and filing those under
   // Health inflates a category you read as "am I spending more on being ill".
-  ['Insurance', 'Home', 'expense', '🛡️'],
+  ['Insurance', 'Home insurance', 'expense', '🛡️'],
   ['Insurance', 'Vehicle', 'expense', '🛡️'],
   ['Insurance', 'Health', 'expense', '🛡️'],
   ['Insurance', 'Other insurance', 'expense', '🛡️'],
@@ -808,7 +846,7 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Others', 'Other', 'Uncategorised'],
   ['budgetbakers', 'Parking', 'Transport', 'Tolls & Parking'],
   ['budgetbakers', 'Pizza', 'Food & Drink', 'Restaurants'],
-  ['budgetbakers', 'Property insurance', 'Insurance', 'Home'],
+  ['budgetbakers', 'Property insurance', 'Insurance', 'Home insurance'],
   ['budgetbakers', 'Public transport', 'Transport', 'Public transport'],
   ['budgetbakers', 'Refunds (tax, purchase)', 'Income', 'Refund'],
   ['budgetbakers', 'Rental income', 'Income', 'Rent received'],

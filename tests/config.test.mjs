@@ -127,6 +127,37 @@ describe('categoryFormula', () => {
     const f = ctx.subcategoryFormula();
     expect(f).toContain('>0,""');
   });
+
+  it('takes the parent from the subcategory when only that is set', () => {
+    // A subcategory names exactly one parent, so correcting a row is one
+    // choice. Asking for both was asking you to type what the sheet knows.
+    const f = ctx.categoryFormula();
+    const sub = ctx.colOf(ctx.TX_COLUMNS, 'subcategory_override');
+    const override = ctx.colOf(ctx.TX_COLUMNS, 'category_override');
+
+    expect(f).toContain(`VLOOKUP($${sub}$2`);
+    expect(f).toContain(ctx.childParentRange_());
+    // category_override still wins: it is the only way to say "this parent,
+    // and none of its children in particular".
+    expect(f.indexOf(`$${override}$2`)).toBeLessThan(f.indexOf(`$${sub}$2`));
+  });
+
+  it('falls back to the cascade for a subcategory not on the tab yet', () => {
+    // The dropdown allows a value off the list, so this is a normal state —
+    // and blanking the category of every such row would empty the reports
+    // over a spelling you were about to fix.
+    const auto = ctx.colOf(ctx.TX_COLUMNS, 'category_auto');
+    expect(ctx.categoryFormula()).toContain(`IFERROR(VLOOKUP`);
+    expect(ctx.categoryFormula()).toContain(`),$${auto}$2`);
+  });
+
+  it('crosses the categories tab with VLOOKUP, which vectorises', () => {
+    // INDEX returns one value inside an ARRAYFORMULA however tall its argument
+    // is — the first row's answer repeated down the column, right on row 2 and
+    // wrong everywhere else.
+    expect(ctx.categoryFormula()).not.toContain('INDEX');
+    expect(ctx.categoryColumnCopyFormula_('category')).toContain('ARRAYFORMULA');
+  });
 });
 
 describe('accountBalanceFormula', () => {

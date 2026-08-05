@@ -180,7 +180,7 @@ describe('the category map', () => {
     // anything about health spending.
     const map = new Map(preset(ctx.DEFAULT_CATEGORY_MAP).map((r) => [r[1], r.slice(2)]));
 
-    expect(map.get('Property insurance')).toEqual(['Insurance', 'Home']);
+    expect(map.get('Property insurance')).toEqual(['Insurance', 'Home insurance']);
     expect(map.get('Vehicle insurance')).toEqual(['Insurance', 'Vehicle']);
   });
 

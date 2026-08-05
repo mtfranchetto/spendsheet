@@ -66,6 +66,10 @@ function runSmokeTests() {
     return describeInReports_();
   }));
 
+  results.push(smokeTest_('sheet', 'every subcategory names one category', function () {
+    return describeSubcategoryParents_();
+  }));
+
   results.push(smokeTest_('sheet', 'every chart points at data', function () {
     var empty = emptyCharts_();
     if (empty.length) throw new Error('nothing to plot in ' + empty.join(', '));
@@ -238,6 +242,47 @@ function describeInReports_() {
     .getValues().filter(function (row) { return row[0] === true; }).length;
 
   return included + ' of ' + (last - 1) + ' rows count as spending';
+}
+
+/**
+ * Whether a subcategory still identifies exactly one parent.
+ *
+ * `category` resolves a `subcategory_override` to its parent through a
+ * VLOOKUP, which takes the **first** match and says nothing about the second.
+ * Two parents sharing a child name therefore produce a category that is right
+ * for one of them and quietly wrong for the other — and `child_list`, which
+ * every subcategory dropdown points at, is a SORTED UNIQUE list, so the two
+ * are already one indistinguishable entry before the lookup is reached.
+ *
+ * The seed is held to this by `tests/categorize.test.mjs`. This exists because
+ * the tab is yours to extend, and the natural way to extend it — a `Home`
+ * under a new parent, an `Other` under everything — is exactly the collision.
+ */
+function describeSubcategoryParents_() {
+  var sheet = sheetOrThrow_(TABS.CATEGORIES);
+  var last = lastRecordRow_(sheet, colIndex_(CATEGORY_COLUMNS, 'subcategory'));
+  if (last < 2) return 'no categories yet';
+
+  var parents = {};
+  sheet.getRange(2, 1, last - 1, 2).getValues().forEach(function (row) {
+    var child = String(row[1] || '').trim();
+    var parent = String(row[0] || '').trim();
+    if (!child || !parent) return;
+
+    if (!parents[child]) parents[child] = [];
+    if (parents[child].indexOf(parent) === -1) parents[child].push(parent);
+  });
+
+  var names = Object.keys(parents);
+  var ambiguous = names.filter(function (child) { return parents[child].length > 1; });
+
+  if (ambiguous.length) {
+    throw new Error(ambiguous.map(function (child) {
+      return '"' + child + '" sits under ' + parents[child].join(' and ');
+    }).join('; ') + '. Picking it cannot say which, so the category takes the first ' +
+      'and the rest are silently wrong. Rename all but one.');
+  }
+  return names.length + ' subcategories, each naming one category';
 }
 
 /**

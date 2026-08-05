@@ -82,8 +82,22 @@ function buildReviewTab_(ss, report) {
         .setAllowInvalid(true).build());
   }
 
+  var subcategories = subcategoryListRange_(ss);
+  if (subcategories) {
+    sheet.getRange(whole('subcategory_override')).setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInRange(subcategories, true)
+        .setAllowInvalid(true).build());
+  }
+
+  sheet.getRange(column('subcategory_override') + '1').setNote(
+    'The one to reach for. Pick a subcategory and the category follows — ' +
+    'Groceries means Food & Drink, and you do not set both.\n\n' +
+    'Counts as confirmed on its own, exactly like the category next to it.');
+
   sheet.getRange(column('category_override') + '1').setNote(
-    'Pick a category to correct the guess to its left.\n\n' +
+    'Only when no subcategory fits — this sets the parent and leaves the ' +
+    'subcategory blank. Normally use the column to the right instead.\n\n' +
     'Choose Transfer to mark a move between your own accounts — a transfer ' +
     'counts towards net worth but never towards spending.');
 
@@ -137,7 +151,7 @@ function buildReviewTab_(ss, report) {
 function markReviewInputs_(sheet) {
   var column = function (name) { return colOf(REVIEW_COLUMNS, name); };
   var first = colIndex_(REVIEW_COLUMNS, 'confirmed');
-  var width = colIndex_(REVIEW_COLUMNS, 'category_override') - first + 1;
+  var width = colIndex_(REVIEW_COLUMNS, 'subcategory_override') - first + 1;
 
   sheet.getRange(2, first, Math.max(sheet.getMaxRows() - 1, 1), width)
     .setBackground(DASH_COLOR.INPUT);
@@ -242,6 +256,7 @@ function reviewRow_(record) {
     why: record.category_source,
     confirmed: false,
     category_override: '',
+    subcategory_override: '',
     status: ''
   };
 }
@@ -334,9 +349,10 @@ var MAX_REVIEW_WRITE = 100;
 function applyReviewEdit_(sheet, range) {
   var touched = {
     confirmed: reviewEditTouches_(range, 'confirmed'),
-    override: reviewEditTouches_(range, 'category_override')
+    override: reviewEditTouches_(range, 'category_override'),
+    subcategory: reviewEditTouches_(range, 'subcategory_override')
   };
-  if (!touched.confirmed && !touched.override) return 0;
+  if (!touched.confirmed && !touched.override && !touched.subcategory) return 0;
 
   // Clamped at both ends rather than just the start. Taking `max(row, 2)` on
   // its own turns an edit to the *header* into a write against row 2 — the
@@ -386,6 +402,9 @@ function writeReviewRow_(sheet, tx, index, row, touched) {
 
   if (touched.override && !isBlankCell_(at('category_override'))) {
     writeCell_(tx, target, TX_COLUMNS, 'category_override', at('category_override'));
+  }
+  if (touched.subcategory && !isBlankCell_(at('subcategory_override'))) {
+    writeCell_(tx, target, TX_COLUMNS, 'subcategory_override', at('subcategory_override'));
   }
   if (touched.confirmed) {
     writeCell_(tx, target, TX_COLUMNS, 'confirmed', isTruthyCell_(at('confirmed')));

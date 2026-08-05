@@ -460,6 +460,36 @@ function applyFormulas_(ss, sep) {
   var cats = ss.getSheetByName(TABS.CATEGORIES);
   setFormula_(cats, colOf(CATEGORY_COLUMNS, 'parent_list'), categoryParentsFormula(), sep);
   setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_list'), categoryChildrenFormula(), sep);
+  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_key'), categoryColumnCopyFormula_('subcategory'), sep);
+  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_parent'), categoryColumnCopyFormula_('category'), sep);
+}
+
+/**
+ * A column of `categories` copied, so a lookup has a pair it can cross.
+ *
+ * `child_key` and `child_parent` are `subcategory` and `category` in that
+ * order, which is the only arrangement a vectorised lookup can use: VLOOKUP
+ * requires the key to the left of the answer, and INDEX/MATCH — the obvious
+ * way to read A from B — returns a single value inside an ARRAYFORMULA rather
+ * than a column. Two copied columns cost nothing and work.
+ *
+ * Both are gated on `subcategory` rather than each on itself, so the pair
+ * always has the same height. Gating `child_parent` on `category` would keep a
+ * parent whose child cell is blank, and every such row would then answer a
+ * lookup for the empty string.
+ */
+function categoryColumnCopyFormula_(name) {
+  var key = '$' + colOf(CATEGORY_COLUMNS, 'subcategory') + '$2:$' +
+    colOf(CATEGORY_COLUMNS, 'subcategory');
+  var value = '$' + colOf(CATEGORY_COLUMNS, name) + '$2:$' + colOf(CATEGORY_COLUMNS, name);
+
+  return '=ARRAYFORMULA(IF(' + key + '="","",' + value + '))';
+}
+
+/** `categories!$G$2:$H` — the pair `subcategoryParentFormula_` looks through. */
+function childParentRange_() {
+  return TABS.CATEGORIES + '!$' + colOf(CATEGORY_COLUMNS, 'child_key') + '$2:$' +
+    colOf(CATEGORY_COLUMNS, 'child_parent');
 }
 
 /**
@@ -624,14 +654,39 @@ function amountEurFormula() {
     '$' + amt + '$2:$' + amt + ',"")))';
 }
 
-/** category — your override always wins, otherwise whatever the cascade decided. */
+/**
+ * category — your override, then your subcategory's parent, then the cascade.
+ *
+ * The middle branch is what makes correcting a row one choice instead of two.
+ * A subcategory names exactly one parent, so `Groceries` already says
+ * `Food & Drink`, and asking for both was asking you to type what the sheet
+ * could work out. `category_override` stays first because it is the only way
+ * to say "this parent, and none of its children in particular".
+ *
+ * `VLOOKUP` and not `INDEX`/`MATCH`: INDEX returns one value inside an
+ * ARRAYFORMULA no matter how tall its argument is, which yields the first
+ * row's answer repeated down the column — right on row 2, wrong everywhere
+ * else, and wrong in a way that reads as working. `typeFormula` crosses the
+ * same tab the same way for the same reason.
+ *
+ * `IFERROR` back to the cascade rather than to blank: a subcategory you typed
+ * that is not on the tab yet is a normal state — the dropdown allows it — and
+ * blanking the category of every such row would empty the reports for a
+ * spelling you were about to fix.
+ */
 function categoryFormula() {
   var a = colOf(TX_COLUMNS, 'uid');
-  var auto = colOf(TX_COLUMNS, 'category_auto');
+  var auto = '$' + colOf(TX_COLUMNS, 'category_auto') + '$2:$' +
+    colOf(TX_COLUMNS, 'category_auto');
   var ovr = colOf(TX_COLUMNS, 'category_override');
+  var sub = '$' + colOf(TX_COLUMNS, 'subcategory_override') + '$2:$' +
+    colOf(TX_COLUMNS, 'subcategory_override');
+
   return '=ARRAYFORMULA(IF(LEN($' + a + '$2:$' + a + ')=0,"",' +
     'IF(LEN($' + ovr + '$2:$' + ovr + ')>0,$' + ovr + '$2:$' + ovr + ',' +
-    '$' + auto + '$2:$' + auto + ')))';
+    'IF(LEN(' + sub + ')>0,' +
+    'IFERROR(VLOOKUP(' + sub + ',' + childParentRange_() + ',2,FALSE),' + auto + '),' +
+    auto + '))))';
 }
 
 /**

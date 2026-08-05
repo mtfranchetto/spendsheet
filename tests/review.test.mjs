@@ -283,9 +283,20 @@ describe('the review tab', () => {
   c.setup();
   const review = c.__spreadsheet.getSheetByName('review');
 
-  it('gives you a checkbox and a dropdown, which is all a phone has', () => {
+  it('gives you a checkbox and two dropdowns, which is all a phone has', () => {
     const validations = review.calls.filter((call) => call.kind === 'validation');
-    expect(validations.map((v) => v.rule.type).sort()).toEqual(['checkbox', 'range']);
+    expect(validations.map((v) => v.rule.type).sort()).toEqual(['checkbox', 'range', 'range']);
+  });
+
+  it('puts the subcategory picker on the tab, so a correction is one choice', () => {
+    // A subcategory names its parent, so picking `Groceries` sets the category
+    // too. Setting both was asking you to type what the sheet already knows.
+    const at = (name) => c.colOf(c.REVIEW_COLUMNS, name);
+    const note = review.getRange(at('subcategory_override') + '1').getNote();
+
+    expect(note).toContain('the category follows');
+    expect(c.REVIEW_COLUMNS.indexOf('subcategory_override'))
+      .toBe(c.REVIEW_COLUMNS.indexOf('category_override') + 1);
   });
 
   it('hides the uid, since it is a pointer and not something to read', () => {
