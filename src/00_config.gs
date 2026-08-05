@@ -480,6 +480,14 @@ var DEFAULT_LABELS = [
  * parents — while `Family / Kids` maps exactly. `tidyCategories()` in
  * 04_setup.gs is what applies this, and it repoints references before removing
  * anything.
+ *
+ * **Renaming a seed subcategory belongs here too**, and that is less obvious
+ * than retiring a parent. `setup()` appends the new name and keeps the old one,
+ * so a rename leaves the tab holding *both* — which for the two renamed to
+ * break a duplicate child name is the exact collision the rename was for. It
+ * shipped that way: the seed changed, the live book gained `Home insurance`
+ * beside `Home`, and the smoke test went on failing with nothing in the code to
+ * fix. A rename is a migration, and this list is where a migration is written.
  */
 var RETIRED_CATEGORIES = [
   { category: 'Bills & Utilities', subcategory: 'Electricity', to: ['Housing', 'Electricity'] },
@@ -493,7 +501,11 @@ var RETIRED_CATEGORIES = [
   { category: 'Family', subcategory: 'Life events', to: ['Entertainment', 'Life events'] },
   { category: 'Travel', subcategory: 'Flights', to: ['Entertainment', 'Flights'] },
   { category: 'Travel', subcategory: 'Accommodation', to: ['Entertainment', 'Accommodation'] },
-  { category: 'Travel', subcategory: 'Holiday', to: ['Entertainment', 'Holiday'] }
+  { category: 'Travel', subcategory: 'Holiday', to: ['Entertainment', 'Holiday'] },
+  // Renames, not moves: the parent is staying exactly where it is. Both existed
+  // only to stop a child name naming two parents.
+  { category: 'Insurance', subcategory: 'Home', to: ['Insurance', 'Home insurance'] },
+  { category: 'Education', subcategory: 'Books', to: ['Education', 'Textbooks'] }
 ];
 
 /**

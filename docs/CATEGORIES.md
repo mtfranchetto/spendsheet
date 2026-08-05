@@ -122,8 +122,14 @@ The known retirements are the taxonomy shrink from fifteen parents to twelve:
 | `Travel / Flights`, `Accommodation`, `Holiday` | `Entertainment / …` |
 | `Family / Kids` | `Shopping / Kids` |
 | `Family / Life events` | `Entertainment / Life events` |
+| `Insurance / Home` | `Insurance / Home insurance` |
+| `Education / Books` | `Education / Textbooks` |
 
 A `category_override` holds a parent with no subcategory, so a parent is only rewritten when all of its children agree where they went. `Travel` always became `Entertainment`; **`Family` split between `Shopping` and `Entertainment`**, so rows naming just `Family` are reported and left for you to retype.
+
+The last two are renames rather than moves — `Home` named both a Shopping and an Insurance subcategory, and `Books` both a Shopping and an Education one, which made the dropdown entry for each ambiguous. The parent is unchanged, so nothing about `Insurance` or `Education` is retired.
+
+A rename is also the one case the tidy can't finish for you. `subcategory_override` holds a bare child name, and `Home` is still a Shopping subcategory, so a row saying `Home` keeps resolving to Shopping — which is what it already did, since the lookup has always taken the first match. Those rows are counted and named in the dialog and left untouched. **If one of them was your home insurance, it is yours to retype**; the review queue's subcategory picker now offers `Home insurance` as a distinct entry.
 
 ---
 

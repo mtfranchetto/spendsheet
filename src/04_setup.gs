@@ -1540,10 +1540,15 @@ function planCategoryTidy_(ss) {
     mappings: retargetPairs_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, 'source_category'),
     rules: retargetPairs_(ss, TABS.RULES, RULE_COLUMNS, 'priority'),
     overrides: retargetOverrides_(ss, parentMoves),
+    subcategories: retargetSubcategories_(ss),
     ambiguous: ambiguousParents_()
   };
 
-  var work = retired.length + plan.mappings.length + plan.rules.length + plan.overrides.length;
+  // Stranded rows are deliberately not work: nothing can be done to them
+  // automatically, and counting them would make "Tidy" offer itself forever on
+  // a book where every remaining row is one it must not touch.
+  var work = retired.length + plan.mappings.length + plan.rules.length +
+    plan.overrides.length + plan.subcategories.rows.length;
   if (!work) {
     return { error: 'Nothing to tidy — no retired category is left in ' + TABS.CATEGORIES +
       ', and nothing still points at one.' };
@@ -1557,6 +1562,29 @@ function pairKey_(category, subcategory) {
 }
 
 /**
+ * Parents this list actually retires — as opposed to ones it only renames a
+ * child of.
+ *
+ * A retirement whose `to` keeps the same parent is a rename, and the parent is
+ * still in the taxonomy. Reading the list without this distinction gets both
+ * halves wrong at once: `Insurance / Home → Insurance / Home insurance` makes
+ * `Insurance` look like a parent that "moved" to itself, so every
+ * `category_override` holding it is offered up for a rewrite that changes
+ * nothing, and the plan reports work where there is none. Suppress the self-move
+ * alone and it swings the other way — `Insurance` becomes a parent whose
+ * children disagree, and the dialog warns you to retype rows that are correct.
+ *
+ * The taxonomy settles it. A parent still in `DEFAULT_CATEGORIES` was never
+ * retired, whatever its children did.
+ */
+function retiredParents_() {
+  var candidates = {};
+  RETIRED_CATEGORIES.forEach(function (entry) { candidates[entry.category] = true; });
+  DEFAULT_CATEGORIES.forEach(function (row) { delete candidates[row[0]]; });
+  return candidates;
+}
+
+/**
  * Retired parents whose children all went to the same place.
  *
  * A parent is only safe to rewrite on its own when there is one answer. Anything
@@ -1564,8 +1592,10 @@ function pairKey_(category, subcategory) {
  * spending under a category you did not choose.
  */
 function unambiguousParentMoves_() {
+  var retired = retiredParents_();
   var seen = {};
   RETIRED_CATEGORIES.forEach(function (entry) {
+    if (!retired[entry.category]) return;
     var to = entry.to[0];
     if (!(entry.category in seen)) { seen[entry.category] = to; return; }
     if (seen[entry.category] !== to) seen[entry.category] = null;
@@ -1579,9 +1609,7 @@ function unambiguousParentMoves_() {
 }
 
 function ambiguousParents_() {
-  var all = {};
-  RETIRED_CATEGORIES.forEach(function (entry) { all[entry.category] = true; });
-
+  var all = retiredParents_();
   var unambiguous = unambiguousParentMoves_();
   return Object.keys(all).filter(function (parent) { return !unambiguous[parent]; });
 }
@@ -1620,10 +1648,98 @@ function retargetPairs_(ss, tab, headers, keyColumn) {
 }
 
 /**
+ * Retired child names that can be rewritten wherever they are found, and the
+ * ones that cannot.
+ *
+ * Only retirements that *change the name* are of any interest here. Most of this
+ * list moves a child to a new parent and keeps its name — `Bills & Utilities /
+ * Electricity` became `Housing / Electricity` — and a cell saying `Electricity`
+ * already reads correctly, because the parent it names is looked up rather than
+ * stored. Treating those as needing attention would flag twelve columns' worth
+ * of rows that are perfectly fine.
+ *
+ * Of the renames, a `subcategory_override` holds a bare child name with no
+ * parent beside it, so the pair this list is keyed on is not available at the
+ * cell. The name has to carry the whole answer, which it does only when nothing
+ * left in the taxonomy is still called that.
+ *
+ * Neither of today's two renames qualifies, and that is not a defect — `Home`
+ * and `Books` survive under Shopping, which is *why* they were renamed. A row
+ * saying `Home` has always resolved to Shopping (the lookup takes the first
+ * match, and Shopping comes first in the seed), so leaving it alone changes
+ * nothing and moves no money. What it cannot do is know you meant the insurance
+ * one. Those get named and counted, not guessed at.
+ */
+function childRenames_() {
+  var renamed = RETIRED_CATEGORIES.filter(function (entry) {
+    return entry.subcategory !== entry.to[1];
+  });
+
+  var surviving = {};
+  DEFAULT_CATEGORIES.forEach(function (row) { surviving[row[1]] = true; });
+
+  var count = {};
+  renamed.forEach(function (entry) {
+    count[entry.subcategory] = (count[entry.subcategory] || 0) + 1;
+  });
+
+  var moves = {};
+  var stranded = [];
+  renamed.forEach(function (entry) {
+    var name = entry.subcategory;
+    if (count[name] === 1 && !surviving[name]) { moves[name] = entry.to[1]; return; }
+    if (stranded.indexOf(name) === -1) stranded.push(name);
+  });
+
+  return { moves: moves, stranded: stranded };
+}
+
+/**
+ * `subcategory_override` cells naming a retired child.
+ *
+ * The column the tidy used to ignore. It held nothing worth migrating when a
+ * correction meant typing a parent; now that picking the child is the way a row
+ * gets corrected, it is where most of them are, and a rename that skipped it
+ * would leave the corrections behind while removing what they pointed at.
+ *
+ * Returns the rewritable rows and, separately, the rows whose child name no
+ * longer identifies one parent — those are reported so you can find them, and
+ * left exactly as they are.
+ */
+function retargetSubcategories_(ss) {
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  var renames = childRenames_();
+  if (!tx) return { rows: [], stranded: [] };
+
+  var rows = [];
+  var strandedCounts = {};
+
+  readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid')).forEach(function (row) {
+    var from = String(row.subcategory_override || '');
+    if (!from) return;
+
+    if (renames.moves[from]) {
+      rows.push({ row: row._row, from: from, to: renames.moves[from] });
+      return;
+    }
+    if (renames.stranded.indexOf(from) !== -1) {
+      strandedCounts[from] = (strandedCounts[from] || 0) + 1;
+    }
+  });
+
+  var stranded = Object.keys(strandedCounts).sort().map(function (name) {
+    return { name: name, count: strandedCounts[name] };
+  });
+
+  return { rows: rows, stranded: stranded };
+}
+
+/**
  * `category_override` cells naming a retired parent.
  *
- * Parent-only, because that is all the column ever holds — `subcategory` blanks
- * itself whenever an override is present, so there is no child here to key on.
+ * Parent-only: this column holds a bare parent name. The child column is
+ * handled by `retargetSubcategories_`, which has a harder problem — a parent
+ * name is unique by construction, a child name is not.
  */
 function retargetOverrides_(ss, parentMoves) {
   var tx = ss.getSheetByName(TABS.TRANSACTIONS);
@@ -1662,6 +1778,22 @@ function describeCategoryTidy_(plan) {
   if (plan.overrides.length) {
     lines.push('Rewrite category_override on ' + plan.overrides.length + ' transactions:');
     summarizeMoves_(plan.overrides).forEach(function (line) { lines.push('  ' + line); });
+    lines.push('');
+  }
+
+  if (plan.subcategories.rows.length) {
+    lines.push('Rewrite subcategory_override on ' + plan.subcategories.rows.length +
+      ' transactions:');
+    summarizeMoves_(plan.subcategories.rows).forEach(function (line) { lines.push('  ' + line); });
+    lines.push('');
+  }
+
+  if (plan.subcategories.stranded.length) {
+    lines.push('⚠ Left alone: ' + plan.subcategories.stranded.map(function (entry) {
+      return entry.count + ' transactions saying "' + entry.name + '"';
+    }).join(', ') + '. That name is still a subcategory of another parent, so ' +
+      'these keep reading as that one — which is what they already did. If any ' +
+      'of them meant the retired one, only you know which.');
     lines.push('');
   }
 
@@ -1707,10 +1839,19 @@ function commitCategoryTidy_(ss, plan) {
     writeCell_(tx, entry.row, TX_COLUMNS, 'category_override', entry.to);
     repointed++;
   });
+  plan.subcategories.rows.forEach(function (entry) {
+    writeCell_(tx, entry.row, TX_COLUMNS, 'subcategory_override', entry.to);
+    repointed++;
+  });
 
   var removed = removeRetiredCategories_(plan);
 
-  return { removed: removed, repointed: repointed, ambiguous: plan.ambiguous };
+  return {
+    removed: removed,
+    repointed: repointed,
+    ambiguous: plan.ambiguous,
+    stranded: plan.subcategories.stranded
+  };
 }
 
 /**

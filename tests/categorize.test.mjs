@@ -698,6 +698,75 @@ describe('tidying a retired category', () => {
     expect(ctx.ambiguousParents_()).toEqual(['Family']);
   });
 
+  it('does not call a parent retired when only a child of it was renamed', () => {
+    // `Insurance / Home → Insurance / Home insurance` keeps the parent. Read as
+    // a move it is Insurance → Insurance, which offers a rewrite that changes
+    // nothing; suppressed without this distinction it becomes a parent whose
+    // children disagree, and the dialog tells you to retype correct rows.
+    expect(ctx.unambiguousParentMoves_()['Insurance']).toBeUndefined();
+    expect(ctx.ambiguousParents_()).not.toContain('Insurance');
+    expect(ctx.ambiguousParents_()).not.toContain('Education');
+  });
+
+  it('ignores a retirement that kept its child name', () => {
+    // Most of the list moves a child and keeps its name. `Electricity` resolves
+    // its parent through a lookup, so such a cell is already correct and must
+    // not be reported as anything.
+    const { moves, stranded } = ctx.childRenames_();
+    expect(moves['Electricity']).toBeUndefined();
+    expect(stranded).not.toContain('Electricity');
+  });
+
+  it('refuses to guess a renamed child whose old name is still in use', () => {
+    // The rename existed because two parents shared the name. Rewriting `Home`
+    // would be asserting which of them you meant.
+    const { moves, stranded } = ctx.childRenames_();
+    expect(moves['Home']).toBeUndefined();
+    expect(moves['Books']).toBeUndefined();
+    expect(stranded).toEqual(['Home', 'Books']);
+  });
+
+  it('rewrites a renamed child once its old name is gone from the taxonomy', () => {
+    // The case the mechanism exists for. Faked rather than waiting for a real
+    // one, because whether it works must not depend on the seed of the day.
+    const c = load();
+    c.RETIRED_CATEGORIES.push(
+      { category: 'Housing', subcategory: 'Broadband', to: ['Housing', 'Internet'] });
+
+    const { moves, stranded } = c.childRenames_();
+    expect(moves['Broadband']).toBe('Internet');
+    expect(stranded).not.toContain('Broadband');
+  });
+
+  it('migrates subcategory_override, which is where corrections now live', () => {
+    const c = load();
+    c.setup();
+    const ss = c.__spreadsheet;
+    c.RETIRED_CATEGORIES.push(
+      { category: 'Housing', subcategory: 'Broadband', to: ['Housing', 'Internet'] });
+
+    const categories = ss.getSheetByName('categories');
+    const start = c.lastRecordRow_(categories, 1) + 1;
+    categories.getRange(start, 1, 1, 4).setValues([['Housing', 'Broadband', 'expense', '🌐']]);
+
+    // One row to migrate, and one naming a child that two parents still share.
+    const tx = ss.getSheetByName('transactions');
+    const rows = [['t1', 'Broadband'], ['t2', 'Home']].map(([uid, sub]) =>
+      c.TX_COLUMNS.map((name) => {
+        if (name === 'uid') return uid;
+        if (name === 'subcategory_override') return sub;
+        return '';
+      }));
+    tx.getRange(2, 1, rows.length, c.TX_COLUMNS.length).setValues(rows);
+
+    const result = c.tidyCategories();
+
+    const after = c.readRecords_(tx, c.TX_COLUMNS, 1);
+    expect(after[0].subcategory_override).toBe('Internet');
+    expect(after[1].subcategory_override).toBe('Home');
+    expect(result.stranded).toEqual([{ name: 'Home', count: 1 }]);
+  });
+
   it('removes the retired rows and repoints what pointed at them', () => {
     const c = load();
     c.setup();
