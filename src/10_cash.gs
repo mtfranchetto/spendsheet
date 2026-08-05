@@ -111,10 +111,10 @@ function drainCashEntries_(existing, now) {
       return;
     }
 
-    var accountId = String(entry.account);
+    var account = resolveCashAccount_(entry.account, names);
     var record = {
-      account_id: accountId,
-      account_name: names[accountId] || accountId,
+      account_id: account.id,
+      account_name: account.name,
       booking_date: entry.date || new Date(now.getTime()),
       value_date: entry.date || '',
       transaction_date: entry.date || '',
@@ -189,16 +189,49 @@ function writeCashOverrides_(firstRow, records) {
   });
 }
 
-/** account_id → the name you gave it. */
+/**
+ * account_id → the name you gave it, and the name back to the id.
+ *
+ * The dropdown on `cash_entry.account` offers **names**, because the ids it
+ * used to offer are provider UUIDs — a list of those is not something anyone
+ * picks a wallet from on a phone. The stored value is still an id, so the name
+ * has to resolve back.
+ *
+ * Both directions live in one map rather than two. A name and an id cannot
+ * collide in a way that matters: `byId` is consulted first, so an id always
+ * wins, and a *name* identical to some other account's id is the only losing
+ * case — which requires naming an account after a UUID.
+ */
 function cashAccountNames_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ACCOUNTS);
-  var names = {};
-  if (!sheet) return names;
+  var map = { byId: {}, byName: {} };
+  if (!sheet) return map;
 
   readRecords_(sheet, ACCOUNT_COLUMNS).forEach(function (row) {
-    if (row.account_id) names[String(row.account_id)] = row.name || String(row.account_id);
+    if (!row.account_id) return;
+
+    var id = String(row.account_id);
+    var name = row.name ? String(row.name) : id;
+    map.byId[id] = name;
+    if (!map.byName[name]) map.byName[name] = id;
   });
-  return names;
+  return map;
+}
+
+/**
+ * What you typed into `cash_entry.account`, as an id and a name.
+ *
+ * Accepts either, because the column has held ids since it existed and a book
+ * that predates the dropdown is full of them. An unknown value is kept as
+ * both, which is what makes a hand-typed account survive: it lands in
+ * `transactions` as itself rather than as an empty cell.
+ */
+function resolveCashAccount_(value, accounts) {
+  var typed = String(value);
+
+  if (accounts.byId[typed]) return { id: typed, name: accounts.byId[typed] };
+  if (accounts.byName[typed]) return { id: accounts.byName[typed], name: typed };
+  return { id: typed, name: typed };
 }
 
 /** category → kind, which is what decides the direction of a cash entry. */

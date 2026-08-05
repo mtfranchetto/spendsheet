@@ -1023,8 +1023,13 @@ function applyValidation_(ss) {
     .requireValueInRange(categoryListRange_(ss), true)
     .setAllowInvalid(true)
     .build();
+  // Names, not ids. This pointed at column A — `account_id` — which for a bank
+  // account is a provider UUID, so picking a wallet on a phone meant choosing
+  // between forty characters of hex and forty other characters of hex.
+  // `resolveCashAccount_` accepts either, so books written before this still
+  // drain.
   var accountRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(accounts.getRange('A2:A'), true)
+    .requireValueInRange(accounts.getRange(whole_(ACCOUNT_COLUMNS, 'name')), true)
     .setAllowInvalid(true)
     .build();
 
@@ -1138,12 +1143,21 @@ function applyValidation_(ss) {
  *   filter. You may well be typing a category a moment before you add it to the
  *   `categories` tab, and refusing that would make the tab impossible to grow.
  *
- * Two columns are deliberately left alone. `transactions.labels` holds
- * `kids, travel` as often as one value, and a list rule would flag every
- * multi-label row — which trains you to ignore warnings, the opposite of what
- * validation is for. `accounts.currency` is ISO 4217: a hundred and eighty
- * entries is not a list you pick from, and the wrong one is caught anyway,
- * because a row whose currency is not the base currency gets no `amount_base`.
+ * Deliberately left as free text, and each for its own reason:
+ *
+ *   `transactions.labels` holds `kids, travel` as often as one value, and a
+ *   list rule would flag every multi-label row — which trains you to ignore
+ *   warnings, the opposite of what validation is for. The `labels` tab catches
+ *   the typo instead: a misspelling appears there with no transactions against
+ *   it, beside the real one with all of them.
+ *
+ *   `accounts.currency` is ISO 4217. A hundred and eighty entries is not a
+ *   list you pick from, and the wrong one is caught anyway — a row whose
+ *   currency is not the base currency gets no `amount_base`.
+ *
+ *   `accounts.provider`, `rules.value`, `labels.label` and every note or
+ *   description column are open by nature. `labels.label` in particular is the
+ *   *source* of a dropdown elsewhere; constraining it would close the loop.
  */
 function applyClosedListValidation_(ss, checkbox) {
   var categoryRule = SpreadsheetApp.newDataValidation()
@@ -1175,6 +1189,13 @@ function applyClosedListValidation_(ss, checkbox) {
   if (cats) {
     cats.getRange(whole_(CATEGORY_COLUMNS, 'kind'))
       .setDataValidation(listRule_(TX_TYPES, false));
+
+    // The parent, picked from the parents that already exist. `allowInvalid`
+    // because creating a new parent is the other reason to type here — but
+    // adding a *child* to an existing one is much the commoner, and typing it
+    // is how you end up with `Food and Drink` beside `Food & Drink`: two
+    // categories, two dropdown entries, and every total split between them.
+    cats.getRange(whole_(CATEGORY_COLUMNS, 'category')).setDataValidation(categoryRule);
   }
 
   // The only thing a source header can usefully map to is a column that exists.
@@ -1182,6 +1203,8 @@ function applyClosedListValidation_(ss, checkbox) {
   if (importMap) {
     importMap.getRange(whole_(IMPORT_MAP_COLUMNS, 'target_column'))
       .setDataValidation(listRule_(TX_COLUMNS, false));
+    importMap.getRange(whole_(IMPORT_MAP_COLUMNS, 'preset'))
+      .setDataValidation(listRule_(seededPresets_(DEFAULT_IMPORT_MAP), true));
   }
 
   var categoryMap = ss.getSheetByName(TABS.CATEGORY_MAP);
@@ -1192,8 +1215,31 @@ function applyClosedListValidation_(ss, checkbox) {
       categoryMap.getRange(whole_(CATEGORY_MAP_COLUMNS, 'subcategory'))
         .setDataValidation(subcategoryRule);
     }
+    categoryMap.getRange(whole_(CATEGORY_MAP_COLUMNS, 'preset'))
+      .setDataValidation(listRule_(seededPresets_(DEFAULT_CATEGORY_MAP), true));
   }
+}
 
+/**
+ * The preset names a seed already uses, for the column you type one into.
+ *
+ * Derived from the seed rather than from the tab, which sounds backwards and
+ * is not: a rule reading the same column it validates is self-referential, and
+ * a helper column of `UNIQUE(preset)` would be two more columns on two
+ * internal tabs to save a word of typing.
+ *
+ * `allowInvalid` is true, because adding a preset for a bank nobody has
+ * imported from yet is exactly what this column is for. The dropdown is here
+ * to stop `BudgetBakers` and `budgetbakers` being two presets — a mapping that
+ * silently applies to nothing, which is the failure this table makes easy.
+ */
+function seededPresets_(seed) {
+  var seen = [];
+  seed.forEach(function (row) {
+    var preset = String(row[0] || '');
+    if (preset && seen.indexOf(preset) === -1) seen.push(preset);
+  });
+  return seen;
 }
 
 /** `B2:B` for a named column, which is what every whole-column rule wants. */

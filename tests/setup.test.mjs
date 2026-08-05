@@ -479,6 +479,83 @@ describe('what you can pick instead of type', () => {
     });
   });
 
+  /**
+   * The audit: every column you type a constrained value into has a rule.
+   *
+   * Listed rather than derived, because "is this vocabulary closed" is a
+   * judgement about the column's meaning and not something a schema knows.
+   * The point is that adding a column of that kind means adding a line here,
+   * and forgetting one shows up as a failure rather than as a tab you type
+   * into and get wrong quietly.
+   */
+  it('leaves no column with a fixed vocabulary without one', () => {
+    const covered = [
+      ['transactions', c.TX_COLUMNS, 'category_override'],
+      ['transactions', c.TX_COLUMNS, 'subcategory_override'],
+      ['transactions', c.TX_COLUMNS, 'confirmed'],
+      ['transactions', c.TX_COLUMNS, 'excluded'],
+      ['accounts', c.ACCOUNT_COLUMNS, 'kind'],
+      ['accounts', c.ACCOUNT_COLUMNS, 'active'],
+      ['accounts', c.ACCOUNT_COLUMNS, 'include_in_net_worth'],
+      ['cash_entry', c.CASH_ENTRY_COLUMNS, 'account'],
+      ['cash_entry', c.CASH_ENTRY_COLUMNS, 'category'],
+      ['cash_entry', c.CASH_ENTRY_COLUMNS, 'subcategory'],
+      ['cash_entry', c.CASH_ENTRY_COLUMNS, 'labels'],
+      ['rules', c.RULE_COLUMNS, 'field'],
+      ['rules', c.RULE_COLUMNS, 'match_type'],
+      ['rules', c.RULE_COLUMNS, 'type'],
+      ['rules', c.RULE_COLUMNS, 'category'],
+      ['rules', c.RULE_COLUMNS, 'subcategory'],
+      ['rules', c.RULE_COLUMNS, 'enabled'],
+      ['categories', c.CATEGORY_COLUMNS, 'category'],
+      ['categories', c.CATEGORY_COLUMNS, 'kind'],
+      ['_import_map', c.IMPORT_MAP_COLUMNS, 'preset'],
+      ['_import_map', c.IMPORT_MAP_COLUMNS, 'target_column'],
+      ['_category_map', c.CATEGORY_MAP_COLUMNS, 'preset'],
+      ['_category_map', c.CATEGORY_MAP_COLUMNS, 'category'],
+      ['_category_map', c.CATEGORY_MAP_COLUMNS, 'subcategory'],
+      ['review', c.REVIEW_COLUMNS, 'confirmed'],
+      ['review', c.REVIEW_COLUMNS, 'category_override'],
+      ['review', c.REVIEW_COLUMNS, 'subcategory_override']
+    ];
+
+    const missing = covered
+      .filter(([tab, headers, name]) => !ruleFor(tab, headers, name))
+      .map(([tab, , name]) => `${tab}.${name}`);
+
+    expect(missing).toEqual([]);
+  });
+
+  it('offers accounts by name, since an id is a provider UUID', () => {
+    // The list used to be `account_id`, which on a phone means choosing
+    // between forty characters of hex and forty other characters of hex.
+    const rule = ruleFor('cash_entry', c.CASH_ENTRY_COLUMNS, 'account');
+
+    expect(rule.type).toBe('range');
+    expect(rule.values.getColumn()).toBe(c.colIndex_(c.ACCOUNT_COLUMNS, 'name'));
+    expect(rule.values.getColumn()).not.toBe(c.colIndex_(c.ACCOUNT_COLUMNS, 'account_id'));
+  });
+
+  it('resolves either a name or an id back to the account', () => {
+    // The column has held ids since it existed, so a book written before the
+    // dropdown changed is full of them and still has to drain.
+    const accounts = { byId: { 'uuid-1': 'Wallet' }, byName: { Wallet: 'uuid-1' } };
+
+    expect(c.resolveCashAccount_('Wallet', accounts)).toEqual({ id: 'uuid-1', name: 'Wallet' });
+    expect(c.resolveCashAccount_('uuid-1', accounts)).toEqual({ id: 'uuid-1', name: 'Wallet' });
+    // Unknown stays as itself rather than becoming an empty cell.
+    expect(c.resolveCashAccount_('Jar', accounts)).toEqual({ id: 'Jar', name: 'Jar' });
+  });
+
+  it('offers the presets a seed already uses, and allows a new one', () => {
+    // Not to close the vocabulary — a preset for a bank nobody has imported
+    // from is the point of the column — but to stop `BudgetBakers` and
+    // `budgetbakers` becoming two presets, one applying to nothing.
+    const rule = ruleFor('_category_map', c.CATEGORY_MAP_COLUMNS, 'preset');
+    expect(rule.values).toContain('budgetbakers');
+    expect(rule.allowInvalid).toBe(true);
+  });
+
   it('refuses a value off the list where nothing would read it', () => {
     // A warning triangle on a value the code will never look at is not a
     // warning, it is a lie about what the sheet accepts.
