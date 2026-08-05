@@ -197,7 +197,17 @@ function brokenFormulaCells_() {
     if (!cell.getFormula()) return where + ' (no formula in it at all)';
 
     var value = String(cell.getValue());
-    return value.indexOf('#') === 0 ? where + ' ' + value : null;
+    if (value.indexOf('#') !== 0) return null;
+
+    // A `#REF!` in a row-2 anchor has a blocking cell, and naming it is the
+    // difference between a repair and a search. `describeInReports_` proved
+    // that on the one column wired to call it; every ARRAYFORMULA anchor in
+    // the book has the same failure mode and deserves the same answer.
+    if (value.indexOf('#REF') === 0 && cell.getRow() === 2) {
+      return where + ' ' + value + ' — ' +
+        spillReason_(sheet, cell.getColumn(), cell.getA1Notation().replace(/\d+$/, ''));
+    }
+    return where + ' ' + value;
   }).filter(function (entry) { return entry; });
 }
 

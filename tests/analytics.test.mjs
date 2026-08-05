@@ -694,7 +694,9 @@ describe('the smoke tests for this phase', () => {
     const cell = c.__spreadsheet.getSheetByName('transactions').getRange(column + '2');
     c.__spreadsheet.formulaResults.set(cell.getFormula(), '#REF!');
 
-    expect(c.brokenFormulaCells_()).toEqual(['transactions!' + column + '2 #REF!']);
+    expect(c.brokenFormulaCells_()).toEqual([
+      expect.stringContaining('transactions!' + column + '2 #REF!')
+    ]);
   });
 
   it('refuses a text in_reports column, which is what would empty every report', () => {
@@ -933,5 +935,32 @@ describe('filtering the recent tab', () => {
     // Pending is a handful of rows from the last few days by definition, so a
     // year filter over it either changes nothing or empties it.
     expect(c.recentPendingFormula()).not.toContain('year(');
+  });
+});
+
+/**
+ * A `#REF!` anchor names what is blocking it.
+ *
+ * `spillReason_` was wired to `in_reports` alone, which is the column the
+ * incident happened to. Every ARRAYFORMULA anchor in the book fails the same
+ * way, and on a real book two of them did — reporting only "something is in
+ * the column under it", which is a search rather than a repair.
+ */
+describe('a formula that could not expand', () => {
+  it('names the blocking cell, not just the broken anchor', () => {
+    const c = load();
+    c.setup();
+
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    const column = c.colOf(c.TX_COLUMNS, 'category');
+    const cell = tx.getRange(column + '2');
+    c.__spreadsheet.formulaResults.set(cell.getFormula(), '#REF!');
+    tx.getRange(column + '3').setValue('Groceries');
+
+    const [reported] = c.brokenFormulaCells_();
+
+    expect(reported).toContain('transactions!' + column + '2 #REF!');
+    expect(reported).toContain(column + '3');
+    expect(reported).toContain('Groceries');
   });
 });
