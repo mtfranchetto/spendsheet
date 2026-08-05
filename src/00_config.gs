@@ -268,16 +268,31 @@ var RULE_COLUMNS = [
  * `tests/categorize.test.mjs` fails on a duplicate, and so does a smoke test,
  * because the tab is yours to extend.
  */
-var CATEGORY_COLUMNS = [
+/**
+ * A–D are stored: seeded once, then yours. E–H are four ARRAYFORMULA anchors.
+ *
+ * Split apart for the same reason `transactions` splits at O — anything that
+ * rewrites this tab wholesale must confine itself to the stored half. It didn't:
+ * `removeRetiredCategories_` cleared the full width and wrote the records back
+ * the same width, which erased four anchors and stored their own spill on top of
+ * where they would have expanded. The tab survives a `setFormula_` afterwards
+ * and still cannot spill, so the repair is a sheet edit, not a re-run.
+ */
+var CATEGORY_COLUMNS_STORED = [
   'category',      // A
   'subcategory',   // B
   'kind',          // C
-  'icon',          // D
+  'icon'           // D
+];
+
+var CATEGORY_COLUMNS_DERIVED = [
   'parent_list',   // E  UNIQUE(category), seed order
   'child_list',    // F  SORTED(UNIQUE(subcategory))
   'child_key',     // G  = subcategory, so a lookup can start here
   'child_parent'   // H  = category, the answer that lookup returns
 ];
+
+var CATEGORY_COLUMNS = CATEGORY_COLUMNS_STORED.concat(CATEGORY_COLUMNS_DERIVED);
 
 /**
  * labels — the cross-cutting axis a category cannot express.

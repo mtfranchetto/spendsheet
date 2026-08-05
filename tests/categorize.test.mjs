@@ -804,6 +804,32 @@ describe('tidying a retired category', () => {
     expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_override).toBe('Entertainment');
   });
 
+  it('leaves the derived columns to their formulas', () => {
+    // Rewriting the tab full-width erased four ARRAYFORMULA anchors and stored
+    // their own spill where they would have expanded — one tidy, and every
+    // category dropdown on the book loses its source. A re-run does not undo it.
+    const c = load();
+    c.setup();
+    const ss = c.__spreadsheet;
+    const categories = ss.getSheetByName('categories');
+
+    const start = c.lastRecordRow_(categories, 1) + 1;
+    categories.getRange(start, 1, 1, 4).setValues([['Travel', 'Flights', 'expense', '✈️']]);
+
+    const anchorsBefore = c.CATEGORY_COLUMNS_DERIVED.map(
+      (name) => categories.getRange(`${c.colOf(c.CATEGORY_COLUMNS, name)}2`).getFormula());
+    expect(anchorsBefore.every((f) => f.startsWith('='))).toBe(true);
+
+    c.tidyCategories();
+
+    c.CATEGORY_COLUMNS_DERIVED.forEach((name, i) => {
+      const col = c.colOf(c.CATEGORY_COLUMNS, name);
+      expect(categories.getRange(`${col}2`).getFormula(), `${col}2 lost its anchor`)
+        .toBe(anchorsBefore[i]);
+      expect(categories.getRange(`${col}3`).getValue(), `${col}3 was written over`).toBe('');
+    });
+  });
+
   it('says there is nothing to do on a book that is already current', () => {
     const c = load();
     c.setup();

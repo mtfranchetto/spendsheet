@@ -1860,8 +1860,18 @@ function commitCategoryTidy_(ss, plan) {
  * Compacted rather than blanked in place: the dropdown reads `A2:A`, and a run
  * of gaps in the middle of the list is the kind of untidiness that gets
  * "cleaned up" later by deleting rows, which is how an anchored formula on some
- * other tab dies. There are no formulas on this tab, so one rewrite is safe and
- * leaves nothing to tidy afterwards.
+ * other tab dies.
+ *
+ * **Only the stored columns.** This once said "there are no formulas on this
+ * tab, so one rewrite is safe", and that stopped being true the moment
+ * `parent_list` was added — four anchors sit in row 2 now. Clearing the full
+ * width erased all four and then wrote the values they had spilled back as
+ * stored data, so the column was both formula-less and full: a later
+ * `setFormula_` restores the anchor and it cannot expand past what is sitting
+ * under it. One tidy, and every dropdown on the book loses its source.
+ *
+ * The derived half is the formulas' business. Rows appear and disappear beneath
+ * them and they follow, which is the entire point of an ARRAYFORMULA.
  */
 function removeRetiredCategories_(plan) {
   var retiredKeys = {};
@@ -1870,14 +1880,15 @@ function removeRetiredCategories_(plan) {
   });
   if (!plan.retired.length) return 0;
 
+  var width = CATEGORY_COLUMNS_STORED.length;
   var keep = plan.rows
     .filter(function (row) { return row.category; })
     .filter(function (row) { return !retiredKeys[pairKey_(row.category, row.subcategory)]; })
-    .map(function (row) { return toRow_(CATEGORY_COLUMNS, row); });
+    .map(function (row) { return toRow_(CATEGORY_COLUMNS_STORED, row); });
 
   var sheet = plan.categories;
-  clearDataRows_(sheet, colIndex_(CATEGORY_COLUMNS, 'category'), CATEGORY_COLUMNS.length);
-  if (keep.length) sheet.getRange(2, 1, keep.length, CATEGORY_COLUMNS.length).setValues(keep);
+  clearDataRows_(sheet, colIndex_(CATEGORY_COLUMNS, 'category'), width);
+  if (keep.length) sheet.getRange(2, 1, keep.length, width).setValues(keep);
 
   return plan.retired.length;
 }
