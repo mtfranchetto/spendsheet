@@ -540,7 +540,18 @@ function monthlyQueryStringFormula() {
   var date = q_('booking_date');
   var amount = q_('amount_base');
 
-  return '="select year(' + date + '), month(' + date + ')+1, sum(' + amount + ')' +
+  // `month(date)` and not `month(date)+1`, even though the month wanted
+  // downstream is 1-12 and QUERY's is 0-11.
+  //
+  // Every non-aggregate expression in a select list has to appear *verbatim*
+  // in the group by, and `month(date)+1` is not `month(date)`. The query is
+  // rejected whole. The zero-based month is corrected in `monthKeyFormula_`,
+  // where it is arithmetic on a cell rather than a grouping key.
+  //
+  // It shipped green and stayed broken through six smoke-test runs, because
+  // `runQueryFormula_` wraps this in an IFERROR whose message asserts that
+  // nothing matched — which is a different fact, and a false one.
+  return '="select year(' + date + '), month(' + date + '), sum(' + amount + ')' +
     ' where ' + q_('in_reports') + ' = true"' +
     reportFilterExpression_() +
     '&" group by year(' + date + '), month(' + date + ')' +
@@ -590,10 +601,17 @@ function groupColumnExpression_() {
  * `IFERROR` rather than letting the error through, because a half-typed custom
  * date makes QUERY throw and an error spilling across the block reads as the
  * report being broken rather than as the date being blank.
+ *
+ * The message must not claim which of the two happened. It used to say
+ * "nothing matches those filters", which is one of them, and a malformed query
+ * then presented as an honest empty result — for six smoke-test runs, on a
+ * block that had never once worked. An IFERROR that names a cause it did not
+ * check is worse than the error it hides.
  */
 function runQueryFormula_(row) {
   return '=IFERROR(QUERY(' + txQueryRange_() + ',$E$' + row +
-    ',0),"nothing matches those filters")';
+    ',0),"no rows — either nothing matches those filters, or the query in E' +
+    row + ' is malformed. Paste E' + row + ' into a blank cell to see which.")';
 }
 
 /**
@@ -608,14 +626,21 @@ function negateFormula_(sourceColumn, row) {
   return '=ARRAYFORMULA(IF(ISNUMBER(' + range + '),-' + range + ',""))';
 }
 
-/** `2026-07` from the year and month columns QUERY produced. */
+/**
+ * `2026-07` from the year and month columns QUERY produced.
+ *
+ * `+1` here rather than in the select list: QUERY's `month()` is zero-based,
+ * and the correction cannot live in the query because a select expression has
+ * to match its group by verbatim. Here it is arithmetic on a cell, which
+ * nothing else depends on.
+ */
 function monthKeyFormula_() {
   var year = '$' + REPORT.MONTH_COL + '$' + REPORT.MONTH_ROW + ':$' + REPORT.MONTH_COL;
   var month = '$' + nextColumn_(REPORT.MONTH_COL, 1) + '$' + REPORT.MONTH_ROW +
     ':$' + nextColumn_(REPORT.MONTH_COL, 1);
 
   return '=ARRAYFORMULA(IF(ISNUMBER(' + year + '),' +
-    'TEXT(' + year + ',"0000")&"-"&TEXT(' + month + ',"00"),""))';
+    'TEXT(' + year + ',"0000")&"-"&TEXT(' + month + '+1,"00"),""))';
 }
 
 function formatReports_(sheet) {

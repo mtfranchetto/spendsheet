@@ -332,11 +332,20 @@ describe('the assembled report query', () => {
     });
   });
 
-  it('offsets QUERY\'s zero-based month in the select and not in the group by', () => {
+  /**
+   * This test used to require the opposite, and was wrong.
+   *
+   * It asserted `month(D)+1` in the select against `month(D)` in the group by,
+   * and named that arrangement deliberate. Google rejects the query whole: a
+   * non-aggregate select expression has to appear in the group by verbatim.
+   * The block never once produced a row, and the test defended it.
+   */
+  it('selects the same month expression it groups by', () => {
     const date = ctx.colOf(ctx.TX_COLUMNS, 'booking_date');
     const monthly = ctx.monthlyQueryStringFormula();
-    expect(monthly).toContain(`month(${date})+1, sum(`);
+    expect(monthly).toContain(`month(${date}), sum(`);
     expect(monthly).toContain(`group by year(${date}), month(${date})`);
+    expect(monthly).not.toContain(`month(${date})+1`);
   });
 
   it('caps the grouped result, so a chart of four hundred merchants is not offered', () => {
@@ -962,5 +971,55 @@ describe('a formula that could not expand', () => {
     expect(reported).toContain('transactions!' + column + '2 #REF!');
     expect(reported).toContain(column + '3');
     expect(reported).toContain('Groceries');
+  });
+});
+
+/**
+ * A grouped QUERY has to group by everything it selects, verbatim.
+ *
+ * `select year(D), month(D)+1 ... group by year(D), month(D)` is rejected
+ * whole: `month(D)+1` is not `month(D)`. It shipped green — the harness never
+ * hands a query to a spreadsheet — and then survived six smoke-test runs,
+ * because the IFERROR around it reported "nothing matches those filters",
+ * which is a different fact and a false one.
+ *
+ * This is the rare formula bug a string test *can* prove, so it is proven here
+ * rather than left to the live runtime.
+ */
+describe('every QUERY that groups', () => {
+  const AGGREGATE = /^(sum|count|avg|min|max)\(/;
+
+  [
+    ['monthly', () => ctx.monthlyQueryStringFormula()],
+    ['grouped', () => ctx.groupedQueryStringFormula()]
+  ].forEach(([name, build]) => {
+    it(`${name} groups by every non-aggregate it selects`, () => {
+      const formula = build();
+      const grouped = formula.match(/group by (.+?)(?: order by | limit |")/);
+      if (!grouped) return; // not a grouping query; nothing to hold it to
+
+      const selected = formula.match(/select (.+?) where /);
+      expect(selected, `${name}: no select list found`).not.toBeNull();
+
+      selected[1].split(',').map((s) => s.trim()).forEach((expression) => {
+        if (AGGREGATE.test(expression)) return;
+        // The grouped query interpolates its grouping column from a SWITCH, so
+        // part of its select list is a formula rather than text. A string test
+        // cannot follow that, and pretending otherwise would fail on the shape
+        // of the interpolation rather than on anything being wrong.
+        if (/["&$]/.test(expression)) return;
+        expect(
+          grouped[1],
+          `${name} selects "${expression}" but does not group by it verbatim`
+        ).toContain(expression);
+      });
+    });
+  });
+
+  it('corrects the zero-based month outside the query, where it is safe', () => {
+    // QUERY's month() is 0-11. The +1 cannot live in the select list, so it
+    // lives in the label formula — arithmetic on a cell, grouping nothing.
+    expect(ctx.monthlyQueryStringFormula()).not.toContain(')+1');
+    expect(ctx.monthKeyFormula_()).toContain('+1,"00"');
   });
 });
