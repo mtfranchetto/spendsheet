@@ -50,11 +50,15 @@ function runSmokeTests() {
     return banks.length + ' banks, e.g. ' + banks[0].name;
   }));
 
-  results.push(smokeTest_('sheet', 'formulas parse in this locale', function () {
-    // A localisation failure shows up as #ERROR! in the cell and as nothing
-    // at all anywhere else.
+  // Named for what it checks rather than for the bug that prompted it. It was
+  // called "formulas parse in this locale", which is one of the two things it
+  // finds, and the label sent a column-alignment failure to be fixed as a
+  // localisation failure twice.
+  results.push(smokeTest_('sheet', 'every formula anchor evaluates', function () {
     var broken = brokenFormulaCells_();
-    if (broken.length) throw new Error('#ERROR! in ' + broken.join(', '));
+    if (broken.length) throw new Error(broken.join(', ') +
+      ' — #ERROR! means the formula is wrong (fix the code), ' +
+      '#REF! means something is in the column under it (fix the sheet)');
     return formulaAnchors_().length + ' formula cells evaluate';
   }));
 
@@ -159,23 +163,42 @@ function formulaAnchors_() {
 }
 
 /**
- * The anchors that errored, or that have no formula in them at all.
+ * The anchors that errored, or that have no formula in them at all, each with
+ * the error it is actually showing.
  *
  * A blank anchor is reported too. `setValues` one column too wide silently
  * deletes an ARRAYFORMULA, and the symptom of that is a cell holding nothing
  * — which reads as "no data yet" rather than as damage.
+ *
+ * The error **text** is part of the report because the two that turn up here
+ * demand opposite repairs and this check cannot tell them apart on its own:
+ *
+ *   `#ERROR!` is a parse failure — the formula is wrong, or was written with
+ *   commas into a decimal-comma locale. Fix the code.
+ *
+ *   `#REF!` in an anchor is a refused expansion — the formula is fine and
+ *   something is sitting in the column under it. Fix the sheet, and see
+ *   `spillReason_` for what to look at.
+ *
+ * Reporting only the cell reference sent two repairs down the wrong path: a
+ * column shifted out from under its header read as a locale bug, because the
+ * check that found it is named after the locale bug.
  */
 function brokenFormulaCells_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  return formulaAnchors_().filter(function (anchor) {
+  return formulaAnchors_().map(function (anchor) {
+    var where = anchor[0] + '!' + anchor[1];
+
     var sheet = ss.getSheetByName(anchor[0]);
-    if (!sheet) return true;
+    if (!sheet) return where + ' (no such tab)';
 
     var cell = sheet.getRange(anchor[1]);
-    if (!cell.getFormula()) return true;
-    return String(cell.getValue()).indexOf('#') === 0;
-  }).map(function (anchor) { return anchor[0] + '!' + anchor[1]; });
+    if (!cell.getFormula()) return where + ' (no formula in it at all)';
+
+    var value = String(cell.getValue());
+    return value.indexOf('#') === 0 ? where + ' ' + value : null;
+  }).filter(function (entry) { return entry; });
 }
 
 /**

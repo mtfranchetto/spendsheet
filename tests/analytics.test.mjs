@@ -675,7 +675,26 @@ describe('the smoke tests for this phase', () => {
     const column = c.colOf(c.TX_COLUMNS, 'in_reports');
     c.__spreadsheet.getSheetByName('transactions').getRange(column + '2').setValue('');
 
-    expect(c.brokenFormulaCells_()).toContain('transactions!' + column + '2');
+    expect(c.brokenFormulaCells_()).toEqual([
+      expect.stringContaining('transactions!' + column + '2')
+    ]);
+  });
+
+  /**
+   * `#ERROR!` and `#REF!` land in the same check and need opposite repairs —
+   * one is a broken formula, the other a formula that is fine with something
+   * sitting in the column under it. Reporting only the cell reference sent a
+   * column-alignment failure to be fixed as a locale bug, twice.
+   */
+  it('says which error an anchor is showing, not just that it errored', () => {
+    const c = load();
+    c.setup();
+
+    const column = c.colOf(c.TX_COLUMNS, 'category');
+    const cell = c.__spreadsheet.getSheetByName('transactions').getRange(column + '2');
+    c.__spreadsheet.formulaResults.set(cell.getFormula(), '#REF!');
+
+    expect(c.brokenFormulaCells_()).toEqual(['transactions!' + column + '2 #REF!']);
   });
 
   it('refuses a text in_reports column, which is what would empty every report', () => {
