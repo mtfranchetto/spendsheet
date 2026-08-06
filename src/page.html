@@ -87,7 +87,7 @@
   /* The tab bar is fixed to the bottom, so the scroll region owes it that much
      plus whatever the phone's home indicator takes. */
   #screens {
-    padding: 12px 12px calc(76px + env(safe-area-inset-bottom, 0px));
+    padding: 12px 16px calc(76px + env(safe-area-inset-bottom, 0px));
     max-width: 900px;
     margin: 0 auto;
   }
@@ -160,11 +160,64 @@
   .tap {
     display: flex; align-items: center; gap: 10px; width: 100%;
     background: none; border: none; border-bottom: 1px solid var(--line);
-    padding: 10px 2px; text-align: left; min-height: var(--tap);
+    padding: 10px 6px; text-align: left; min-height: var(--tap);
   }
   .tap:last-child { border-bottom: none; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); flex: none; }
   .dot.hidden { visibility: hidden; }
+
+  /*
+    A spinner rather than the word "Loading…".
+
+    A caption that never changes is indistinguishable from a page that has
+    stopped, and the slowest moment here is the first paint on a phone that has
+    just woken its radio. Motion is the only honest signal that something is
+    still happening.
+
+    Reduced motion gets a pulse rather than nothing at all: the preference is
+    for less movement, not for losing the one cue that the app is alive.
+  */
+  .spinner { display: flex; align-items: center; gap: 10px; color: var(--muted);
+             padding: 24px 4px; }
+  .spinner::before {
+    content: ''; width: 18px; height: 18px; flex: none; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner::before { animation: pulse 1.4s ease-in-out infinite; }
+  }
+
+  /*
+    Accounts as tiles rather than a list.
+
+    A list row gives one tap target across the full width, which is fine to
+    read and useless to act on. A tile is a thing you press, and pressing an
+    account has an obvious meaning — show me what is in it. Two to a row on a
+    phone, more on anything wider, so the grid rather than a fixed count.
+
+    The tile is a `div` and the parts you can press are real buttons inside it:
+    a cash account carries two different actions, and a button inside a button
+    is not something a keyboard or a screen reader can make sense of.
+  */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+           gap: 10px; margin-bottom: 10px; }
+  .tile {
+    display: flex; flex-direction: column; align-items: stretch;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .tile button.face {
+    background: none; border: none; border-radius: 0; padding: 0;
+    min-height: auto; text-align: left; width: 100%;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .tile .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .tile .amount { font-size: 19px; font-weight: 600; margin-top: 4px; }
+  .tile .note { font-size: 12px; }
+  .tile button.link { align-self: flex-start; margin-top: 6px; }
 
   #tabs {
     position: fixed; left: 0; right: 0; bottom: 0;
@@ -207,7 +260,7 @@
   }
 </style>
 
-<div id="screens"><p class="skeleton">Loading…</p></div>
+<div id="screens"><div class="spinner">Loading…</div></div>
 
 <nav id="tabs"></nav>
 <div id="toast" hidden></div>
@@ -249,6 +302,11 @@
     return node;
   }
 
+  /** The waiting state, everywhere. The animation is in `.spinner::before`. */
+  function spinner(message) {
+    return el('div', 'spinner', message || 'Loading…');
+  }
+
   // -------------------------------------------------------------------------
   // Formatting
   // -------------------------------------------------------------------------
@@ -276,7 +334,14 @@
     // Keyed by the filter signature, so going back to a slice you have already
     // looked at is instant and costs no request.
     cache: {},
-    records: { rows: [], offset: 0, hasMore: false, total: 0, loading: false },
+    // `loaded` rather than counting rows. Records is fetched on first
+    // navigation now that the bootstrap no longer prefetches it, and a filter
+    // that legitimately matches nothing would otherwise look exactly like a
+    // screen that has never been opened — so every visit would re-fetch it.
+    records: { rows: [], offset: 0, hasMore: false, total: 0, loading: false, loaded: false },
+    // Which account a cash entry is being added to, set by the tile that
+    // opened the form and read back by it as the default.
+    addAccount: '',
     pending: {}
   };
 
@@ -471,6 +536,22 @@
   }
 
   /**
+   * A category's icon, from the lists the bootstrap already sends.
+   *
+   * Looked up by name rather than sent per row, because `byCategory` is keyed
+   * by the category name and the icons are a list of about a dozen — joining
+   * them on the server would put the same string in the response once per row
+   * to save one lookup here. A subcategory falls through to nothing, which is
+   * correct: only parents carry an icon that means anything at a glance.
+   */
+  function categoryIcon(name) {
+    var found = state.lists.categories.parents.filter(function (entry) {
+      return entry.name === name;
+    })[0];
+    return found ? found.icon : '';
+  }
+
+  /**
    * The category breakdown, as bars.
    *
    * The best form on a narrow screen: lengths from a common baseline, read
@@ -488,9 +569,16 @@
       var line = el('div');
       line.style.marginBottom = '10px';
 
-      add(line, add(el('div', 'row'),
-        add(el('span', 'grow ellipsis'), document.createTextNode(row.name)),
-        el('span', 'num', money(row.total))));
+      // The icon comes from the `categories` tab, which has carried one since
+      // the tab was seeded — the page simply never asked for it. A dozen bars
+      // in one colour are told apart by reading every label; with the icon the
+      // one you are looking for is found before you read anything.
+      var label = el('span', 'grow ellipsis');
+      var icon = categoryIcon(row.name);
+      if (icon) add(label, el('span', null, icon + ' '));
+      add(label, document.createTextNode(row.name));
+
+      add(line, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
 
       var fill = el('div', 'bar-fill');
       fill.style.width = Math.max(2, (row.total / biggest) * 100).toFixed(1) + '%';
@@ -508,12 +596,24 @@
     { id: 'dashboard', label: 'Home', glyph: '\u{1F3E0}', render: renderDashboard },
     { id: 'records', label: 'Records', glyph: '\u{1F4C4}', render: renderRecords },
     { id: 'analytics', label: 'Charts', glyph: '\u{1F4CA}', render: renderAnalytics },
-    { id: 'add', label: 'Add', glyph: '\u{2795}', render: renderAdd }
+    { id: 'add', label: 'Add cash', glyph: '\u{2795}', render: renderAdd }
   ];
+
+  /**
+   * Which screens the tab bar offers, which is no longer all of them.
+   *
+   * Adding cash used to be a tab, and a tab is a claim about how often you
+   * reach for something. You add cash from the account you spent it out of —
+   * which is a tile on the dashboard, and which also answers the "into which
+   * account" question the form would otherwise open by asking. So the screen
+   * stays and the tab goes: `go('add')` still reaches it, from the one place
+   * where it is already in context.
+   */
+  var NAV = ['dashboard', 'records', 'analytics'];
 
   function renderDashboard(root) {
     var data = state.data.dashboard;
-    if (!data) return add(root, el('p', 'skeleton', 'Loading…'));
+    if (!data) return add(root, spinner());
 
     add(root, el('h1', null, 'Spendsheet'));
 
@@ -524,7 +624,25 @@
       add(root, banner);
     });
 
-    // Net worth first, because it is the one number you open the app for.
+    // Accounts first, then the number they add up to.
+    //
+    // Net worth used to open this screen, on the argument that it is the one
+    // number you come here for. That is true and it is also the one number you
+    // cannot act on: every question it prompts — which account, is one of them
+    // stale, how much cash is left — is answered by the tiles. So the tiles
+    // come first, and the total sits under them where a total belongs.
+    add(root, el('h2', null, 'Accounts'));
+    if (!data.accounts.length) {
+      add(root, add(el('div', 'card'),
+        el('p', 'muted', 'No accounts yet — connect a bank from the Sheet.')));
+    } else {
+      var tiles = el('div', 'tiles');
+      data.accounts.forEach(function (account) {
+        add(tiles, accountTile(account, data.currency));
+      });
+      add(root, tiles);
+    }
+
     var worth = el('div', 'card');
     add(worth, el('div', 'muted', 'Net worth'));
     add(worth, el('div', 'big num', money(data.netWorth.total)));
@@ -557,26 +675,6 @@
     add(root, el('h2', null, 'This month, by category'));
     add(root, add(el('div', 'card'), categoryBars(data.month.byCategory)));
 
-    add(root, el('h2', null, 'Accounts'));
-    var accounts = el('div', 'card');
-    data.accounts.forEach(function (account) {
-      var line = el('div', 'row' + (account.severity ? ' sev' + account.severity : ''));
-      if (account.severity) line.style.paddingLeft = '8px';
-
-      var left = el('div', 'grow');
-      add(left, add(el('div', 'ellipsis'), document.createTextNode(account.name)));
-      add(left, el('div', 'muted', account.sync));
-      add(line, left);
-      add(line, el('span', 'num', account.balance === null
-        ? '—' : money(account.balance) + (account.currency === data.currency
-          ? '' : ' ' + account.currency)));
-      add(accounts, line);
-    });
-    if (!data.accounts.length) {
-      add(accounts, el('p', 'muted', 'No accounts yet — connect a bank from the Sheet.'));
-    }
-    add(root, accounts);
-
     add(root, el('h2', null, 'Needs review'));
     var review = el('div', 'card');
     if (!data.review.length) {
@@ -599,6 +697,87 @@
       add(review, more);
     }
     add(root, review);
+  }
+
+  /**
+   * An account's state as one character, rather than the word "ok".
+   *
+   * `accountState_` returns a sentence, and for a healthy account that sentence
+   * is "ok" — a word repeated down the screen saying nothing, which is worse
+   * than silence because it costs a line to read before you learn that. The
+   * emoji carries the same fact pre-attentively: you see the one that is not
+   * green without reading anything.
+   *
+   * Cash gets its own mark rather than a green one. A cash account has no
+   * consent and no sync, so `accountState_` gives it severity 0 by definition —
+   * calling that "healthy" would be reporting a check that never ran.
+   */
+  function accountEmoji(account) {
+    if (isCashAccount(account.name)) return '\u{1F4B5}';
+    if (account.severity === 2) return '\u{1F534}';
+    if (account.severity === 1) return '\u{1F7E0}';
+    return '\u{1F7E2}';
+  }
+
+  /** The server already knows which accounts take cash entries; it sends the list. */
+  function isCashAccount(name) {
+    return state.lists.cashAccounts.indexOf(name) !== -1;
+  }
+
+  /**
+   * One account, as something you can press.
+   *
+   * The tile is a `div` and the two things you can do to it are real buttons
+   * inside it. Pressing the face means "show me what is in this account", which
+   * is the only question a balance ever prompts; a cash account gets a second,
+   * smaller action because it is the only kind you can add to by hand.
+   *
+   * Nesting a button inside a button would be neither — a keyboard reaches one
+   * of them and a screen reader announces something that does not exist.
+   */
+  function accountTile(account, currency) {
+    var tile = el('div', 'tile' + (account.severity ? ' sev' + account.severity : ''));
+
+    var face = el('button', 'face');
+    face.type = 'button';
+
+    var who = el('div', 'who');
+    add(who, el('span', null, accountEmoji(account)));
+    add(who, add(el('div', 'ellipsis grow'), document.createTextNode(account.name)));
+    add(face, who);
+
+    add(face, el('div', 'amount num', account.balance === null
+      ? '—'
+      : money(account.balance) +
+        (account.currency === currency ? '' : ' ' + account.currency)));
+
+    // Only when it says something. "ok" and "—" are the two answers worth no line.
+    if (account.severity) add(face, el('div', 'muted note', account.sync));
+
+    face.setAttribute('aria-label', 'Show records for ' + account.name +
+      (account.severity ? '. ' + account.sync : ''));
+    face.addEventListener('click', function () {
+      // Same reload the review queue's "see all" needs: `go` only fetches a
+      // screen that has nothing on it, so after a first visit the filter would
+      // change and the list would not.
+      state.filters.records.account = account.name;
+      state.filters.records.unconfirmedOnly = false;
+      go('records');
+      loadRecords();
+    });
+    add(tile, face);
+
+    if (isCashAccount(account.name)) {
+      var entry = el('button', 'link', '+ Add cash');
+      entry.type = 'button';
+      entry.addEventListener('click', function () {
+        state.addAccount = account.name;
+        go('add');
+      });
+      add(tile, entry);
+    }
+
+    return tile;
   }
 
   /**
@@ -640,8 +819,9 @@
 
     var list = el('div', 'card');
     if (!state.records.rows.length) {
-      add(list, el('p', 'muted', state.records.loading
-        ? 'Loading…' : 'Nothing matches those filters.'));
+      add(list, state.records.loading
+        ? spinner()
+        : el('p', 'muted', 'Nothing matches those filters.'));
     }
     state.records.rows.forEach(function (record) { add(list, recordRow(record)); });
     add(root, list);
@@ -662,7 +842,7 @@
     add(root, filterBar('analytics', {}));
 
     var data = state.data.analytics;
-    if (!data) return add(root, el('p', 'skeleton', 'Loading…'));
+    if (!data) return add(root, spinner());
 
     var totals = el('div', 'card');
     add(totals, el('div', 'muted', shortDate(data.window.from) + ' — ' + shortDate(data.window.to)));
@@ -901,6 +1081,13 @@
    * form is where you would otherwise wonder.
    */
   function renderAdd(root) {
+    // No tab reaches this screen any more, so it owes you the way back that a
+    // tab bar used to be.
+    var back = el('button', 'link', '\u{2190} Home');
+    back.type = 'button';
+    back.addEventListener('click', function () { go('dashboard'); });
+    add(root, back);
+
     add(root, el('h1', null, 'Add cash'));
 
     if (!state.lists.cashAccounts.length) {
@@ -929,6 +1116,9 @@
     state.lists.cashAccounts.forEach(function (name) {
       var option = el('option', null, name);
       option.value = name;
+      // Arriving from a tile already answers this question, so the form does
+      // not ask it again — it shows the answer, still changeable.
+      if (name === state.addAccount) option.selected = true;
       add(account, option);
     });
     add(form, account);
@@ -1043,7 +1233,7 @@
 
     call('appRecords', currentFilters('records'), 0).then(function (result) {
       state.records = { rows: result.rows, offset: result.rows.length,
-        hasMore: result.hasMore, total: result.total, loading: false };
+        hasMore: result.hasMore, total: result.total, loading: false, loaded: true };
       render();
     }).catch(fail);
   }
@@ -1079,7 +1269,7 @@
     state.screen = id;
     render();
     if (id === 'analytics' && !state.data.analytics) loadAnalytics();
-    if (id === 'records' && !state.records.rows.length) loadRecords();
+    if (id === 'records' && !state.records.loaded) loadRecords();
     window.scrollTo(0, 0);
   }
 
@@ -1089,7 +1279,9 @@
     screen.render(root);
 
     var tabs = clear(document.getElementById('tabs'));
-    SCREENS.forEach(function (entry) {
+    SCREENS.filter(function (entry) {
+      return NAV.indexOf(entry.id) !== -1;
+    }).forEach(function (entry) {
       var button = el('button');
       button.type = 'button';
       if (entry.id === state.screen) button.setAttribute('aria-current', 'page');
@@ -1101,7 +1293,14 @@
   }
 
   /**
-   * One call on open, so the first paint is a single round trip.
+   * One call on open, for the one screen that opens.
+   *
+   * This used to carry Charts and Records too, so that both were instant once
+   * the page had loaded. What it actually bought was a boot that read the
+   * whole ledger three times — once per screen, two of them for screens you
+   * might never open — on the phone where that read is slowest. `go()` has
+   * always fetched a screen the first time you reach it; the prefetch was
+   * pre-empting it rather than adding anything.
    *
    * A failure here is the whole app rather than one screen, so it says so in
    * words on the page instead of in a toast that fades — this is the one error
@@ -1111,11 +1310,7 @@
     state.currency = result.currency;
     state.lists = result.lists;
     state.data.dashboard = result.dashboard;
-    state.data.analytics = result.analytics;
     state.data.generatedAt = result.generatedAt;
-    state.records = { rows: result.records.rows, offset: result.records.rows.length,
-      hasMore: result.records.hasMore, total: result.records.total, loading: false };
-    state.cache['analytics:' + signature(currentFilters('analytics'))] = result.analytics;
     render();
   }).catch(function (error) {
     var root = clear(document.getElementById('screens'));

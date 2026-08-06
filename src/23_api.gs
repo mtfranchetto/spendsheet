@@ -61,30 +61,32 @@ function requireOwner_() {
 }
 
 /**
- * Everything the app needs to draw its first screen, in one call.
+ * Everything the app needs to draw its *first* screen, in one call.
  *
- * One round trip on open rather than four, because four means four spinners
- * resolving at different times on a phone that has just woken up its radio.
- * The cost is that the first paint waits for the slowest of them; the cost of
- * the alternative is a screen that assembles itself in front of you.
+ * This used to prefetch Charts and Records too, so that every screen was
+ * instant once the page had opened. The argument was one round trip rather
+ * than four, and it was measured against the wrong thing: the cost here is not
+ * round trips, it is reading `transactions`. Each of those three screens
+ * called `readLedger_` for itself, so opening the app read 4,600 rows by
+ * thirty columns **three times** — and two of those reads were for screens you
+ * might never visit that session.
  *
- * The lists — accounts, labels, categories — come along because they change
- * about once a month and are what every filter on every other screen is built
- * from. Fetching them per screen would be three more round trips for data that
- * was already true when the page opened.
+ * So the bootstrap is now the dashboard and the lists, and the dashboard reads
+ * only the rows it draws. Charts and Records fetch on first navigation, which
+ * `go()` in the page has always been able to do; the prefetch was pre-empting
+ * it. They pay a full read when you open them, once, and they are the screens
+ * that genuinely need one.
+ *
+ * The lists — accounts, labels, categories — still come along. They change
+ * about once a month, they are what every filter on every screen is built
+ * from, and they are small. Fetching them per screen would be the round-trip
+ * argument applied where it actually holds.
  */
 function appBootstrap() {
   requireOwner_();
 
   return {
     dashboard: appDashboardData_(),
-    // The two screens open on different windows, and the prefetch has to match
-    // what each one is about to ask for or the page throws away a page of rows
-    // and fetches them again. Charts answers "how is this month going"; Records
-    // is the screen you go to *to find something*, and a ledger that only holds
-    // the last five days reads as the transaction not being there.
-    analytics: webAppAnalytics_({ period: { kind: 'mtd' } }),
-    records: webAppRecords_({ period: { kind: 'last_12' } }, 0),
     lists: {
       accounts: accountNames_(),
       cashAccounts: cashAccountList_(),
@@ -159,15 +161,33 @@ function appAddCash(entry) {
  * whether the sync is stale is precisely the thing that ends up disagreeing.
  */
 function appDashboardData_() {
-  var window = resolveWindow_({ kind: 'mtd' }, new Date());
-  var ledger = readLedger_();
-  var matched = ledger.filter(function (row) {
+  var now = new Date();
+  var window = resolveWindow_({ kind: 'mtd' }, now);
+  var previous = lastMonthToDate_(now);
+
+  // Two months and a short queue is the whole of what this screen draws, so
+  // it asks for exactly those rows. `ledgerIndex_` says which they are from
+  // four narrow columns; everything else on the tab is never read. See the
+  // note on LEDGER_INDEX_COLUMNS for why a tail read cannot do this job.
+  var index = ledgerIndex_();
+  var wanted = index.filter(function (entry) {
+    return entryInWindow_(entry, window) || entryInWindow_(entry, previous);
+  }).map(function (entry) { return entry.row; });
+
+  // The oldest unconfirmed rows, which neither window can contain: a row left
+  // unanswered two years ago is precisely what the queue exists to surface,
+  // and it sits nowhere near this month.
+  index.filter(function (entry) { return !entry.confirmed; })
+    .sort(function (a, b) { return a.order - b.order; })
+    .slice(0, queueSize_())
+    .forEach(function (entry) { wanted.push(entry.row); });
+
+  var ledger = readLedgerRows_(wanted);
+
+  var month = aggregate_(ledger.filter(function (row) {
     return matchesFilters_(row, { window: window });
-  });
+  }), window);
 
-  var month = aggregate_(matched, window);
-
-  var previous = lastMonthToDate_(new Date());
   var lastMonth = aggregate_(ledger.filter(function (row) {
     return matchesFilters_(row, { window: previous });
   }), previous);

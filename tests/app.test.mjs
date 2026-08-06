@@ -481,13 +481,29 @@ describe('the dashboard the app draws', () => {
 });
 
 describe('the bootstrap call', () => {
-  it('returns the first paint of every screen in one round trip', () => {
+  it('carries the first screen and the lists, and nothing for the others', () => {
     const c = book([tx()]);
     const boot = c.appBootstrap();
 
     expect(Object.keys(boot).sort()).toEqual(
-      ['analytics', 'currency', 'dashboard', 'generatedAt', 'lists', 'records']);
+      ['currency', 'dashboard', 'generatedAt', 'lists']);
     expect(boot.lists.periods.map((p) => p.kind)).toContain('mtd');
+  });
+
+  /**
+   * The prefetch is gone on purpose, so its absence is the assertion.
+   *
+   * `analytics` and `records` used to ride along here, and each of them called
+   * `readLedger_` for itself — so opening the app read the whole of
+   * `transactions` three times, twice for screens that might never be opened.
+   * Putting either key back would restore that silently: the page would simply
+   * stop asking, and the only visible symptom would be a slower boot.
+   */
+  it('does not prefetch the screens that fetch on navigation', () => {
+    const boot = book([tx()]).appBootstrap();
+
+    expect(boot.analytics).toBeUndefined();
+    expect(boot.records).toBeUndefined();
   });
 
   it('survives serialisation, because google.script.run has no choice', () => {
@@ -566,6 +582,159 @@ describe('the page itself', () => {
     expect(called.length).toBeGreaterThan(0);
     [...new Set(called)].forEach((name) => {
       expect(typeof c[name], name).toBe('function');
+    });
+  });
+});
+
+/**
+ * What the dashboard reads, and what it deliberately does not.
+ *
+ * The screen draws two months and a short review queue, so it reads two months
+ * and a short review queue — `ledgerIndex_` says which rows those are from four
+ * narrow columns, and only those rows are then read at full width.
+ *
+ * The property worth guarding is not the saving, it is the correctness the
+ * saving must not cost. The obvious cheap version is a tail read: take the last
+ * N rows, they are the recent ones. It is wrong twice over. `transactions` is
+ * append-only, so row order is *import* order and a backfilling sync or a
+ * bulk import puts old dates at the end. And the review queue wants the
+ * **oldest** unconfirmed row, which is the one thing the tail cannot hold.
+ *
+ * So: an unconfirmed row from two years ago, buried at the top of a book with
+ * a hundred and twenty rows on top of it, has to come back — and none of the
+ * rows in between may leak into this month's total on the way.
+ */
+describe('what the dashboard reads', () => {
+  function bookWithBuriedBacklog() {
+    const now = new Date();
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const rows = [];
+
+    // Row 2: unconfirmed, and far older than anything else here.
+    rows.push(tx({ uid: 'ancient', booking_date: new Date(2024, 0, 15),
+      amount_base: -5, confirmed: false, in_reports: true }));
+
+    // Rows 3–122: confirmed, outside both windows. Nothing should read these.
+    for (let i = 0; i < 120; i++) {
+      rows.push(tx({ uid: 'filler-' + i, booking_date: new Date(2024, 1, 1),
+        amount_base: -1, confirmed: true, in_reports: true }));
+    }
+
+    // Row 123: this month, which is the only row the month total may contain.
+    rows.push(tx({ uid: 'recent', booking_date: thisMonth,
+      amount_base: -10, confirmed: true, in_reports: true }));
+
+    return book(rows);
+  }
+
+  it('reaches the oldest unconfirmed row, however far it is from this month', () => {
+    const review = bookWithBuriedBacklog().appDashboard().review;
+    expect(review.map((r) => r.uid)).toContain('ancient');
+  });
+
+  /*
+    The rows between the queue and the window are read only when they are close
+    enough that a second call would cost more — and when they are, they are
+    discarded. A passenger that survived into the result would show up here as
+    a total larger than the one row that belongs in it.
+  */
+  it('lets no row it did not select into the month total', () => {
+    const month = bookWithBuriedBacklog().appDashboard().month;
+    expect(month.expenses).toBe(10);
+  });
+
+  it('still answers on a book with nothing in it', () => {
+    const dash = book([]).appDashboard();
+    expect(dash.month.expenses).toBe(0);
+    expect(dash.review).toEqual([]);
+  });
+});
+
+describe('reading chosen rows', () => {
+  const c = book([
+    tx({ uid: 'a', amount_base: -1 }),
+    tx({ uid: 'b', amount_base: -2 }),
+    tx({ uid: 'c', amount_base: -3 })
+  ]);
+
+  it('returns the rows asked for and no others', () => {
+    expect(c.readLedgerRows_([2, 4]).map((r) => r.uid)).toEqual(['a', 'c']);
+  });
+
+  it('returns them in sheet order, whatever order they were asked for in', () => {
+    expect(c.readLedgerRows_([4, 2, 3]).map((r) => r.uid)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('asks for a row once however many times it is named', () => {
+    expect(c.readLedgerRows_([3, 3, 3]).map((r) => r.uid)).toEqual(['b']);
+  });
+
+  it('reads nothing when nothing was selected', () => {
+    expect(c.readLedgerRows_([])).toEqual([]);
+  });
+
+  /* Row 1 is the header. Asking for it would return a row of column names. */
+  it('refuses the header row and anything below it', () => {
+    expect(c.readLedgerRows_([0, 1])).toEqual([]);
+  });
+});
+
+/**
+ * The page, to the extent a file test can reach it.
+ *
+ * `node:vm` runs `.gs`; everything inside an HTML file is invisible to it, and
+ * the script here is an IIFE that exports nothing, so there is no seam to call
+ * a function through. Executing it would mean a DOM implementation and a way
+ * to reach inside the closure — a dependency and a hole in the encapsulation,
+ * both in service of testing *drawing*, which is the one thing deliberately
+ * left in the page. That trade is the wrong way round.
+ *
+ * What is left is real anyway, because the bugs this file has actually shipped
+ * were not drawing bugs. They were **contract** bugs: the page reading a key
+ * the server stopped sending, or naming a screen that does not exist. Both are
+ * visible in the text, and both are silent at runtime — an undefined key
+ * renders as an empty screen, not as an error.
+ */
+describe('the page and the server agree', () => {
+  const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+
+  /*
+    This is the check that would have caught the change that removed the
+    prefetch. `appBootstrap` stopped sending `analytics` and `records`; a page
+    still reading `result.records.rows` would have thrown on open, and one
+    reading `result.analytics` would have quietly drawn an empty chart.
+  */
+  it('reads no key from the bootstrap that the bootstrap does not send', () => {
+    const from = page.indexOf("call('appBootstrap')");
+    const handler = page.slice(from, page.indexOf('}).catch(', from));
+    const used = [...handler.matchAll(/result\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+
+    expect(used.length).toBeGreaterThan(0);
+    const sent = Object.keys(book([tx()]).appBootstrap());
+    [...new Set(used)].forEach((key) => expect(sent, key).toContain(key));
+  });
+
+  /*
+    The tab bar is a filter over the screens now that one of them is reachable
+    only from a tile. A typo in either list is a tab that silently vanishes, or
+    a tile that navigates to a screen nothing can render.
+  */
+  it('offers no tab for a screen that does not exist', () => {
+    const nav = page.match(/var NAV = \[([^\]]*)\]/)[1];
+    const tabs = [...nav.matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+    const screens = [...page.matchAll(/\{ id: '([a-z]+)',/g)].map((m) => m[1]);
+
+    expect(tabs.length).toBeGreaterThan(0);
+    tabs.forEach((id) => expect(screens, id).toContain(id));
+  });
+
+  it('keeps every screen reachable, by tab or by name', () => {
+    const screens = [...page.matchAll(/\{ id: '([a-z]+)',/g)].map((m) => m[1]);
+    const nav = page.match(/var NAV = \[([^\]]*)\]/)[1];
+
+    screens.forEach((id) => {
+      const reachable = nav.includes(`'${id}'`) || page.includes(`go('${id}')`);
+      expect(reachable, id).toBe(true);
     });
   });
 });

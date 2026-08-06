@@ -65,7 +65,7 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 
 ### Part 2 — production (once you're convinced)
 
-8. Register a **production** app. Same redirect URL, plus a description, a data-protection email, and privacy/terms URLs — use this repo's [PRIVACY.md](PRIVACY.md) and [TERMS.md](TERMS.md).
+8. Register a **production** app. Same redirect URL, plus a description and a data-protection contact email.
 9. Download its `.pem`, re-run `installCredentials()`, set the environment to production.
 10. **Spendsheet → Connect a bank** → your real bank → approve on your phone. This moves your app from *Inactive* to **Restricted**, which is the free tier and the last state you need. (*Active* requires a signed commercial contract — you will never need it.)
 11. Repeat for each bank.
@@ -134,4 +134,4 @@ Tests run the **exact `.gs` files that ship** — `tests/harness.mjs` loads them
 
 ## Licence
 
-[MIT](LICENSE). This is not financial software, it's a spreadsheet that fills itself in. See [TERMS.md](TERMS.md).
+[MIT](LICENSE). This is not financial software, it's a spreadsheet that fills itself in.
