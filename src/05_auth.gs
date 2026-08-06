@@ -220,9 +220,26 @@ function clearRedirectUrl() {
  * explained *why* a callback was rejected would be a probing oracle for
  * anyone who found the URL, and there is nothing a legitimate user learns
  * from the detail that they don't learn from "this didn't work".
+ *
+ * ## And also the mobile app, from a second deployment of this same project
+ *
+ * A Sheet has exactly one bound script, so there is exactly one `doGet` — a
+ * second definition would not be an error, it would silently replace this one
+ * and take the consent flow with it. So the app is reached by *delegation*
+ * rather than by a second entry point, through the same guarded forward
+ * reference `setup()` uses for the later phases.
+ *
+ * The delegation is first, and it is a single line, because everything below
+ * it assumes a callback. Which of the two this is comes from the query string
+ * alone — see `webAppRoute_` in 20_webapp.gs — and the app branch is behind an
+ * owner gate that fails closed, because this URL is anonymous by necessity.
  */
 function doGet(e) {
   var params = (e && e.parameter) || {};
+
+  if (functionExists_('webAppPage_') && webAppRoute_(params) === 'app') {
+    return webAppPage_(params);
+  }
 
   try {
     if (params.error) {

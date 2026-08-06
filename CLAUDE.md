@@ -4,7 +4,7 @@ Conventions that are load-bearing here and not obvious from reading the code.
 
 **The reasoning behind a decision lives in the comment above it.** File headers and function docstrings in `src/*.gs` carry the *why*, deliberately and at length — including what was tried and rejected. Read the header of the file you're changing before changing it, and **don't re-litigate a decision it already argues.** If you disagree with one, say so; don't quietly reverse it.
 
-(An earlier `docs/PLAN.md` held the original design document and build plan. It was removed once every phase shipped — it had become a historical artefact that read as a roadmap. `git log -- docs/PLAN.md` if you ever want it. A second one covered the dashboard rebuild, the reports tab and the review queue, and was removed the same way when they landed.)
+(An earlier `docs/PLAN.md` held the original design document and build plan. It was removed once every phase shipped — it had become a historical artefact that read as a roadmap. `git log -- docs/PLAN.md` if you ever want it. A second one covered the dashboard rebuild, the reports tab and the review queue, and a third the mobile web app; all three were removed the same way when they landed.)
 
 ## The governing rule
 
@@ -40,7 +40,16 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `17_analytics.gs` | period arithmetic, the `reports` tab, and every chart in the book. |
 | `17_review.gs` | the review queue and the `onEdit` write-back. |
 | `18_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
-| `19_menu.gs` | last, so every function it names is defined. |
+| `19_menu.gs` | the Spendsheet menu. |
+| `20_webapp.gs` | the second front door: routing, the owner gate, serving the page. |
+| `21_query.gs` | the ledger asked a question. Pure aggregation, and **no writes**. |
+| `22_actions.gs` | the two things the app writes: a confirmation, a cash entry. |
+| `23_api.gs` | every function a page may call by name, each one gated. |
+| `page.html` | the app itself. The only `.html` here, and the only file the harness cannot load. |
+
+**19 is no longer last, and that is fine** — it names its items as strings and filters them through `functionExists_`, so load order was never what made it work. What it does mean is that a menu item for something in 20–23 appears by itself, exactly as every earlier phase's did.
+
+**Where the mobile seam is:** 21 reads and 22 writes, and neither is reachable from a browser — every function in both ends in `_`, which Apps Script enforces as private to `google.script.run`. 23 is the entire public surface, and `tests/app.test.mjs` holds it to that by reading the files rather than by remembering.
 
 The gap before `18` is deliberate — adding a phase should not renumber anything. It got used, and by **two** files: analytics and review are different kinds of thing (one reads, one writes back) and splitting them was cheaper than a 900-line file. Two names at the same number is fine because the numbering is load order, and `17_analytics.gs` sorts before `17_review.gs`, which is the dependency direction. It is not licence to keep adding — a third would mean 17 has become a bin.
 
@@ -52,11 +61,16 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 
 `npm test` → `npx clasp push --force` → **say whether a redeploy is needed.**
 
-`clasp push` updates the Apps Script project, so menu items and anything run from the sheet pick it up at once. It does **not** update the live `/exec` deployment, which serves a frozen version. Anything touching `doGet` or the web app needs:
+`clasp push` updates the Apps Script project, so menu items and anything run from the sheet pick it up at once. It does **not** update a live `/exec` deployment, which serves a frozen version. Anything touching `doGet`, `src/page.html` or `20`–`23` needs:
 
 > Manage deployments → pencil → Version: New version → Deploy
 
-*New deployment* would also work but mints a different URL, breaking the redirect registered with Enable Banking. Flag this explicitly when a push needs it — don't leave it to be discovered as a Drive "unable to open the file" error.
+**There are two deployments and they are not interchangeable.** Door 1 is the consent redirect, access **Anyone**, and its URL is registered with Enable Banking. Door 2 is the app, access **Only myself**. Both have to be updated, and the trap is in the access setting rather than in remembering:
+
+- *New deployment* mints a different URL. On Door 1 that breaks the registered redirect; on Door 2 it just means the home-screen icon points at a dead URL. Always update in place.
+- **A Door 2 redeployed as "Anyone" serves bank balances to anyone with the URL.** The owner gate is what stops that being fatal, and a lock behind a door you left open is not a thing to rely on. When a redeploy is needed, say *which* door and *what its access setting must be* — not just "redeploy".
+
+Flag all of this explicitly when a push needs it — don't leave it to be discovered as a Drive "unable to open the file" error, or worse, not discovered at all.
 
 ## Constraints that break things quietly
 
@@ -82,6 +96,10 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 - **A spilled cell and a cell someone typed are indistinguishable through the API, and renaming a column is what makes that matter.** `getValues()` returns the computed value for both; `getFormulas()` returns `''` for both, because only the anchor holds the formula. `makeRoomForNewColumns_` asserted the opposite — "an array of ours that expanded leaves computed cells, never stored ones" — and so read a live spill as a user's data. Reaching it needed a *rename*: `recordNewColumns_` calls a column new when its name is absent from the header row, so `amount_eur` → `amount_base` presented a working, spilling column as a new one, and the code inserted a column to get out of the way of its own output. Two inserts later every derived column sat one place right of its header — the one edit `transactions` cannot survive — and it presented as three unrelated smoke-test failures on a live book with 4,600 rows. **The anchor is the only evidence there is: a formula in row 2 means the column is ours, and the rows below must not be consulted at all.** Treat renaming a schema column as a migration, not an edit.
 - **A conditional-format rule may not contain a comma, which rules out every function you would reach for.** `AND`, `IF`, `OR` and `VLOOKUP` all need one. The dashboard's answer is a hidden severity column: a formula in a *cell* — which does pass through `localizeFormula` — computes `2`, `1`, `0` or blank, and every rule is `=$G4=2`. That also puts the thresholds in `_config` rather than freezing them as literals inside a rule no test can evaluate. Reach for a hidden helper cell before reaching for a cleverer rule.
 - **A layout decision made for the desktop has to be re-checked against the phone.** The dashboard's blocks were separated by *column* so a growing `QUERY` could not collide with its neighbour — correct reasoning, and it produced a tab twenty-nine columns wide on a device that scrolls vertically. The fix was not to abandon the guarantee but to get it a cheaper way: bound every block with an explicit `limit` and stack them. When a constraint forces an awkward layout, ask whether the constraint can be removed at the source.
+- **A blank in a seed is a question, not a default, and nothing can diverge from it.** `reportSeedDivergence_` compared the whole row past the key, so `_config`'s three deliberately-empty rows — `alert_email`, `owner_email` — reported a divergence for the act of being answered. Filling in an alert address would have logged "1 seeded row differs from the defaults" to `_anomalies` on every run for ever, and `applySeedDefaults` would have offered to blank it back. `owner_email` is what exposed it, because `setup()` fills that one itself and so every book would have carried the noise. `seedRowDiffers_` is the one comparison both halves now use — they must agree, or "Update mappings to defaults" changes something it never listed.
+- **A function reachable from `google.script.run` is one whose name does not end in `_`.** That convention is *enforced*, not decorative, which is what makes it a security boundary rather than a style: everything in `21_query.gs` and `22_actions.gs` is private by name, and `23_api.gs` is the entire surface a browser can reach. The realistic failure is a seventh entry point added later without `requireOwner_()`, so the guard is a test that reads the file and derives the list, rather than a list someone maintains.
+- **A faked enum must have exactly the members the real one has.** `setXFrameOptionsMode(HtmlService.XFrameOptionsMode.IFRAME)` shipped green: `IFRAME` belongs to `SandboxMode`, a different and vestigial enum, so the argument is `undefined` in production and the call takes the app page down for the only person allowed to open it. The harness passed because its stub had invented an `IFRAME` member. A fake of an enum exists almost entirely to fail on a typo, and one that answers for a member the real thing lacks cannot. Same rule as `DriveApp` deliberately not offering `getFoldersByName` — be no more forgiving than the real thing, which is now the third time that direction of error has cost something here.
+- **A rule written out quoting the thing it forbids defeats its own guard.** `page.html`'s comment said "nothing is built with `innerHTML`", and the test that fails on that token in any `src/*.html` failed on the comment. Identical to the control-character rule, which was first written into this file *quoting the character it warns about* and made itself ungreppable. Write the rule, not the token — it happens every single time.
 - **Bulk writes go through one `setValues`.** A per-cell loop is fine for `accounts`; at a few thousand transactions it burns the six-minute limit on round-trips alone.
 - **`transactions` is never sorted, and no column is ever inserted mid-schema.** Both break row identity and every formula reference silently. Append to the right is fine — that is why `connection_id` is the last `accounts` column rather than sitting next to `provider`.
 - **Code owns `transactions` A–O; formulas and the user own P onward.** Sync appends, never rewrites. A row already in the sheet is never touched again.
@@ -93,6 +111,8 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 Tests go in the **same phase as the code they cover**, never batched at the end. The harness fakes the Google services, so it proves logic — not that Sheets accepts what we hand it. That gap is real: the locale `#ERROR!` bug passed every test. Things needing the live runtime go in `runSmokeTests()`, which writes to `_tests`.
 
 `setup()` must stay idempotent, and must not discard user customisations — see `tests/customization.test.mjs` for the boundary.
+
+**`src/page.html` is invisible to the harness**, because `node:vm` runs the `.gs` files and nothing inside an HTML file reaches it. That is not a gap to work around — it is the reason the aggregation lives on the server at all, and the reason to keep pushing decisions out of the page. What is left there is drawing, and the two things a *file* test can still prove about it are in `tests/manifest.test.mjs` and `tests/app.test.mjs`: that no string is assigned as markup, and that every name the page calls is a function that exists.
 
 ## Never
 

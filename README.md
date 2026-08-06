@@ -90,9 +90,15 @@ Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 | **Reviewing** | Refresh review queue · Rebuild charts |
 | **Categorising** | Re-categorise all · Confirm visible rows · Learn from corrections |
 | **Housekeeping** | Setup sheet · Update mappings to defaults · Tidy retired categories · Install credentials · Install triggers · Show schedule · Health check · Accept row count · Snapshot to Drive |
-| **Diagnostics** | Run smoke tests · Inspect session · Inspect account details · Inspect transactions · Diagnose accounts tab |
+| **Diagnostics** | Run smoke tests · Check web app access · Time a web app query · Inspect session · Inspect account details · Inspect transactions · Diagnose accounts tab |
 
 The menu only shows an item whose function actually exists, so a partial checkout offers exactly what works instead of throwing.
+
+## On a phone
+
+The Sheets mobile app opens 4,600 rows and fifty array formulas before it shows you anything, which is a poor way to check what you spent this week. So there's a second front door: a web app on the same project and the same data, with four screens — home, records, charts, and adding a cash transaction. Confirming a category from it writes straight back to `transactions`.
+
+It's a second *deployment*, private to your own Google account, alongside the anonymous one the bank's redirect needs. Setting that up is five clicks and is worth reading rather than guessing at: [`docs/MOBILE.md`](docs/MOBILE.md).
 
 There is deliberately no "Add manual account" — you type a row in `accounts` — and no CSV importer: **File → Import** loads the file, and the mapping is formulas you can read and correct in `_import_staged`. *Import staged rows* only commits what you have already reviewed there, and it exists because that step was two pastes that had to land on the same row without crossing the one column holding a formula. Both are documented in [`docs/IMPORT.md`](docs/IMPORT.md).
 
@@ -108,6 +114,7 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 | [`docs/IMPORT.md`](docs/IMPORT.md) | Importing history from BudgetBakers or any CSV |
 | [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, labels and transfers |
 | [`docs/REPORTS.md`](docs/REPORTS.md) | The dashboard, the reports tab and the review queue |
+| [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: the two deployments, the owner gate, home-screen setup |
 | [`docs/SHEET-SCHEMA.md`](docs/SHEET-SCHEMA.md) | Every tab and column, and whether you or the code owns it |
 | [`docs/MONITORING.md`](docs/MONITORING.md) | What breaks, how you find out, how you fix it |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Per-bank findings — which fields each bank actually populates |

@@ -84,12 +84,76 @@ describe('appsscript.json', () => {
     expect(used).toEqual([]);
   });
 
+  it('needs no new scope for the page, since HtmlService asks for none', () => {
+    // Serving HTML is not a Google service call. `Session.` already carries
+    // userinfo.email, which is what the owner gate reads — so the whole mobile
+    // app is a second deployment of a project whose consent screen is
+    // unchanged. Worth asserting, because "add a front end, add a scope" is
+    // the assumption, and a widened consent screen is how you stop reading it.
+    expect(/\bHtmlService\./.test(source)).toBe(true);
+    expect(manifest.oauthScopes).toHaveLength(7);
+  });
+
   it('is configured for the web app the bank redirects into', () => {
     // Access must be ANYONE_ANONYMOUS because the redirect arrives
     // unauthenticated. The state nonce is what protects the endpoint.
     expect(manifest.webapp.access).toBe('ANYONE_ANONYMOUS');
     expect(manifest.webapp.executeAs).toBe('USER_DEPLOYING');
     expect(manifest.runtimeVersion).toBe('V8');
+  });
+});
+
+/**
+ * What actually reaches Apps Script.
+ *
+ * `.claspignore` denies everything under `src/` and re-admits by pattern,
+ * which is the right default for a project holding a `.pem` — but it fails
+ * silently in one direction. `clasp push` prints the files it sent and says
+ * nothing at all about the ones it skipped, so a **new kind of file** is
+ * dropped by a push that reports success.
+ *
+ * That is exactly how the web app half-shipped: the allowlist was written
+ * when `src/` held only `.gs` files, `page.html` was never pushed, and the
+ * server side of the feature went live pointing at a template that was not
+ * there. Nothing in the push output distinguished that from a good one.
+ *
+ * So the allowlist is checked against the directory rather than trusted:
+ * every file in `src/` must match a rule that admits it. Adding a file kind
+ * the manifest cannot carry fails here, before the push says "Pushed".
+ */
+describe('.claspignore', () => {
+  const rules = readFileSync(join(ROOT, '.claspignore'), 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+
+  // `*` stops at a separator, `**` crosses one — the glob rules clasp uses.
+  // One pass rather than three: translating `**` to a placeholder and the
+  // placeholder back is how a literal control character gets into a file,
+  // which the last test here exists to catch — it caught this line. Asking
+  // for `**` first is what stops the alternation matching it as two `*`.
+  const translate = (glob) => glob.replace(
+    /\*\*|\*|[.+^${}()|[\]\\]/g,
+    (token) => (token === '**' ? '.*' : token === '*' ? '[^/]*' : '\\' + token)
+  );
+
+  const admits = rules
+    .filter((rule) => rule.startsWith('!'))
+    .map((rule) => new RegExp('^' + translate(rule.slice(1)) + '$'));
+
+  it('admits every file in src/', () => {
+    const excluded = readdirSync(SRC, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .filter((name) => !admits.some((pattern) => pattern.test(name)));
+
+    expect(excluded).toEqual([]);
+  });
+
+  it('admits the served page', () => {
+    // Named on its own because the push is silent about it and the harness
+    // cannot load it, so this is the only place its absence would show.
+    expect(admits.some((pattern) => pattern.test('page.html'))).toBe(true);
   });
 });
 
@@ -125,6 +189,38 @@ describe('the repository', () => {
     });
     return found;
   }
+
+  /**
+   * The page is the one file here that the harness cannot load.
+   *
+   * `node:vm` runs the `.gs` files; anything inside an HTML file is invisible
+   * to it, which is why every decision worth testing was pushed to the server.
+   * What is left in the page is drawing — and the one way drawing can be
+   * dangerous is by building markup out of strings.
+   *
+   * Every value that reaches that page came out of a bank, and the page runs
+   * on a Google origin where a script can reach `google.script.run` and call
+   * this project's functions as the account holding the bank credentials. So
+   * the rule is structural rather than careful: nodes are created and
+   * `textContent` is assigned, and there is no escaping helper anyone has to
+   * remember to call. This is the guard on that rule.
+   *
+   * `insertAdjacentHTML`, `outerHTML` and `document.write` are here for the
+   * same reason `innerHTML` is — they are the other four ways to say it.
+   */
+  it('builds no markup from a string in any page', () => {
+    const MARKUP_SINKS = ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write'];
+
+    const offenders = [];
+    textFiles(SRC).filter((path) => path.endsWith('.html')).forEach((path) => {
+      const text = readFileSync(path, 'utf8');
+      MARKUP_SINKS.forEach((sink) => {
+        if (text.includes(sink)) offenders.push(`${relative(ROOT, path)} uses ${sink}`);
+      });
+    });
+
+    expect(offenders).toEqual([]);
+  });
 
   it('has no literal control character in any text file', () => {
     const offenders = [];

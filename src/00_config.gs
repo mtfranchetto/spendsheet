@@ -463,7 +463,14 @@ var DEFAULT_CONFIG = [
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
   ['cashflow_horizon_days', 90, 'How far ahead the cashflow projection runs.'],
   ['trend_days', 90, 'How far back the net worth chart on the dashboard goes.'],
-  ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.']
+  ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.'],
+  // Blank here and filled by setup() from the account running it, because this
+  // file touches no services. It is the lock on the mobile web app: one
+  // deployment of this project is anonymous by necessity (the bank's redirect
+  // carries no Google session) and both deployments run the same doGet, so the
+  // app branch checks the caller against this. Blank means refuse everyone —
+  // see webAppAccessDecision_ in 20_webapp.gs for why it fails closed.
+  ['owner_email', '', 'Who may open the mobile web app. Filled by Setup sheet. Blank refuses everyone.']
 ];
 
 /**

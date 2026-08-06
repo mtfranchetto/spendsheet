@@ -42,6 +42,8 @@ var MENU_ITEMS = [
 
 var DIAGNOSTIC_ITEMS = [
   { name: 'Run smoke tests', fn: 'runSmokeTests' },
+  { name: 'Check web app access', fn: 'describeWebAppContext' },
+  { name: 'Time a web app query', fn: 'describeQueryCost' },
   { name: 'Inspect session', fn: 'inspectSession' },
   { name: 'Inspect account details', fn: 'inspectAccountDetails' },
   { name: 'Inspect transactions', fn: 'inspectTransactions' },

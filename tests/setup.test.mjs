@@ -354,6 +354,33 @@ describe('seed rows that disagree with the defaults', () => {
     expect(c.setup().diverged).toEqual([]);
   });
 
+  it('does not call filling in a blank a divergence', () => {
+    // A blank in the seed is not a default — it is a question the row exists
+    // to ask. `_config` ships three of them, and answering one would otherwise
+    // have logged "1 seeded row differs from the defaults" to _anomalies on
+    // every run for ever. `owner_email` made it visible because setup() fills
+    // that one itself, so every book would have carried the noise.
+    const c = load();
+    c.setup();
+
+    const config = c.__spreadsheet.getSheetByName('_config');
+    const row = c.findRowByValue_(config, 1, 'alert_email');
+    c.writeCell_(config, row, c.CONFIG_COLUMNS, 'value', 'me@example.com');
+
+    expect(c.setup().diverged).toEqual([]);
+  });
+
+  it('still reports a divergence in a column the seed has an opinion about', () => {
+    const c = load();
+    c.setup();
+
+    const config = c.__spreadsheet.getSheetByName('_config');
+    const row = c.findRowByValue_(config, 1, 'sync_window_days');
+    c.writeCell_(config, row, c.CONFIG_COLUMNS, 'value', 7);
+
+    expect(c.setup().diverged.map((d) => d.key)).toContain('sync_window_days');
+  });
+
   it('writes the full list to _anomalies, since a toast does not survive', () => {
     const c = load();
     c.setup();
@@ -428,6 +455,25 @@ describe('applySeedDefaults', () => {
 
     const orphans = c.applySeedDefaults().orphans;
     expect(orphans.filter((o) => o.source === 'Ghost')[0].target).toBe('Retired / Gone');
+  });
+
+  it('does not blank an answer the seed has no opinion about', () => {
+    // "Update mappings to defaults" agreed to a list, and a column the seed
+    // leaves blank is not on it. Writing the blank over yours would make this
+    // also mean "forget where to send an alert and lock yourself out of the
+    // phone app" — neither of which was in the list.
+    const c = load({ userEmail: 'owner@example.com' });
+    c.setup();
+    stale(c);
+
+    const config = c.__spreadsheet.getSheetByName('_config');
+    const row = c.findRowByValue_(config, 1, 'alert_email');
+    c.writeCell_(config, row, c.CONFIG_COLUMNS, 'value', 'me@example.com');
+
+    c.applySeedDefaults();
+
+    expect(c.readCell_(config, row, c.CONFIG_COLUMNS, 'value')).toBe('me@example.com');
+    expect(c.webAppOwner_()).toBe('owner@example.com');
   });
 
   it('never adds or removes a row, only rewrites answers', () => {

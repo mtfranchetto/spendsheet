@@ -305,15 +305,27 @@ describe('doGet', () => {
     expect(c.__properties.get('EB_AUTH_STATE')).toBeUndefined();
   });
 
-  it('handles a bare request to the URL', () => {
+  it('hands a bare request to the app rather than to the consent flow', () => {
+    // This URL is anonymous by necessity and now serves two things. A request
+    // carrying neither `code` nor `state` is nobody's callback, so it goes to
+    // the app — where an owner gate refuses it. See webapp.test.mjs; what
+    // matters here is that it does not fall through into the consent branch
+    // and report a failed connection to someone who never started one.
     const c = startedFlow(sessionResponse);
-    expect(c.doGet({}).getContent()).toContain('Not connected');
-    expect(c.doGet({ parameter: {} }).getContent()).toContain('Not connected');
+    c.Session.getActiveUser = () => ({ getEmail: () => '' });
+
+    expect(c.doGet({}).getContent()).toContain('Not available');
+    expect(c.doGet({ parameter: {} }).getContent()).toContain('Not available');
+    expect(c.__properties.get('EB_AUTH_STATE')).toBeTruthy();
   });
 
   it('reports a bank-side refusal without inventing a connection', () => {
+    // A refusal echoes the `state` it was given — OAuth requires it — which is
+    // also what marks the request as a callback rather than someone opening
+    // the app URL with an `error` on it.
     const c = startedFlow(sessionResponse);
-    const html = c.doGet({ parameter: { error: 'access_denied' } }).getContent();
+    const html = c.doGet({ parameter: { state: 'good-nonce', error: 'access_denied' } })
+      .getContent();
 
     expect(html).toContain('Not connected');
     // The key column, not getLastRow(): a formula in row 2 makes the sheet
@@ -348,7 +360,7 @@ describe('doGet', () => {
     // call this project's functions as the deploying user.
     const c = startedFlow(sessionResponse);
     const payload = '<img src=x onerror="alert(1)">';
-    const html = c.doGet({ parameter: { error: payload } }).getContent();
+    const html = c.doGet({ parameter: { state: 'good-nonce', error: payload } }).getContent();
 
     expect(html).not.toContain('<img');
     expect(html).not.toContain('onerror="');
@@ -357,8 +369,9 @@ describe('doGet', () => {
 
   it('closes no tag it did not open, whatever the parameter contains', () => {
     const c = startedFlow(sessionResponse);
-    const html = c.doGet({ parameter: { error: '</p></div><script>fetch("//evil")</script>' } })
-      .getContent();
+    const html = c.doGet({
+      parameter: { state: 'good-nonce', error: '</p></div><script>fetch("//evil")</script>' }
+    }).getContent();
 
     expect(html).not.toContain('<script>');
     expect(html).not.toContain('fetch("//evil")');

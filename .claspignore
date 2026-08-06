@@ -1,6 +1,14 @@
-# Paths are relative to rootDir (src/), so only the manifest and the .gs
-# files are pushed. Anything else that ever lands in src/ is excluded by
-# default rather than by being listed — safer as the project grows.
+# Paths are relative to rootDir (src/), so only the manifest, the .gs files
+# and the served .html are pushed. Anything else that ever lands in src/ is
+# excluded by default rather than by being listed — safer as the project grows.
+#
+# The default-deny is the right shape and it has one failure mode, which the
+# web app hit: a new *kind* of file is dropped in silence. `clasp push` lists
+# what it sent and says nothing about what it skipped, so `page.html` stayed
+# behind while the push reported success and the .gs half of the feature was
+# live. `tests/manifest.test.mjs` now fails if anything under src/ is not
+# pushable, which is the one thing a file test can prove here.
 **/**
 !appsscript.json
 !*.gs
+!*.html

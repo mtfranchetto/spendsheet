@@ -12,7 +12,7 @@
  * which is why CI greps for import/export in src/.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -540,6 +540,30 @@ class FakeSpreadsheet {
   snapshot() { return this.sheets.map((s) => s.snapshot()); }
 }
 
+/**
+ * An HtmlOutput, chainable, remembering what was set on it.
+ *
+ * Everything the real one returns is the output itself, so a caller can chain
+ * in any order — and a fake that returned a bare object from `setTitle` would
+ * make the *order* of those calls load-bearing in tests and nowhere else.
+ */
+function htmlOutput(html, file = null) {
+  const out = {
+    file,
+    title: null,
+    metaTags: [],
+    xFrameOptionsMode: null,
+    getContent: () => html,
+    setTitle(t) { out.title = t; return out; },
+    getTitle: () => out.title,
+    addMetaTag(name, content) { out.metaTags.push({ name, content }); return out; },
+    setXFrameOptionsMode(mode) { out.xFrameOptionsMode = mode; return out; },
+    setWidth() { return out; },
+    setHeight() { return out; }
+  };
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The sandbox
 // ---------------------------------------------------------------------------
@@ -782,8 +806,38 @@ export function createGoogleStubs(options = {}) {
       }
     },
 
+    /**
+     * `createHtmlOutputFromFile` really reads `src/<name>.html`, because the
+     * alternative is a fake that returns a placeholder and lets a test claim
+     * the page was served when the file does not exist. Apps Script throws
+     * when the file is missing, and so does this.
+     *
+     * The output is chainable in the same order the real one is, and every
+     * call is recorded — `addMetaTag('viewport', …)` is the difference between
+     * a page laid out at the phone's width and one pretending to be a 980px
+     * desktop, and it is invisible in the content.
+     */
     HtmlService: {
-      createHtmlOutput: (html) => ({ getContent: () => html, setTitle: () => ({ getContent: () => html }) })
+      createHtmlOutput: (html) => htmlOutput(html),
+      createHtmlOutputFromFile: (name) => {
+        const path = join(SRC, `${name}.html`);
+        if (!existsSync(path)) {
+          throw new Error(`No html file named ${name} was found in the script.`);
+        }
+        return htmlOutput(readFileSync(path, 'utf8'), name);
+      },
+      /**
+       * Exactly the two members the real enum has, and no more.
+       *
+       * The first version listed `IFRAME` as well — which belongs to
+       * `SandboxMode`, a different enum — and so a call passing
+       * `XFrameOptionsMode.IFRAME` read as fine here while evaluating to
+       * `undefined` in production and taking the app page down. A fake that
+       * invents a member cannot fail on a typo, which is most of what a fake
+       * of an enum is *for*. Same rule as `DriveApp` deliberately not offering
+       * `getFoldersByName`: be no more forgiving than the real thing.
+       */
+      XFrameOptionsMode: { ALLOWALL: 'ALLOWALL', DEFAULT: 'DEFAULT' }
     }
   };
 

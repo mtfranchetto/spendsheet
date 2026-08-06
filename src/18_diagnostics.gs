@@ -70,6 +70,23 @@ function runSmokeTests() {
     return describeSubcategoryParents_();
   }));
 
+  // A book whose `owner_email` is blank refuses everyone, including you, and
+  // the symptom is a page that says "not available" with nothing to read. That
+  // is a live-runtime fact — `setup()` fills the row from `getEffectiveUser()`,
+  // which the harness can only fake — so it belongs here rather than in a test.
+  results.push(smokeTest_('web app', 'the phone app has an owner', function () {
+    var owner = webAppOwner_();
+    if (!owner) {
+      throw new Error('owner_email is blank in _config, so the web app refuses everyone. ' +
+        'Re-run Setup sheet, or type your address into that row.');
+    }
+    if (!webAppAccessDecision_(owner, activeUserEmail_()).ok) {
+      throw new Error('owner_email is ' + owner + ', which is not the account running this. ' +
+        'The web app will refuse you. Diagnostics → Check web app access has the detail.');
+    }
+    return owner + ' can open the web app';
+  }));
+
   results.push(smokeTest_('sheet', 'every chart points at data', function () {
     var empty = emptyCharts_();
     if (empty.length) throw new Error('nothing to plot in ' + empty.join(', '));
@@ -398,6 +415,70 @@ function writeTestResults_(results) {
   appendRows_(sheet, 1, results.map(function (r) {
     return [now, r.suite, r.name, r.result, r.detail];
   }));
+}
+
+// ---------------------------------------------------------------------------
+// The web app
+// ---------------------------------------------------------------------------
+
+/**
+ * Who this deployment thinks you are, from the deployment itself.
+ *
+ * The mobile web app is served from a second deployment of this project with a
+ * different access setting, and the owner gate turns entirely on what
+ * `Session.getActiveUser().getEmail()` returns *there*. The documentation on
+ * that is a maze of caveats — same domain, consumer account, execute-as — and
+ * every one of them is a claim about a deployment rather than about code. So
+ * this reports what actually happens, and you run it from both URLs.
+ *
+ * What each door should say:
+ *
+ *   Door 1 (the consent redirect, access Anyone) — `activeUser` blank when
+ *   opened signed out, and `allowed` false. That is the negative test: it is
+ *   the URL a stranger could find.
+ *
+ *   Door 2 (the app, access Only myself) — `activeUser` equal to `owner`, and
+ *   `allowed` true.
+ *
+ * There is deliberately **no query parameter that runs this from a URL**. Such
+ * a parameter would have to answer before the gate, to be worth anything from
+ * Door 1, and what it answers with includes the owner address. What Door 1
+ * gives you instead is the refusal page itself, which is the same finding
+ * stated as a behaviour rather than as a report — and the only one an
+ * anonymous visitor should ever see.
+ */
+function describeWebAppContext() {
+  var report = {
+    activeUser: safeEmail_(function () { return Session.getActiveUser().getEmail(); }),
+    effectiveUser: safeEmail_(function () { return Session.getEffectiveUser().getEmail(); }),
+    owner: typeof webAppOwner_ === 'function' ? webAppOwner_() : '(20_webapp.gs not loaded)',
+    deploymentUrl: detectedWebAppUrl(),
+    pinnedRedirectUrl:
+      PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL) || ''
+  };
+
+  report.allowed = typeof webAppAccessDecision_ === 'function'
+    ? webAppAccessDecision_(report.owner, report.activeUser).ok
+    : false;
+
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app context', report);
+
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Owner: ' + (report.owner || '(none — the app refuses everyone)') +
+    '\nYou: ' + report.activeUser +
+    '\nThis context would ' + (report.allowed ? 'be let in' : 'be refused') +
+    '.\n\nFull detail in _anomalies.', 'Web app access', 30);
+
+  return report;
+}
+
+/** A Session call that answers rather than throws, since a throw is the finding. */
+function safeEmail_(fn) {
+  try {
+    return fn() || '(blank)';
+  } catch (e) {
+    return '(threw: ' + e.message + ')';
+  }
 }
 
 // ---------------------------------------------------------------------------

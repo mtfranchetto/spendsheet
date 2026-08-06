@@ -57,6 +57,10 @@ function runSetup_() {
   // After every tab exists, so a book built by an older version catches up.
   UPGRADABLE_SEEDS.forEach(function (entry) { addMissingSeedRows_(ss, entry, report); });
 
+  // After the seed pass, because the row it fills has to exist first. Writes
+  // only when blank, so this is one line on a new book and nothing ever after.
+  if (functionExists_('seedWebAppOwner_')) seedWebAppOwner_(ss);
+
   // Working tabs with no fixed schema.
   getOrCreate_(ss, TABS.IMPORT_RAW, report);      // CSV lands here via File → Import
   getOrCreate_(ss, TABS.DASHBOARD, report);
@@ -190,6 +194,16 @@ function addMissingSeedRows_(ss, entry, report) {
  * result filed €467 of money received as money spent, and the only symptom
  * was a monthly total that quietly disagreed with BudgetBakers on both sides
  * at once.
+ *
+ * **A blank in the seed is not a default, so nothing can diverge from it.**
+ * Compared column by column and skipping the blank ones, because `_config`
+ * ships three rows whose value is deliberately empty — `alert_email`,
+ * `snapshot_folder`'s siblings, and `owner_email`, which `setup()` fills in
+ * itself. Comparing against those reported a divergence for the act of
+ * answering the question the row exists to ask: filling in `alert_email` would
+ * have logged "1 seeded row differs from the defaults" to `_anomalies` on
+ * every run for ever. `owner_email` is what made it visible, because setup
+ * writes it and so every book would have carried the noise.
  */
 function reportSeedDivergence_(sheet, entry, seed, report) {
   if (!report) return;
@@ -207,11 +221,7 @@ function reportSeedDivergence_(sheet, entry, seed, report) {
     var have = byKey[seedKey_(want, entry.keyWidth)];
     if (!have) return;
 
-    var differs = false;
-    for (var c = entry.keyWidth; c < width; c++) {
-      if (String(have[c] === undefined ? '' : have[c]) !== String(want[c])) differs = true;
-    }
-    if (!differs) return;
+    if (!seedRowDiffers_(have, want, entry.keyWidth, width)) return;
 
     report.diverged = (report.diverged || []).concat([{
       tab: entry.tab,
@@ -220,6 +230,22 @@ function reportSeedDivergence_(sheet, entry, seed, report) {
       standard: want.slice(entry.keyWidth, width).join(' / ')
     }]);
   });
+}
+
+/**
+ * Whether the sheet disagrees with the seed about a row, ignoring the blanks.
+ *
+ * One function because two places ask the question and they must not answer it
+ * differently: `reportSeedDivergence_` decides what to *offer* to reset, and
+ * `rewriteSeedRows_` does the resetting. A disagreement between them means
+ * "Update mappings to defaults" changing something it never listed.
+ */
+function seedRowDiffers_(have, want, keyWidth, width) {
+  for (var c = keyWidth; c < width; c++) {
+    if (isBlankCell_(want[c])) continue;
+    if (String(have[c] === undefined ? '' : have[c]) !== String(want[c])) return true;
+  }
+  return false;
 }
 
 function seedKey_(row, keyWidth) {
@@ -1911,16 +1937,23 @@ function rewriteSeedRows_(sheet, entry) {
     var want = wanted[seedKey_(have, entry.keyWidth)];
     if (!want) return;
 
-    var differs = false;
-    for (var c = entry.keyWidth; c < width; c++) {
-      if (String(have[c] === undefined ? '' : have[c]) !== String(want[c])) differs = true;
-    }
-    if (!differs) return;
+    if (!seedRowDiffers_(have, want, entry.keyWidth, width)) return;
 
     // Only the columns after the key, so the row keeps its identity and its
     // position — this is an edit, not a delete and re-add.
+    //
+    // A column the seed leaves blank keeps whatever the sheet has. The seed
+    // has no opinion about `alert_email` or `owner_email`; writing its blank
+    // over yours would make "update the mappings" also mean "forget where to
+    // send an alert and lock yourself out of the phone app", neither of which
+    // was in the list you agreed to.
+    var replacement = [];
+    for (var c = entry.keyWidth; c < width; c++) {
+      replacement.push(isBlankCell_(want[c]) ? have[c] : want[c]);
+    }
+
     sheet.getRange(i + 2, entry.keyWidth + 1, 1, width - entry.keyWidth)
-      .setValues([want.slice(entry.keyWidth)]);
+      .setValues([replacement]);
     changed++;
   });
 

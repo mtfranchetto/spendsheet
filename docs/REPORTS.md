@@ -8,6 +8,8 @@ Everything here is a formula, a checkbox, a dropdown or a native chart — never
 
 **Custom menus do not exist in the Google Sheets mobile app.** Neither do sidebars, dialogs, or anything else `HtmlService` renders. What the phone has is: formulas, native charts, checkboxes, data validation, conditional formatting, filters, and `onEdit`.
 
+There is now a second answer to that constraint, alongside these tabs rather than instead of them: a web app on the same project, described in [`docs/MOBILE.md`](MOBILE.md). It is where `HtmlService` *does* work — a browser rather than the Sheets app — and it reads the same data and writes back to the same three columns. Everything below still applies, and still works on the phone, in the Sheets app, exactly as it did.
+
 So a feature whose entry point is a menu item is a **desktop** feature, and there are now exactly two of them:
 
 | Desktop only | Why |
