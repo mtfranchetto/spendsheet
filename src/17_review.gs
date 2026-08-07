@@ -317,7 +317,21 @@ function onEdit(e) {
 
     if (sheet.getName() === TABS.CASH_ENTRY && functionExists_('onCashEntryEdit_')) {
       onCashEntryEdit_(sheet, e.range);
+      return;
     }
+
+    // Typing into `transactions` is the one write the version counter cannot
+    // see. Every write this project makes goes through `appendRows_` or
+    // `writeCell_` and bumps it; a category typed straight into the tab goes
+    // through neither, so the app's ledger cache would go on serving the old
+    // value until it expired.
+    //
+    // That blind spot is what the cache TTL was covering, and covering it with
+    // a five-minute expiry meant paying a 4.3-second read on nearly every open
+    // — a hit needs two opens inside five minutes, which is not how the app is
+    // used. Closing the hole here is what lets the TTL be long. See
+    // `LEDGER_CACHE_SECONDS`.
+    if (sheet.getName() === TABS.TRANSACTIONS) bumpDataVersion_();
   } catch (err) {
     logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'onEdit write-back failed: ' + err.message, '');
   }

@@ -267,6 +267,31 @@ describe('the write-back', () => {
     });
   });
 
+  it('invalidates the app cache when someone types into transactions', () => {
+    // The one write the version counter cannot see for itself: a category
+    // typed straight into the tab goes through neither `appendRows_` nor
+    // `writeCell_`. Closing this is what lets the ledger cache live six hours
+    // instead of five minutes — see `LEDGER_CACHE_SECONDS`.
+    const c = bookWith([txRow('u-1', new Date(2026, 6, 1))]);
+    const before = c.dataVersion_();
+
+    c.onEdit({ range: c.__spreadsheet.getSheetByName('transactions').getRange(2, 20) });
+
+    expect(c.dataVersion_()).not.toBe(before);
+  });
+
+  it('leaves the version alone for an edit on any other tab', () => {
+    // This runs on every keystroke-sized change anyone makes to any tab, so
+    // bumping indiscriminately would throw away the ledger cache whenever you
+    // touched `_config` or typed a label.
+    const c = bookWith([txRow('u-1', new Date(2026, 6, 1))]);
+    const before = c.dataVersion_();
+
+    c.onEdit({ range: c.__spreadsheet.getSheetByName('_config').getRange(2, 2) });
+
+    expect(c.dataVersion_()).toBe(before);
+  });
+
   it('records a failure where a silent one is still findable', () => {
     const c = bookWith([txRow('u-1', new Date(2026, 6, 1))]);
     const broken = { range: { getSheet: () => { throw new Error('boom'); } } };

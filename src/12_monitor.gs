@@ -230,9 +230,11 @@ function checkFailingAccounts_() {
  * would quietly rescan for it — the same shape as every blank-cell bug in this
  * project, where the obvious guard passes and the wrong branch is taken.
  *
- * **The count may be up to five minutes old**, because the app's ledger comes
- * from a cache with that TTL. So the phone's banner can be that late to notice
- * a hole. The thing that must not be late is the sync, and it is not:
+ * **The count may be as old as the app's ledger cache**, which is six hours.
+ * So the phone's banner can be that late to notice a hole — though the ways
+ * rows actually go missing are a sort, a deleted range or an undo, and all
+ * three fire `onEdit` on `transactions`, which bumps the version and drops the
+ * cache. The thing that must not be late is the sync, and it is not:
  * `assertNoRowLoss_` calls this with no argument and scans the tab.
  */
 function checkRowLoss_(knownCount) {

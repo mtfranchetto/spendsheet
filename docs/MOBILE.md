@@ -81,7 +81,17 @@ Two checks, and the second one is the one people skip.
 
 Nothing, and it stays nothing. Apps Script meters *runtime*, not rows, and there is no per-read quota on `SpreadsheetApp`. Every screen is one call that reads `transactions` once and aggregates in memory, so the response is the size of the answer rather than the size of the book — a few kilobytes whether you have four thousand rows or forty.
 
-**Spendsheet → Diagnostics → Time a web app query** measures the read on your book and says whether it is still comfortable. If it ever is not, the remedy is a cache; it is deliberately not written yet, because it would be a second copy of the ledger written on a guess.
+### Why it is as fast as it is
+
+Two caches, and neither was written on a guess — both exist because a measurement said so, and the measurement is a menu item you can re-run.
+
+**The ledger cache.** `transactions` is read once, serialised, and kept in `CacheService` for six hours; every screen after the first is a fetch of a few hundred milliseconds rather than a four-second read. It is keyed on a counter that every write bumps — the sync, the app, and typing into the tab yourself — so a change invalidates it immediately rather than waiting out the clock. Pull-to-refresh on the dashboard drops it explicitly, which is the answer for the rare edit no trigger sees.
+
+**Reads shared within one request.** Drawing the first screen used to make **35 spreadsheet round trips** over about **seven distinct tabs**: `_config` eight times, `accounts` four, `_status` and `_runs` twice each — every function fetching for itself what the one before it had already read. They are now shared for the length of a request. It is deliberately off outside the app, because `setup()` and the sync write a cell and read it back, and a cache that survives that is a wrong answer rather than a fast one.
+
+Between them, and with the health check no longer scanning 4,615 rows to count them, the first screen went from ~6.2 seconds to ~2.8 with the cache warm.
+
+**Spendsheet → Diagnostics → Time the app dashboard** breaks the whole screen down part by part, and **Time a web app query** does the same for one ledger read. Both report every part *inside a single run* — a spreadsheet read on the same book has been seen to take anywhere from 2.0 to 9.4 seconds within one hour, so a number from today compared against one from yesterday proves nothing at all. Divide any part by `configMs` to get its cost in round trips, which is the unit that actually stays still.
 
 ## What it deliberately does not do
 

@@ -600,21 +600,34 @@ function baseCurrency_() {
 var LEDGER_CACHE_CHUNK = 90000;
 
 /**
- * How long a chunk lives, and why it is not the six-hour maximum.
+ * How long a chunk lives, and why it is now the six-hour maximum.
  *
- * `dataVersion_` catches every write that goes through `appendRows_` or
- * `writeCell_`, which is every write this project makes. What it cannot catch
- * is somebody typing into the tab with the spreadsheet open — `onEdit` covers
- * the review columns, but a paste over a range, an undo, or an edit made from
- * the Sheets mobile app may not fire it.
+ * **This was 300, and the reasoning that set it there was sound and still
+ * produced the wrong number.** It ran: `dataVersion_` catches every write
+ * through `appendRows_` or `writeCell_`, which is every write this project
+ * makes; what it cannot catch is somebody typing into `transactions` with the
+ * sheet open; so let the TTL be the backstop, and five minutes is a cheap
+ * amount to be wrong by.
  *
- * So the TTL is the backstop for the case the counter cannot see, and five
- * minutes is what it costs to be wrong: a desktop edit is invisible to the
- * phone for at most that long. It is also long enough for the win that
- * matters, which is within one sitting — open the app, look at Charts, look at
- * Records, and only the first of those pays for the read.
+ * What that missed is how the app is used. A hit needs two opens **inside five
+ * minutes**, and nobody opens their finances twice in five minutes — so the
+ * measured reality was `ledgerFirst: "sheet"` on run after run, a 4.3-second
+ * read on effectively every open, and a cache that was only ever exercised by
+ * navigating between screens in one sitting. The backstop was doing the work
+ * of the invalidation, and it cost the whole benefit.
+ *
+ * So the hole got closed at the source instead: `onEdit` now bumps the version
+ * on any edit to `transactions`, so a typed category invalidates the cache the
+ * same way a synced row does. What is left is only what a simple trigger does
+ * not see at all — a script outside this project, or a client that does not
+ * fire `onEdit` — and for that the answer is not a short TTL but the refresh
+ * the app already has: `appDashboard()` forgets the cache, because its whole
+ * meaning is "I do not believe what is on screen".
+ *
+ * Six hours is `CacheService`'s maximum. It is also longer than the interval
+ * between opening this app and opening it again, which is the entire point.
  */
-var LEDGER_CACHE_SECONDS = 300;
+var LEDGER_CACHE_SECONDS = 21600;
 
 /**
  * Read `transactions` once, and preferably not at all.
