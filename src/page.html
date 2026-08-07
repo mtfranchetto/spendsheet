@@ -134,6 +134,7 @@
           stroke-linejoin: round; stroke-linecap: round; }
   .barmark { fill: var(--out); }
   .barmark.up { fill: var(--in); }
+  .spark { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
 
   button, select, input, textarea {
     font: inherit;
@@ -218,6 +219,62 @@
   .tile .amount { font-size: 19px; font-weight: 600; margin-top: 4px; }
   .tile .note { font-size: 12px; }
   .tile button.link { align-self: flex-start; margin-top: 6px; }
+
+  /*
+    A category and its subcategories, one list instead of two.
+
+    The two flat blocks counted different things — a row with a category and no
+    subcategory sat under its category in one and under "(uncategorised)" in
+    the other — and side by side that reads as the app contradicting itself.
+    Nested, "(uncategorised)" inside Food & Drink explains itself.
+  */
+  .catline { display: block; width: 100%; margin-bottom: 10px;
+             background: none; border: none; border-radius: 0; padding: 0;
+             min-height: auto; text-align: left; color: inherit; }
+  .children { margin: -2px 0 12px 12px; padding-left: 10px;
+              border-left: 2px solid var(--line); }
+  .children .bar-fill { opacity: .55; }
+
+  /*
+    The stat cards on Charts: a label, the number, and the shape of it.
+
+    A number alone answers "how much" and says nothing about whether that is
+    normal. The thumbnail is too small to read a value off, which is the point
+    — it carries the trend, and the full chart below carries the detail.
+  */
+  .stat { display: flex; align-items: center; gap: 12px; }
+  .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                 color: var(--muted); font-weight: 600; }
+  .stat .value { font-size: 23px; font-weight: 600; }
+  .stat .thumb { width: 62px; height: 38px; flex: none; overflow: visible; }
+
+  /*
+    Records grouped under the day they happened on.
+
+    A date repeated down every row is a column of near-identical strings you
+    read past; as a heading it is read once and orders everything under it.
+  */
+  .daygroup { margin-bottom: 12px; }
+  .dayhead { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+             color: var(--muted); font-weight: 600; margin: 14px 0 6px 2px; }
+
+  /*
+    The category as a coloured disc.
+
+    The colour is derived from the name rather than stored: `categories` has an
+    icon column and no colour one, and adding one would be a migration plus a
+    thing to maintain for something a hash gives for free and identically on
+    every device. The icon carries the meaning; the colour carries the
+    at-a-glance grouping.
+  */
+  .avatar { width: 34px; height: 34px; border-radius: 50%; flex: none;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; position: relative; }
+  .avatar .check { position: absolute; right: -3px; bottom: -3px;
+                   width: 14px; height: 14px; border-radius: 50%;
+                   background: var(--in); border: 2px solid var(--bg); }
+  .rec-sub { color: var(--muted); font-size: 13px; }
+  .rec-desc { color: var(--muted); font-size: 12px; }
 
   #tabs {
     position: fixed; left: 0; right: 0; bottom: 0;
@@ -342,6 +399,9 @@
     // Which account a cash entry is being added to, set by the tile that
     // opened the form and read back by it as the default.
     addAccount: '',
+    // Which categories are showing their subcategories. Keyed by name rather
+    // than by position, so it survives the list re-ranking under a new filter.
+    expanded: {},
     pending: {}
   };
 
@@ -566,8 +626,21 @@
 
     var biggest = rows[0].total || 1;
     rows.forEach(function (row) {
-      var line = el('div');
-      line.style.marginBottom = '10px';
+      var children = row.children || [];
+      var opens = children.length > 0;
+      var open = opens && !!state.expanded[row.name];
+
+      // A button only when there is something to open. A control that does
+      // nothing is worse than no control: it is a promise the row cannot keep.
+      var line = el(opens ? 'button' : 'div', 'catline');
+      if (opens) {
+        line.type = 'button';
+        line.setAttribute('aria-expanded', open ? 'true' : 'false');
+        line.addEventListener('click', function () {
+          state.expanded[row.name] = !open;
+          render();
+        });
+      }
 
       // The icon comes from the `categories` tab, which has carried one since
       // the tab was seeded — the page simply never asked for it. A dozen bars
@@ -577,6 +650,7 @@
       var icon = categoryIcon(row.name);
       if (icon) add(label, el('span', null, icon + ' '));
       add(label, document.createTextNode(row.name));
+      if (opens) add(label, el('span', 'muted', open ? '  ▾' : '  ▸'));
 
       add(line, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
 
@@ -584,8 +658,45 @@
       fill.style.width = Math.max(2, (row.total / biggest) * 100).toFixed(1) + '%';
       add(line, add(el('div', 'bar-track'), fill));
       add(box, line);
+
+      if (!open) return;
+
+      // Children are drawn against their *parent's* total, not the biggest
+      // category's. The question a drill-down answers is "what is this category
+      // made of", and a share of the whole screen cannot answer it — every bar
+      // under a small category would be a sliver.
+      var kids = el('div', 'children');
+      children.forEach(function (child) {
+        var kid = el('div');
+        kid.style.marginBottom = '8px';
+        add(kid, add(el('div', 'row'),
+          add(el('span', 'grow ellipsis'), document.createTextNode(child.name)),
+          el('span', 'num muted', money(child.total))));
+
+        var kidFill = el('div', 'bar-fill');
+        kidFill.style.width =
+          Math.max(2, (child.total / (row.total || 1)) * 100).toFixed(1) + '%';
+        add(kid, add(el('div', 'bar-track'), kidFill));
+        add(kids, kid);
+      });
+      add(box, kids);
     });
     return box;
+  }
+
+  /**
+   * A colour for a category, derived rather than stored.
+   *
+   * `categories` carries an icon and no colour, and adding a colour column
+   * would be a migration plus a thing to keep filled in — for something a hash
+   * of the name gives free, stably, and identically on every device. Fixed
+   * saturation and lightness so every disc reads at the same weight in both
+   * themes; only the hue moves.
+   */
+  function categoryColor(name) {
+    var hash = 0;
+    for (var i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % 360;
+    return 'hsl(' + hash + ', 58%, 47%)';
   }
 
   // -------------------------------------------------------------------------
@@ -792,25 +903,74 @@
     var button = el('button', 'tap');
     button.type = 'button';
 
-    var dot = el('div', 'dot' + (record.confirmed ? ' hidden' : ''));
-    dot.setAttribute('aria-hidden', 'true');
-    add(button, dot);
+    // What this was, then where it came from, then what the bank called it.
+    //
+    // The description used to lead, and a bank's description is the least
+    // readable field it sends — "ADDEBITO UNIPOLMOVE - N 555012345/2026" tells
+    // you nothing at a glance that "Transport" does not. It stays, third,
+    // because it is the only line that distinguishes two rows in the same
+    // category on the same day.
+    var what = record.subcategory || record.category || '(uncategorised)';
+
+    var avatar = el('div', 'avatar');
+    avatar.style.background = categoryColor(record.category || what);
+    avatar.setAttribute('aria-hidden', 'true');
+    add(avatar, document.createTextNode(categoryIcon(record.category) || ''));
+    if (record.confirmed) add(avatar, el('span', 'check'));
+    add(button, avatar);
 
     var middle = el('div', 'grow');
-    add(middle, add(el('div', 'ellipsis'),
-      document.createTextNode(record.description || '(no description)')));
-    add(middle, el('div', 'muted', shortDate(record.date) + ' · ' + record.account +
-      (record.category ? ' · ' + (record.subcategory || record.category) : '')));
+    add(middle, add(el('div', 'ellipsis'), document.createTextNode(what)));
+    add(middle, el('div', 'rec-sub', record.account));
+    if (record.description) {
+      add(middle, add(el('div', 'rec-desc ellipsis'),
+        document.createTextNode(record.description)));
+    }
     add(button, middle);
 
     add(button, el('span', 'num ' + (record.amount < 0 ? 'out' : 'in'),
       record.amount === null ? '—' : money(record.amount)));
 
     button.setAttribute('aria-label',
-      (record.confirmed ? 'Confirmed. ' : 'Needs review. ') +
-      (record.description || 'transaction') + ', ' + money(record.amount));
+      (record.confirmed ? 'Confirmed. ' : 'Needs review. ') + what + ', ' +
+      shortDate(record.date) + ', ' + record.account + ', ' + money(record.amount) +
+      (record.description ? '. ' + record.description : ''));
     button.addEventListener('click', function () { openSheet(record); });
     return button;
+  }
+
+  /**
+   * The rows as consecutive runs of the same day.
+   *
+   * A run rather than a map keyed by date: the server has already sorted the
+   * page newest first, and re-grouping through an object would lose that order
+   * on the way through `Object.keys`. This preserves whatever order it was
+   * handed and only inserts a boundary where the day changes — which also
+   * means a page break mid-day produces two headings, correctly, rather than
+   * one heading with a gap in it.
+   */
+  function groupByDay(rows) {
+    var days = [];
+    (rows || []).forEach(function (record) {
+      var last = days[days.length - 1];
+      if (last && last.key === record.date) last.rows.push(record);
+      else days.push({ key: record.date, rows: [record] });
+    });
+    return days;
+  }
+
+  /** `2026-08-06` as `6 AUGUST`, or `TODAY` when it is. */
+  function dayHeading(key) {
+    if (!key) return 'No date';
+    if (key === state.data.generatedAt) return 'Today';
+
+    var parts = key.split('-');
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    if (isNaN(date.getTime())) return key;
+
+    return date.getDate() + ' ' +
+      date.toLocaleDateString(undefined, { month: 'long' }) +
+      (date.getFullYear() === new Date().getFullYear() ? '' : ' ' + date.getFullYear());
   }
 
   function renderRecords(root) {
@@ -823,7 +983,12 @@
         ? spinner()
         : el('p', 'muted', 'Nothing matches those filters.'));
     }
-    state.records.rows.forEach(function (record) { add(list, recordRow(record)); });
+    groupByDay(state.records.rows).forEach(function (day) {
+      var group = el('div', 'daygroup');
+      add(group, el('div', 'dayhead', dayHeading(day.key)));
+      day.rows.forEach(function (record) { add(group, recordRow(record)); });
+      add(list, group);
+    });
     add(root, list);
 
     add(root, el('p', 'muted',
@@ -837,6 +1002,81 @@
     }
   }
 
+  /** A headline number with the shape of it beside it. */
+  function statCard(label, value, thumb) {
+    var card = el('div', 'card');
+    var stat = el('div', 'stat');
+
+    var left = el('div', 'grow');
+    add(left, el('div', 'label', label));
+    add(left, el('div', 'value num', value));
+    add(stat, left);
+    add(stat, thumb);
+
+    return add(card, stat);
+  }
+
+  /** The balance line, small enough that only its direction survives. */
+  function sparkline(series) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40',
+      preserveAspectRatio: 'none' });
+    if (!series || series.length < 2) return svg;
+
+    var values = series.map(function (point) { return point.value; });
+    var low = Math.min.apply(null, values);
+    var span = (Math.max.apply(null, values) - low) || 1;
+
+    add(svg, svgNode('polyline', {
+      fill: 'none', class: 'spark', 'vector-effect': 'non-scaling-stroke',
+      points: series.map(function (point, i) {
+        return ((i / (series.length - 1)) * 100).toFixed(1) + ',' +
+          (38 - ((point.value - low) / span) * 36).toFixed(1);
+      }).join(' ')
+    }));
+    return svg;
+  }
+
+  /**
+   * Spending split by category, as a ring.
+   *
+   * A radius of 15.915 gives a circumference of almost exactly 100, so a
+   * slice's share *is* its `stroke-dasharray` — no arc paths and no
+   * trigonometry. Five slices, because a ring 62 pixels wide cannot show more
+   * than that as anything but a texture.
+   */
+  function donut(rows) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 42 42' });
+    var slices = (rows || []).slice(0, 5);
+    var total = slices.reduce(function (sum, row) { return sum + row.total; }, 0);
+    if (!total) return svg;
+
+    var offset = 0;
+    slices.forEach(function (row) {
+      var share = (row.total / total) * 100;
+      add(svg, svgNode('circle', {
+        cx: 21, cy: 21, r: 15.915, fill: 'none', 'stroke-width': 6,
+        stroke: categoryColor(row.name),
+        'stroke-dasharray': share.toFixed(2) + ' ' + (100 - share).toFixed(2),
+        'stroke-dashoffset': (25 - offset).toFixed(2)
+      }));
+      offset += share;
+    });
+    return svg;
+  }
+
+  /** In against out, which is the whole of what a cashflow number means. */
+  function flowThumb(totals) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40' });
+    var biggest = Math.max(totals.income, totals.expenses, 1);
+
+    [[totals.income, 5, 'barmark up'], [totals.expenses, 22, 'barmark']]
+      .forEach(function (bar) {
+        add(svg, svgNode('rect', { x: 0, y: bar[1], height: 13, rx: 3,
+          width: Math.max(3, (bar[0] / biggest) * 100).toFixed(1), class: bar[2] }));
+      });
+    return svg;
+  }
+
   function renderAnalytics(root) {
     add(root, el('h1', null, 'Charts'));
     add(root, filterBar('analytics', {}));
@@ -844,20 +1084,19 @@
     var data = state.data.analytics;
     if (!data) return add(root, spinner());
 
-    var totals = el('div', 'card');
-    add(totals, el('div', 'muted', shortDate(data.window.from) + ' — ' + shortDate(data.window.to)));
-    add(totals, add(el('div', 'row'),
-      el('span', null, 'Spent'), el('span', 'num out', money(data.totals.expenses))));
-    add(totals, add(el('div', 'row'),
-      el('span', null, 'Earned'), el('span', 'num in', money(data.totals.income))));
-    add(totals, add(el('div', 'row'),
-      el('span', null, 'Net'),
-      el('span', 'num ' + (data.totals.net < 0 ? 'out' : 'in'), money(data.totals.net))));
+    add(root, el('div', 'muted',
+      shortDate(data.window.from) + ' — ' + shortDate(data.window.to)));
+
+    // Three answers, biggest first, each with its shape next to it. The full
+    // charts are below; these are what you read without scrolling.
+    add(root, statCard('Balance', money(data.netWorth.total), sparkline(data.balance)));
+    add(root, statCard('Spending', money(data.totals.expenses), donut(data.byCategory)));
+    add(root, statCard('Cash flow', money(data.totals.net), flowThumb(data.totals)));
+
     if (data.totals.unconvertible) {
-      add(totals, el('div', 'muted', data.totals.unconvertible +
-        ' row(s) left out — no ' + data.currency + ' amount for them.'));
+      add(root, add(el('div', 'card'), el('div', 'muted', data.totals.unconvertible +
+        ' row(s) left out — no ' + data.currency + ' amount for them.')));
     }
-    add(root, totals);
 
     add(root, el('h2', null, 'Cashflow'));
     add(root, add(el('div', 'card'), barChart(data.cashflow)));
@@ -865,11 +1104,11 @@
     add(root, el('h2', null, 'Net worth'));
     add(root, add(el('div', 'card'), lineChart(data.balance)));
 
+    // One list, not two. `bySubcategory` is still sent and still ranks
+    // globally, but showing it beside its parent invited the comparison it
+    // cannot survive — see `nestedTotals_` for why the two disagree.
     add(root, el('h2', null, 'By category'));
     add(root, add(el('div', 'card'), categoryBars(data.byCategory)));
-
-    add(root, el('h2', null, 'By subcategory'));
-    add(root, add(el('div', 'card'), categoryBars(data.bySubcategory)));
   }
 
   /**

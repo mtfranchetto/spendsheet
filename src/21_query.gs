@@ -320,6 +320,7 @@ function aggregate_(rows, window) {
   var totals = { expenses: 0, income: 0, net: 0, count: 0, unconvertible: 0 };
   var byCategory = {};
   var bySubcategory = {};
+  var childrenOf = {};
   var buckets = {};
   var monthly = window ? spansMoreThan_(window, QUERY_DAILY_MAX_DAYS) : false;
 
@@ -342,6 +343,7 @@ function aggregate_(rows, window) {
     if (amount < 0) {
       addTo_(byCategory, row.category, -amount);
       addTo_(bySubcategory, row.subcategory, -amount);
+      addUnder_(childrenOf, row.category, row.subcategory, -amount);
     }
 
     var day = dayNumber_(row.booking_date);
@@ -362,7 +364,7 @@ function aggregate_(rows, window) {
 
   return {
     totals: totals,
-    byCategory: rankedTotals_(byCategory),
+    byCategory: nestedTotals_(byCategory, childrenOf),
     bySubcategory: rankedTotals_(bySubcategory),
     cashflow: filledBuckets_(buckets, window, monthly),
     bucketSize: monthly ? 'month' : 'day'
@@ -372,6 +374,43 @@ function aggregate_(rows, window) {
 function addTo_(target, name, amount) {
   var key = isBlankCell_(name) ? '(uncategorised)' : String(name);
   target[key] = (target[key] || 0) + amount;
+}
+
+/** The same tally, one level down: a subcategory total inside its own parent. */
+function addUnder_(target, parent, child, amount) {
+  var key = isBlankCell_(parent) ? '(uncategorised)' : String(parent);
+  if (!target[key]) target[key] = {};
+  addTo_(target[key], child, amount);
+}
+
+/**
+ * Each category with its own subcategories under it.
+ *
+ * `byCategory` and `bySubcategory` are two independent groupings of the same
+ * rows, which is honest and reads as a contradiction. A row categorised
+ * `Food & Drink` with no subcategory counts under Food & Drink in one list and
+ * under `(uncategorised)` in the other — so the flat subcategory list shows an
+ * enormous uncategorised total sitting next to a small one, and nothing on
+ * screen says they are counting different things.
+ *
+ * Nesting removes the question rather than answering it. `(uncategorised)`
+ * appearing *inside* Food & Drink is self-explanatory: those are its rows with
+ * no subcategory. The flat list stays for anything that wants a global ranking,
+ * but nothing has to read the two side by side and reconcile them.
+ *
+ * Children are ranked and capped like their parents. A category with one
+ * subcategory that is simply itself gets an empty list rather than a row
+ * repeating the total above it.
+ */
+function nestedTotals_(byCategory, childrenOf) {
+  return rankedTotals_(byCategory).map(function (entry) {
+    var children = rankedTotals_(childrenOf[entry.name] || {});
+    return {
+      name: entry.name,
+      total: entry.total,
+      children: children.length === 1 && children[0].total === entry.total ? [] : children
+    };
+  });
 }
 
 /** Biggest first, capped, because a chart of 400 merchants is a smear. */

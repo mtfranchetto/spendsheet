@@ -256,7 +256,7 @@ describe('aggregating', () => {
       on(4, { amount_base: 12, category: 'Food & Drink' })
     ], window);
 
-    expect(result.byCategory).toEqual([{ name: 'Food & Drink', total: 30 }]);
+    expect(result.byCategory).toEqual([{ name: 'Food & Drink', total: 30, children: [] }]);
     expect(result.totals.net).toBe(-18);
   });
 
@@ -272,7 +272,61 @@ describe('aggregating', () => {
 
   it('names an uncategorised row rather than dropping it out of the total', () => {
     const result = ctx.aggregate_([on(3, { amount_base: -10, category: '' })], window);
-    expect(result.byCategory).toEqual([{ name: '(uncategorised)', total: 10 }]);
+    expect(result.byCategory).toEqual([{ name: '(uncategorised)', total: 10, children: [] }]);
+  });
+
+  /**
+   * The two groupings count different things, and nesting is what says so.
+   *
+   * `byCategory` and `bySubcategory` are independent tallies of the same rows,
+   * so a row categorised `Food & Drink` with no subcategory lands under Food &
+   * Drink in one and under `(uncategorised)` in the other. Read side by side
+   * that is a contradiction — a huge uncategorised subcategory total next to a
+   * small uncategorised category total — and the numbers are both correct.
+   *
+   * Under its parent, `(uncategorised)` needs no explanation: those are Food &
+   * Drink's rows that never got a subcategory.
+   */
+  it('puts each subcategory under the category it was spent in', () => {
+    const result = ctx.aggregate_([
+      on(3, { amount_base: -10, category: 'Food & Drink', subcategory: 'Groceries' }),
+      on(4, { amount_base: -4, category: 'Food & Drink', subcategory: '' }),
+      on(5, { amount_base: -7, category: 'Transport', subcategory: '' })
+    ], window);
+
+    expect(result.byCategory).toEqual([
+      { name: 'Food & Drink', total: 14, children: [
+        { name: 'Groceries', total: 10 },
+        { name: '(uncategorised)', total: 4 }
+      ] },
+      { name: 'Transport', total: 7, children: [] }
+    ]);
+  });
+
+  /*
+    A category whose every row carries the same subcategory would otherwise
+    expand into one child repeating the number above it, which is a row that
+    costs a tap and says nothing.
+  */
+  it('offers no drill-down when the child is just the parent again', () => {
+    const result = ctx.aggregate_([
+      on(3, { amount_base: -10, category: 'Housing', subcategory: 'Rent' })
+    ], window);
+
+    expect(result.byCategory[0].children).toEqual([]);
+  });
+
+  /*
+    The flat list stays: it answers "what were my biggest subcategories overall",
+    which the nested one cannot without reading every branch.
+  */
+  it('keeps the flat subcategory ranking alongside the nested one', () => {
+    const result = ctx.aggregate_([
+      on(3, { amount_base: -10, category: 'Food & Drink', subcategory: 'Groceries' }),
+      on(4, { amount_base: -4, category: 'Shopping', subcategory: 'Clothes' })
+    ], window);
+
+    expect(result.bySubcategory.map((r) => r.name)).toEqual(['Groceries', 'Clothes']);
   });
 
   it('groups by subcategory as well, in one pass', () => {
