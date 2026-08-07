@@ -941,9 +941,13 @@ function describeQueryCost() {
     fetchMs: fetchMs,
     missMs: sheetMs + serialiseMs + storeMs + parseMs,
 
-    verdict: 'Compare missMs against sheetMs. The cache is only worth keeping ' +
-      'if what it adds to a miss is repaid by the hits that follow — and the ' +
-      'miss is the first screen you see.'
+    // What the cache costs to fill, against what the read costs anyway.
+    cacheOverheadMs: serialiseMs + storeMs + parseMs,
+    verdict: (serialiseMs + storeMs + parseMs) * 4 < sheetMs
+      ? 'The cache earns its place: filling it costs a fraction of the read, ' +
+        'and every read after it is a fetch.'
+      : 'The cache costs a real share of the miss. Compare it against how many ' +
+        'hits a session actually gets before the TTL expires.'
   };
 
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app query cost', report);
