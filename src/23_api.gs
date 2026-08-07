@@ -81,6 +81,13 @@ function requireOwner_() {
  * about once a month, they are what every filter on every screen is built
  * from, and they are small. Fetching them per screen would be the round-trip
  * argument applied where it actually holds.
+ *
+ * **"Accounts" here means `accountNames_()` — the names, and nothing else.**
+ * Worth saying because the sentence above is true of the names and false of
+ * the tab they come from: `accounts` also holds every balance, and those are
+ * rewritten on every sync. Reading that as "the accounts tab is stable" is how
+ * you end up caching a balance for six hours and showing last night's net
+ * worth as today's.
  */
 function appBootstrap() {
   // The gate runs inside the read cache, not before it, and the order still
