@@ -165,24 +165,24 @@ function appDashboardData_() {
   var window = resolveWindow_({ kind: 'mtd' }, now);
   var previous = lastMonthToDate_(now);
 
-  // Two months and a short queue is the whole of what this screen draws, so
-  // it asks for exactly those rows. `ledgerIndex_` says which they are from
-  // four narrow columns; everything else on the tab is never read. See the
-  // note on LEDGER_INDEX_COLUMNS for why a tail read cannot do this job.
-  var index = ledgerIndex_();
-  var wanted = index.filter(function (entry) {
-    return entryInWindow_(entry, window) || entryInWindow_(entry, previous);
-  }).map(function (entry) { return entry.row; });
-
-  // The oldest unconfirmed rows, which neither window can contain: a row left
-  // unanswered two years ago is precisely what the queue exists to surface,
-  // and it sits nowhere near this month.
-  index.filter(function (entry) { return !entry.confirmed; })
-    .sort(function (a, b) { return a.order - b.order; })
-    .slice(0, queueSize_())
-    .forEach(function (entry) { wanted.push(entry.row); });
-
-  var ledger = readLedgerRows_(wanted);
+  // One read of the whole tab, which is not what it looks like.
+  //
+  // This screen draws two months and a short queue, so it briefly read exactly
+  // those rows: four narrow columns to decide which they were, then only those
+  // rows at full width. The arithmetic was cells transferred — four columns
+  // against thirty — and the arithmetic was the wrong model.
+  //
+  // Measured on the live book at 4,615 rows: the full thirty-column read takes
+  // **2,025ms**, and the four single-column reads that were supposed to replace
+  // it take **3,678ms between them**. A `getValues` costs roughly the same
+  // whether it returns one column or thirty; what it costs is the *call*. Four
+  // calls is four times the price for an eighth of the data.
+  //
+  // So the narrow path made the screen it was written for 93% slower, and
+  // `describeQueryCost` is what said so. The saving that remains — and it is
+  // the real one — is that the bootstrap no longer fetches Charts and Records,
+  // which is three of these reads down to one.
+  var ledger = readLedger_();
 
   var month = aggregate_(ledger.filter(function (row) {
     return matchesFilters_(row, { window: window });

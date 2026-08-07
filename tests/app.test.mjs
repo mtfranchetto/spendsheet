@@ -650,35 +650,6 @@ describe('what the dashboard reads', () => {
   });
 });
 
-describe('reading chosen rows', () => {
-  const c = book([
-    tx({ uid: 'a', amount_base: -1 }),
-    tx({ uid: 'b', amount_base: -2 }),
-    tx({ uid: 'c', amount_base: -3 })
-  ]);
-
-  it('returns the rows asked for and no others', () => {
-    expect(c.readLedgerRows_([2, 4]).map((r) => r.uid)).toEqual(['a', 'c']);
-  });
-
-  it('returns them in sheet order, whatever order they were asked for in', () => {
-    expect(c.readLedgerRows_([4, 2, 3]).map((r) => r.uid)).toEqual(['a', 'b', 'c']);
-  });
-
-  it('asks for a row once however many times it is named', () => {
-    expect(c.readLedgerRows_([3, 3, 3]).map((r) => r.uid)).toEqual(['b']);
-  });
-
-  it('reads nothing when nothing was selected', () => {
-    expect(c.readLedgerRows_([])).toEqual([]);
-  });
-
-  /* Row 1 is the header. Asking for it would return a row of column names. */
-  it('refuses the header row and anything below it', () => {
-    expect(c.readLedgerRows_([0, 1])).toEqual([]);
-  });
-});
-
 /**
  * The page, to the extent a file test can reach it.
  *

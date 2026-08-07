@@ -597,127 +597,31 @@ function readLedger_() {
 }
 
 /**
- * Which rows a screen needs, decided without reading them.
+ * Why there is no narrow read here, though there obviously should be.
  *
- * The dashboard is the screen you always open, and it wants very little: this
- * month's rows, the same stretch of last month, and the oldest unconfirmed
- * handful. `readLedger_` found them by reading 4,600 rows by thirty columns and
- * then discarding almost all of it — three times over, because the bootstrap
- * called three things that each read the whole ledger for themselves.
+ * The dashboard draws two months and a short review queue — a few dozen rows
+ * out of thousands — so it read four narrow columns to work out which rows it
+ * needed and then read only those at full width. Cells transferred fell by
+ * about twenty times.
  *
- * The cheap saving is not fewer rows, it is fewer **columns**. Four narrow
- * reads say which row numbers matter, and a second pass reads only those rows
- * at full width. `booking_date` places a row in a window, `in_reports` is the
- * same spending gate `matchesFilters_` applies, and `confirmed` *and*
- * `category_override` are both here because `isConfirmedRow_` reads both — an
- * override counts as a confirmation without the tick, and indexing only the
- * checkbox would put rows you have already answered back in the queue.
+ * It was **93% slower**, measured on the live book at 4,615 rows:
  *
- * **A tail read was the obvious alternative and it is wrong.** `transactions`
- * is append-only and never sorted, so row order is *import* order rather than
- * date order: a sync backfills within `sync_window_days`, and an import can
- * append a year of history in one go. The review queue makes it worse — it
- * wants the **oldest** unconfirmed rows, which is exactly what the tail does
- * not hold. Scanning a column is cheap enough that guessing is not worth what
- * it would cost to be quietly wrong.
+ *     one 30-column read ..................... 2,025ms
+ *     four 1-column reads .................... 3,678ms
+ *     plus the 20 rows it then wanted ........   238ms
+ *
+ * A `getValues` costs about the same whether it returns one column or thirty.
+ * What it costs is the *call* — the round trip into the spreadsheet service —
+ * and cells barely register beside it. Four calls is four times the price for
+ * an eighth of the data, and no amount of narrowing wins against that.
+ *
+ * The rule this leaves: **read the tab once and filter in memory.** The loops
+ * are ~500ms over 4,600 rows, which is the cheap half of every query here.
+ * If this ever needs to be faster the answer is to not make the call at all —
+ * see the cache note on `readLedger_` — never to make more, smaller ones.
+ *
+ * `git log -- src/21_query.gs` for `ledgerIndex_` and `readLedgerRows_`.
  */
-var LEDGER_INDEX_COLUMNS = ['booking_date', 'in_reports', 'confirmed', 'category_override'];
-
-/**
- * How far apart two wanted rows may sit before reading them separately wins.
- *
- * Every `getValues` is a round trip, and the rows a screen asks for are
- * normally clustered — a month of them is contiguous. Reading across a gap of a
- * few rows is cheaper than a second call; reading across a gap of thousands is
- * the full-ledger read this exists to avoid.
- */
-var LEDGER_RUN_GAP = 50;
-
-/** One entry per data row: enough to select, never enough to display. */
-function ledgerIndex_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
-  if (!sheet) return [];
-
-  var last = lastRecordRow_(sheet, colIndex_(TX_COLUMNS, 'uid'));
-  if (last < 2) return [];
-
-  var height = last - 1;
-  var column = {};
-  LEDGER_INDEX_COLUMNS.forEach(function (name) {
-    column[name] = sheet.getRange(2, colIndex_(TX_COLUMNS, name), height, 1).getValues();
-  });
-
-  var index = [];
-  for (var i = 0; i < height; i++) {
-    var date = column.booking_date[i][0];
-    index.push({
-      row: i + 2,
-      day: dayNumber_(date),
-      order: dateOrder_(date),
-      inReports: isTruthyCell_(column.in_reports[i][0]),
-      confirmed: isConfirmedRow_({
-        confirmed: column.confirmed[i][0],
-        category_override: column.category_override[i][0]
-      })
-    });
-  }
-  return index;
-}
-
-/** The window test on an index entry — the same one `matchesFilters_` applies to a row. */
-function entryInWindow_(entry, window) {
-  if (!entry.inReports || entry.day === null) return false;
-  return entry.day >= window.from && entry.day <= window.to;
-}
-
-/**
- * Full-width records for a chosen set of rows, in as few reads as it can manage.
- *
- * Returned in sheet order, like `readLedger_`, because `_row` is what breaks a
- * date tie in `webAppRecords_` and a caller should not have to know that the
- * rows arrived in runs.
- */
-function readLedgerRows_(rowNumbers) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
-  if (!sheet) return [];
-
-  var wanted = {};
-  var sorted = [];
-  (rowNumbers || []).forEach(function (value) {
-    var row = Math.floor(Number(value));
-    if (!isFinite(row) || row < 2 || wanted[row]) return;
-    wanted[row] = true;
-    sorted.push(row);
-  });
-  if (!sorted.length) return [];
-  sorted.sort(function (a, b) { return a - b; });
-
-  var records = [];
-  ledgerRuns_(sorted).forEach(function (run) {
-    var block = sheet.getRange(run.from, 1, run.to - run.from + 1, TX_COLUMNS.length).getValues();
-    block.forEach(function (cells, i) {
-      var row = run.from + i;
-      // A run may span rows nobody asked for; reading them was cheaper than a
-      // second call, but returning them would widen every total downstream.
-      if (!wanted[row]) return;
-      var record = { _row: row };
-      TX_COLUMNS.forEach(function (name, c) { record[name] = cells[c]; });
-      records.push(record);
-    });
-  });
-  return records;
-}
-
-/** Sorted row numbers as blocks, merging gaps too small to be worth a second call. */
-function ledgerRuns_(sorted) {
-  var runs = [];
-  sorted.forEach(function (row) {
-    var last = runs[runs.length - 1];
-    if (last && row - last.to <= LEDGER_RUN_GAP) last.to = row;
-    else runs.push({ from: row, to: row });
-  });
-  return runs;
-}
 
 /**
  * Everything the Analytics page draws, for one set of filters.
@@ -872,27 +776,6 @@ function describeQueryCost() {
   var analytics = webAppAnalytics_({ period: { kind: 'mtd' } });
   var queryMs = Date.now() - startedQuery;
 
-  // The dashboard's path, timed separately, because it is a different one and
-  // the number above says nothing about it. Four narrow columns decide which
-  // rows matter, then only those rows are read at full width — and whether
-  // that actually wins is a question about per-call overhead against payload
-  // size, which is exactly the kind of thing a guess gets backwards. The
-  // components are timed rather than `appDashboardData_` itself: that lives in
-  // 23 and nothing here may reach upwards into it.
-  var startedIndex = Date.now();
-  var index = ledgerIndex_();
-  var indexMs = Date.now() - startedIndex;
-
-  var window = resolveWindow_({ kind: 'mtd' }, new Date());
-  var wanted = index.filter(function (entry) {
-    return entryInWindow_(entry, window);
-  }).map(function (entry) { return entry.row; });
-
-  var startedRows = Date.now();
-  var picked = readLedgerRows_(wanted);
-  var rowsMs = Date.now() - startedRows;
-  var dashboardMs = indexMs + rowsMs;
-
   var report = {
     rows: ledger.length,
     readMs: readMs,
@@ -900,28 +783,16 @@ function describeQueryCost() {
     matchedThisMonth: analytics.totals.count,
     unconvertible: analytics.totals.unconvertible,
 
-    indexScanMs: indexMs,
-    pickedRows: picked.length,
-    pickedRowsMs: rowsMs,
-    dashboardReadMs: dashboardMs,
-    narrowSaving: readMs > 0 ? Math.round((1 - dashboardMs / readMs) * 100) + '%' : 'n/a',
-
     verdict: readMs > 1000
-      ? 'The full read is over a second, so Charts and Records pay it on every ' +
-        'open. A CacheService read-through would pay for itself there.'
-      : 'The read is comfortable. A cache would be a second copy of the ledger for nothing.',
-    narrowVerdict: dashboardMs < readMs
-      ? 'The narrow read is cheaper than the full one, so the dashboard is right to use it.'
-      : 'The narrow read is NOT cheaper. Per-call overhead beats the saving — ' +
-        'the dashboard should go back to one full read.'
+      ? 'The read is over a second and every screen pays it. A CacheService ' +
+        'read-through would pay for itself.'
+      : 'The read is comfortable. A cache would be a second copy of the ledger for nothing.'
   };
 
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app query cost', report);
   SpreadsheetApp.getActiveSpreadsheet().toast(
     report.rows + ' rows read in ' + readMs + 'ms; a full month-to-date query took ' +
-    queryMs + 'ms.\n\nThe dashboard reads ' + picked.length + ' rows in ' +
-    dashboardMs + 'ms (' + report.narrowSaving + ' less).\n\n' +
-    report.verdict + '\n' + report.narrowVerdict, 'Query cost', 30);
+    queryMs + 'ms.\n\n' + report.verdict, 'Query cost', 30);
 
   return report;
 }
