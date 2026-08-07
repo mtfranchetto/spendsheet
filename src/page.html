@@ -1656,48 +1656,36 @@
    * call still bundled the cheap half of the dashboard with the expensive one,
    * so net worth and the tiles waited ~1,600ms on a ledger they do not use.
    *
-   * In sequence, not in parallel. Parallel was tried first and produced no
-   * staging whatever — spinner to fully-drawn in one step — because two Apps
-   * Script executions reading the same spreadsheet contend, and the cheap call
-   * finished no sooner than the expensive one it was supposed to beat.
-   * Sequential costs ~800ms of total wall time and makes the first paint a
-   * guarantee rather than a race, which is the only reason to split at all.
+   * In parallel, and that was settled by measuring rather than by reasoning.
+   *
+   * They were briefly made sequential, on the theory that two executions
+   * reading the same spreadsheet contend and the cheap call would not finish
+   * first anyway. The evidence for it was "the whole screen arrives at once" —
+   * observed on a deployment that turned out to predate the split entirely and
+   * was making a single call. An inference drawn from a build that could not
+   * have staged anything.
+   *
+   * Measured against the live app, in one session, both orders back to back:
+   *
+   *     sequential ... first paint 3,206ms, everything 7,710ms
+   *     parallel ..... first paint 3,588ms, everything 3,916ms
+   *
+   * They do not contend — `appOverview` came back *sooner* running alongside
+   * `appOpen` (3,916ms) than after it (4,504ms). Sequential nearly doubles the
+   * total and buys nothing.
+   *
+   * The reason the two are so close is the finding under all of this: a
+   * `google.script.run` round trip costs about **2,700ms before any of our
+   * code runs** — `appOpen` does ~800ms of work on the server and takes
+   * ~3,500ms from here, twice in a row, within 10ms of itself. Overlapping
+   * that fixed cost is worth far more than removing server work from either
+   * call.
    *
    * A failure before `appOpen` lands is fatal — it carries the gate's verdict
    * and there is nothing to draw without it. A failure after it is not: what
    * is on screen is still true.
    */
-  call('appOpen').then(function (result) {
-    state.currency = result.currency;
-    state.lists.accounts = result.lists.accounts;
-    state.lists.cashAccounts = result.lists.cashAccounts;
-    state.data.open = result;
-    state.data.generatedAt = result.generatedAt;
-    state.timing.open = Date.now() - state.timing.startedAt;
-    render();
-
-    // Started here rather than alongside, and that is the whole point.
-    //
-    // Both were fired at once first, on the obvious argument that two requests
-    // in parallel finish sooner than two in sequence. On this stack they did
-    // not stagger at all: the screen went from spinner to fully drawn in one
-    // step, which is what it looks like when the cheap call finishes no sooner
-    // than the expensive one. Two executions reading the same spreadsheet
-    // contend, and whatever `appOpen` gained by starting early it gave back
-    // queueing behind the ledger read.
-    //
-    // Sequential costs ~800ms of total wall time and buys the one thing the
-    // split exists for: the top of the screen is *guaranteed* on it before the
-    // ledger is asked for. A first paint that races is not a first paint.
-    return call('appOverview');
-  }).then(function (result) {
-    state.lists.labels = result.lists.labels;
-    state.lists.categories = result.lists.categories;
-    state.lists.periods = result.lists.periods;
-    state.data.overview = result;
-    state.timing.overview = Date.now() - state.timing.startedAt;
-    render();
-  }).catch(function (error) {
+  var fatal = function (error) {
     // Which half failed decides what this means, and `state.data.open` is how
     // you tell. Before it lands there is nothing on screen and nothing to say
     // but the error — it carries the gate's verdict, so "Not available" is the
@@ -1706,8 +1694,7 @@
     // what is known.
     if (state.data.open) {
       state.overviewError = error.message;
-      render();
-      return;
+      return render();
     }
 
     var root = clear(document.getElementById('screens'));
@@ -1716,7 +1703,26 @@
     add(root, el('p', 'muted',
       'If this says "Not available", you are signed in as a different Google account. ' +
       'Switch accounts and reload.'));
-  });
+  };
+
+  call('appOpen').then(function (result) {
+    state.currency = result.currency;
+    state.lists.accounts = result.lists.accounts;
+    state.lists.cashAccounts = result.lists.cashAccounts;
+    state.data.open = result;
+    state.data.generatedAt = result.generatedAt;
+    state.timing.open = Date.now() - state.timing.startedAt;
+    render();
+  }).catch(fatal);
+
+  call('appOverview').then(function (result) {
+    state.lists.labels = result.lists.labels;
+    state.lists.categories = result.lists.categories;
+    state.lists.periods = result.lists.periods;
+    state.data.overview = result;
+    state.timing.overview = Date.now() - state.timing.startedAt;
+    render();
+  }).catch(fatal);
 
 })();
 </script>
