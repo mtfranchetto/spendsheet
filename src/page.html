@@ -1656,15 +1656,16 @@
    * call still bundled the cheap half of the dashboard with the expensive one,
    * so net worth and the tiles waited ~1,600ms on a ledger they do not use.
    *
-   * Fired in parallel rather than in sequence. Total server work goes up a
-   * little — each call reads `accounts` and `_config` for itself, and two
-   * executions cannot share a read cache — and the screen starts existing at
-   * ~800ms instead of ~2,400. That is the trade, and on a phone it is the
-   * right way round.
+   * In sequence, not in parallel. Parallel was tried first and produced no
+   * staging whatever — spinner to fully-drawn in one step — because two Apps
+   * Script executions reading the same spreadsheet contend, and the cheap call
+   * finished no sooner than the expensive one it was supposed to beat.
+   * Sequential costs ~800ms of total wall time and makes the first paint a
+   * guarantee rather than a race, which is the only reason to split at all.
    *
-   * `appOpen` failing is fatal, because it carries the gate's verdict and
-   * there is nothing to draw without it. `appOverview` failing is not: what is
-   * already on screen is still true.
+   * A failure before `appOpen` lands is fatal — it carries the gate's verdict
+   * and there is nothing to draw without it. A failure after it is not: what
+   * is on screen is still true.
    */
   call('appOpen').then(function (result) {
     state.currency = result.currency;
@@ -1674,9 +1675,41 @@
     state.data.generatedAt = result.generatedAt;
     state.timing.open = Date.now() - state.timing.startedAt;
     render();
+
+    // Started here rather than alongside, and that is the whole point.
+    //
+    // Both were fired at once first, on the obvious argument that two requests
+    // in parallel finish sooner than two in sequence. On this stack they did
+    // not stagger at all: the screen went from spinner to fully drawn in one
+    // step, which is what it looks like when the cheap call finishes no sooner
+    // than the expensive one. Two executions reading the same spreadsheet
+    // contend, and whatever `appOpen` gained by starting early it gave back
+    // queueing behind the ledger read.
+    //
+    // Sequential costs ~800ms of total wall time and buys the one thing the
+    // split exists for: the top of the screen is *guaranteed* on it before the
+    // ledger is asked for. A first paint that races is not a first paint.
+    return call('appOverview');
+  }).then(function (result) {
+    state.lists.labels = result.lists.labels;
+    state.lists.categories = result.lists.categories;
+    state.lists.periods = result.lists.periods;
+    state.data.overview = result;
+    state.timing.overview = Date.now() - state.timing.startedAt;
+    render();
   }).catch(function (error) {
-    // This one is fatal: it carries the gate's verdict and the whole top of
-    // the screen, so there is nothing to draw without it.
+    // Which half failed decides what this means, and `state.data.open` is how
+    // you tell. Before it lands there is nothing on screen and nothing to say
+    // but the error — it carries the gate's verdict, so "Not available" is the
+    // likely one. After it lands, net worth and the balances are up and still
+    // true, and replacing a working screen with an error would be a lie about
+    // what is known.
+    if (state.data.open) {
+      state.overviewError = error.message;
+      render();
+      return;
+    }
+
     var root = clear(document.getElementById('screens'));
     add(root, el('h1', null, 'Spendsheet'));
     add(root, add(el('div', 'banner bad'), el('div', null, error.message)));
@@ -1685,19 +1718,5 @@
       'Switch accounts and reload.'));
   });
 
-  call('appOverview').then(function (result) {
-    state.lists.labels = result.lists.labels;
-    state.lists.categories = result.lists.categories;
-    state.lists.periods = result.lists.periods;
-    state.data.overview = result;
-    state.timing.overview = Date.now() - state.timing.startedAt;
-    render();
-  }).catch(function (error) {
-    // Not fatal. Net worth and the tiles are already on screen and still true;
-    // saying so in the space the rest would have filled beats replacing a
-    // working screen with an error.
-    state.overviewError = error.message;
-    render();
-  });
 })();
 </script>
