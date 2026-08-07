@@ -154,8 +154,21 @@
 
   label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
   .field { width: 100%; }
-  .filters { display: flex; flex-wrap: wrap; gap: 8px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
   .filters > * { flex: 1 1 45%; min-width: 130px; }
+
+  /*
+    Every control says what it filters.
+
+    Two adjacent dropdowns both reading "All" is not a default, it is a
+    guessing game — the value is the same and only the position distinguishes
+    them, which is knowledge the screen refuses to show. The `aria-label` was
+    already there and was doing this job for a screen reader only.
+  */
+  .fld { display: flex; flex-direction: column; gap: 3px; }
+  .fld > select, .fld > input { width: 100%; }
+  .flabel { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+            color: var(--muted); font-weight: 600; padding-left: 2px; }
 
   /* A row you can act on. 44px is the smallest thing a thumb hits reliably. */
   .tap {
@@ -178,8 +191,9 @@
     Reduced motion gets a pulse rather than nothing at all: the preference is
     for less movement, not for losing the one cue that the app is alive.
   */
-  .spinner { display: flex; align-items: center; gap: 10px; color: var(--muted);
-             padding: 24px 4px; }
+  .spinner { display: flex; flex-direction: column; align-items: center;
+             justify-content: center; gap: 12px; color: var(--muted);
+             min-height: 45vh; padding: 24px 4px; }
   .spinner::before {
     content: ''; width: 18px; height: 18px; flex: none; border-radius: 50%;
     border: 2px solid var(--line); border-top-color: var(--accent);
@@ -654,7 +668,12 @@
 
       add(line, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
 
+      // The same hue the row's disc gets on Records, so a category looks like
+      // itself wherever you meet it. One accent colour for twelve bars meant
+      // the label was the only thing telling them apart, which is the work the
+      // bar was supposed to be doing.
       var fill = el('div', 'bar-fill');
+      fill.style.background = categoryColor(row.name);
       fill.style.width = Math.max(2, (row.total / biggest) * 100).toFixed(1) + '%';
       add(line, add(el('div', 'bar-track'), fill));
       add(box, line);
@@ -673,7 +692,11 @@
           add(el('span', 'grow ellipsis'), document.createTextNode(child.name)),
           el('span', 'num muted', money(child.total))));
 
+        // The parent's hue, not the child's. A subcategory belongs to the
+        // category it is nested under, and giving it a colour of its own would
+        // say the opposite — the `.children` rule fades it instead.
         var kidFill = el('div', 'bar-fill');
+        kidFill.style.background = categoryColor(row.name);
         kidFill.style.width =
           Math.max(2, (child.total / (row.total || 1)) * 100).toFixed(1) + '%';
         add(kid, add(el('div', 'bar-track'), kidFill));
@@ -735,13 +758,23 @@
       add(root, banner);
     });
 
-    // Accounts first, then the number they add up to.
+    // Net worth, then the accounts it is made of.
     //
-    // Net worth used to open this screen, on the argument that it is the one
-    // number you come here for. That is true and it is also the one number you
-    // cannot act on: every question it prompts — which account, is one of them
-    // stale, how much cash is left — is answered by the tiles. So the tiles
-    // come first, and the total sits under them where a total belongs.
+    // The tiles were briefly first, on the argument that a total is not a thing
+    // you can act on. True, and it turns out to be the wrong end to start from:
+    // the total is what you open the app to see, and the tiles are what you
+    // reach for once it has told you something. Summary then detail, which is
+    // the order the rest of this screen already reads in.
+    var worth = el('div', 'card');
+    add(worth, el('div', 'muted', 'Net worth'));
+    add(worth, el('div', 'big num', money(data.netWorth.total)));
+    if (data.netWorth.skipped) {
+      add(worth, el('div', 'muted',
+        data.netWorth.skipped + ' account(s) not counted — either out of net worth, or not in ' +
+        data.currency));
+    }
+    add(root, worth);
+
     add(root, el('h2', null, 'Accounts'));
     if (!data.accounts.length) {
       add(root, add(el('div', 'card'),
@@ -753,16 +786,6 @@
       });
       add(root, tiles);
     }
-
-    var worth = el('div', 'card');
-    add(worth, el('div', 'muted', 'Net worth'));
-    add(worth, el('div', 'big num', money(data.netWorth.total)));
-    if (data.netWorth.skipped) {
-      add(worth, el('div', 'muted',
-        data.netWorth.skipped + ' account(s) not counted — either out of net worth, or not in ' +
-        data.currency));
-    }
-    add(root, worth);
 
     var month = el('div', 'card');
     add(month, add(el('div', 'row'),
@@ -1138,7 +1161,7 @@
         : { kind: period.value };
       refreshCurrentScreen();
     });
-    add(bar, period);
+    add(bar, labelled('Period', period));
 
     add(bar, pickList('Account', state.lists.accounts, filters.account, function (value) {
       filters.account = value;
@@ -1161,7 +1184,7 @@
           filters.period[edge] = input.value;
           refreshCurrentScreen();
         });
-        add(bar, input);
+        add(bar, labelled(edge === 'from' ? 'From' : 'To', input));
       });
     }
 
@@ -1176,7 +1199,7 @@
         filters.search = search.value;
         refreshCurrentScreen();
       });
-      add(bar, search);
+      add(bar, labelled('Search', search));
     }
 
     if (options.unconfirmed) {
@@ -1193,6 +1216,14 @@
   }
 
   /** A `<select>` with `All` on top, which is the default and the common answer. */
+  /** A control with its name above it. */
+  function labelled(text, control) {
+    var field = el('div', 'fld');
+    add(field, el('span', 'flabel', text));
+    add(field, control);
+    return field;
+  }
+
   function pickList(label, values, chosen, onChange) {
     var select = el('select');
     select.setAttribute('aria-label', label);
@@ -1204,7 +1235,7 @@
       add(select, option);
     });
     select.addEventListener('change', function () { onChange(select.value); });
-    return select;
+    return labelled(label, select);
   }
 
   // -------------------------------------------------------------------------
@@ -1467,7 +1498,13 @@
   }
 
   function loadRecords() {
-    state.records.loading = true;
+    // Clear the rows, not just set the flag. This is a fresh query from offset
+    // zero, so what is on screen belongs to the *previous* filter — and the
+    // spinner only shows on an empty list, so leaving them there meant a filter
+    // change repainted the old answer with no sign anything was happening.
+    // `loadMoreRecords` is the one that must keep them: it appends.
+    state.records = { rows: [], offset: 0, hasMore: false, total: 0,
+      loading: true, loaded: false };
     render();
 
     call('appRecords', currentFilters('records'), 0).then(function (result) {
