@@ -402,6 +402,19 @@
                  search: '', unconfirmedOnly: false }
     },
     data: {},
+
+    /*
+      What the round trip cost the *client*, which is not what the server
+      reports. `describeDashboardCost` times the function; this times the whole
+      journey — `google.script.run`'s transport and serialisation included —
+      from the moment the page's script started running. The two differ, and
+      the difference had never once been measured.
+
+      It cannot see the part before that: the wrapper at script.google.com and
+      the sandboxed iframe load ahead of this code, cross-origin, with no clock
+      either side can share. Stopwatch minus `everything` is that number.
+    */
+    timing: { startedAt: Date.now(), open: 0, overview: 0 },
     // Keyed by the filter signature, so going back to a slice you have already
     // looked at is instant and costs no request.
     cache: {},
@@ -745,13 +758,29 @@
    */
   var NAV = ['dashboard', 'records', 'analytics'];
 
+  /**
+   * Draw what has arrived, rather than nothing until everything has.
+   *
+   * The screen used to be one call and one spinner, so the cheapest half of it
+   * — net worth and the tiles, which need no ledger — waited on the most
+   * expensive. Server time had come down from ~6,200ms to ~2,400 and the app
+   * still felt slow, because **what a person experiences is when the first
+   * real content appears, not when the last does.**
+   *
+   * So `open` and `overview` are fetched at the same time and each block draws
+   * as its half lands. `open` is ~800ms and holds the top of the screen; the
+   * rest keeps its own spinner until the ledger arrives, in place rather than
+   * over the whole page, so nothing that is already on screen moves when it
+   * does.
+   */
   function renderDashboard(root) {
-    var data = state.data.dashboard;
-    if (!data) return add(root, spinner());
+    var open = state.data.open;
+    var data = state.data.overview;
+    if (!open) return add(root, spinner());
 
     add(root, el('h1', null, 'Spendsheet'));
 
-    data.health.forEach(function (alert) {
+    (data ? data.health : []).forEach(function (alert) {
       var banner = el('div', 'banner ' + (alert.kind === 'consent' ? 'warn' : 'bad'));
       add(banner, el('div', null, alert.subject));
       add(banner, el('div', 'muted', alert.detail));
@@ -767,24 +796,39 @@
     // the order the rest of this screen already reads in.
     var worth = el('div', 'card');
     add(worth, el('div', 'muted', 'Net worth'));
-    add(worth, el('div', 'big num', money(data.netWorth.total)));
-    if (data.netWorth.skipped) {
+    add(worth, el('div', 'big num', money(open.netWorth.total)));
+    if (open.netWorth.skipped) {
       add(worth, el('div', 'muted',
-        data.netWorth.skipped + ' account(s) not counted — either out of net worth, or not in ' +
-        data.currency));
+        open.netWorth.skipped + ' account(s) not counted — either out of net worth, or not in ' +
+        open.currency));
     }
     add(root, worth);
 
     add(root, el('h2', null, 'Accounts'));
-    if (!data.accounts.length) {
+    if (!open.accounts.length) {
       add(root, add(el('div', 'card'),
         el('p', 'muted', 'No accounts yet — connect a bank from the Sheet.')));
     } else {
       var tiles = el('div', 'tiles');
-      data.accounts.forEach(function (account) {
-        add(tiles, accountTile(account, data.currency));
+      open.accounts.forEach(function (account) {
+        add(tiles, accountTile(account, open.currency));
       });
       add(root, tiles);
+    }
+
+    // Everything below here needs the ledger. One spinner in the flow, so the
+    // blocks above do not move when it resolves.
+    if (!data) {
+      var pending = el('div', 'card');
+      if (state.overviewError) {
+        add(pending, el('div', 'muted', state.overviewError));
+        add(pending, el('div', 'muted',
+          'Net worth and balances above are current. Reload to try the rest again.'));
+      } else {
+        add(pending, spinner());
+      }
+      add(root, pending);
+      return;
     }
 
     var month = el('div', 'card');
@@ -831,6 +875,20 @@
       add(review, more);
     }
     add(root, review);
+
+    /*
+      What the two calls cost this device, measured from the moment this
+      script started running. Deliberately on the screen rather than in a
+      console nobody opens on a phone.
+
+      It cannot include the wrapper at script.google.com or the sandboxed
+      iframe that loads ahead of this code — those are cross-origin and there
+      is no clock both sides can read. Time the open by hand and subtract
+      `everything`: what is left is Google's, and none of it is ours to fix.
+    */
+    add(root, el('p', 'muted',
+      'Top of screen in ' + (state.timing.open / 1000).toFixed(1) + 's, ' +
+      'everything in ' + (state.timing.overview / 1000).toFixed(1) + 's.'));
   }
 
   /**
@@ -1528,9 +1586,30 @@
     }).catch(fail);
   }
 
+  /**
+   * Re-read the dashboard after a write, through the call that drops the cache.
+   *
+   * One call rather than the two the boot makes: this runs after you have
+   * already been looking at the screen, so there is no first paint left to
+   * win, and the write that prompted it has bumped the data version anyway.
+   * The result is the union of both halves, distributed back into them.
+   */
   function loadDashboard() {
     call('appDashboard').then(function (result) {
-      state.data.dashboard = result;
+      state.data.open = {
+        currency: result.currency,
+        netWorth: result.netWorth,
+        accounts: result.accounts,
+        lists: state.data.open.lists,
+        generatedAt: state.data.generatedAt
+      };
+      state.data.overview = {
+        month: result.month,
+        health: result.health,
+        review: result.review,
+        lists: state.data.overview ? state.data.overview.lists : state.lists
+      };
+      state.overviewError = '';
       render();
     }).catch(fail);
   }
@@ -1569,32 +1648,56 @@
   }
 
   /**
-   * One call on open, for the one screen that opens.
+   * Two calls, fired together, drawn as they land.
    *
-   * This used to carry Charts and Records too, so that both were instant once
-   * the page had loaded. What it actually bought was a boot that read the
-   * whole ledger three times — once per screen, two of them for screens you
-   * might never open — on the phone where that read is slowest. `go()` has
-   * always fetched a screen the first time you reach it; the prefetch was
-   * pre-empting it rather than adding anything.
+   * This was one call, and before that one call carrying Charts and Records
+   * too — a boot that read the ledger three times for screens you might never
+   * open. Removing the prefetch was right and it was not enough: the remaining
+   * call still bundled the cheap half of the dashboard with the expensive one,
+   * so net worth and the tiles waited ~1,600ms on a ledger they do not use.
    *
-   * A failure here is the whole app rather than one screen, so it says so in
-   * words on the page instead of in a toast that fades — this is the one error
-   * a person cannot navigate away from.
+   * Fired in parallel rather than in sequence. Total server work goes up a
+   * little — each call reads `accounts` and `_config` for itself, and two
+   * executions cannot share a read cache — and the screen starts existing at
+   * ~800ms instead of ~2,400. That is the trade, and on a phone it is the
+   * right way round.
+   *
+   * `appOpen` failing is fatal, because it carries the gate's verdict and
+   * there is nothing to draw without it. `appOverview` failing is not: what is
+   * already on screen is still true.
    */
-  call('appBootstrap').then(function (result) {
+  call('appOpen').then(function (result) {
     state.currency = result.currency;
-    state.lists = result.lists;
-    state.data.dashboard = result.dashboard;
+    state.lists.accounts = result.lists.accounts;
+    state.lists.cashAccounts = result.lists.cashAccounts;
+    state.data.open = result;
     state.data.generatedAt = result.generatedAt;
+    state.timing.open = Date.now() - state.timing.startedAt;
     render();
   }).catch(function (error) {
+    // This one is fatal: it carries the gate's verdict and the whole top of
+    // the screen, so there is nothing to draw without it.
     var root = clear(document.getElementById('screens'));
     add(root, el('h1', null, 'Spendsheet'));
     add(root, add(el('div', 'banner bad'), el('div', null, error.message)));
     add(root, el('p', 'muted',
       'If this says "Not available", you are signed in as a different Google account. ' +
       'Switch accounts and reload.'));
+  });
+
+  call('appOverview').then(function (result) {
+    state.lists.labels = result.lists.labels;
+    state.lists.categories = result.lists.categories;
+    state.lists.periods = result.lists.periods;
+    state.data.overview = result;
+    state.timing.overview = Date.now() - state.timing.startedAt;
+    render();
+  }).catch(function (error) {
+    // Not fatal. Net worth and the tiles are already on screen and still true;
+    // saying so in the space the rest would have filled beats replacing a
+    // working screen with an error.
+    state.overviewError = error.message;
+    render();
   });
 })();
 </script>

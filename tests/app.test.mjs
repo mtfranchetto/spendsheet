@@ -65,8 +65,8 @@ const tx = (over = {}) => Object.assign({
 }, over);
 
 /** Every function a page can invoke by name. */
-const PUBLIC_API = ['appBootstrap', 'appAnalytics', 'appRecords', 'appDashboard',
-  'appConfirm', 'appAddCash', 'describeDashboardCost'];
+const PUBLIC_API = ['appOpen', 'appOverview', 'appAnalytics', 'appRecords',
+  'appDashboard', 'appConfirm', 'appAddCash', 'describeDashboardCost'];
 
 describe('the gate on every entry point', () => {
   it('lets the owner past the guard on each one', () => {
@@ -345,7 +345,7 @@ describe('adding cash from the app', () => {
 
   it('offers cash accounts only, since a bank row is one the sync will fetch', () => {
     const c = cashBook();
-    expect(c.appBootstrap().lists.cashAccounts).toEqual(['Wallet']);
+    expect(c.appOpen().lists.cashAccounts).toEqual(['Wallet']);
   });
 
   it('keeps the entry rather than losing it when a sync holds the lock', () => {
@@ -485,14 +485,35 @@ describe('the dashboard the app draws', () => {
   });
 });
 
-describe('the bootstrap call', () => {
-  it('carries the first screen and the lists, and nothing for the others', () => {
+describe('the two calls the app opens with', () => {
+  it('puts the ledger-free half in appOpen and nothing else there', () => {
+    // The whole point of the split: this call must not touch `transactions`,
+    // or it inherits the 1,600ms it exists to avoid waiting for.
     const c = book([tx()]);
-    const boot = c.appBootstrap();
+    const open = c.appOpen();
 
-    expect(Object.keys(boot).sort()).toEqual(
-      ['currency', 'dashboard', 'generatedAt', 'lists']);
-    expect(boot.lists.periods.map((p) => p.kind)).toContain('mtd');
+    expect(Object.keys(open).sort()).toEqual(
+      ['accounts', 'currency', 'generatedAt', 'lists', 'netWorth']);
+    expect(Object.keys(open.lists).sort()).toEqual(['accounts', 'cashAccounts']);
+  });
+
+  it('reads no transaction row for the first paint', () => {
+    // Asserted by counting rather than by reading the code, because the way
+    // this regresses is somebody adding one convenient field to `appOpen`.
+    const c = book([tx()]);
+    c.__resetReads();
+    c.appOpen();
+
+    expect(c.__reads('transactions')).toBe(0);
+  });
+
+  it('carries the month, the queue and the health banner in appOverview', () => {
+    const c = book([tx()]);
+    const overview = c.appOverview();
+
+    expect(Object.keys(overview).sort()).toEqual(
+      ['health', 'lists', 'month', 'review']);
+    expect(overview.lists.periods.map((p) => p.kind)).toContain('mtd');
   });
 
   /**
@@ -505,25 +526,29 @@ describe('the bootstrap call', () => {
    * stop asking, and the only visible symptom would be a slower boot.
    */
   it('does not prefetch the screens that fetch on navigation', () => {
-    const boot = book([tx()]).appBootstrap();
+    const c = book([tx()]);
 
-    expect(boot.analytics).toBeUndefined();
-    expect(boot.records).toBeUndefined();
+    [c.appOpen(), c.appOverview()].forEach((payload) => {
+      expect(payload.analytics).toBeUndefined();
+      expect(payload.records).toBeUndefined();
+    });
   });
 
   it('survives serialisation, because google.script.run has no choice', () => {
     const c = book([tx()]);
-    const boot = c.appBootstrap();
 
-    expect(() => JSON.parse(JSON.stringify(boot))).not.toThrow();
-    expect(JSON.parse(JSON.stringify(boot)).dashboard.month.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    [c.appOpen(), c.appOverview()].forEach((payload) => {
+      expect(() => JSON.parse(JSON.stringify(payload))).not.toThrow();
+    });
+    expect(JSON.parse(JSON.stringify(c.appOverview())).month.from)
+      .toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it('names a period the same way the reports tab does', () => {
     // "Last month" has to mean the same thing on the phone and on the desktop,
     // and neither can drift into meaning something else.
     const c = book([]);
-    const onPhone = c.appBootstrap().lists.periods.map((p) => p.label);
+    const onPhone = c.appOverview().lists.periods.map((p) => p.label);
     const onDesktop = c.REPORT_PERIODS.map((p) => p.label);
 
     onPhone.forEach((label) => {
@@ -534,7 +559,7 @@ describe('the bootstrap call', () => {
 
   it('offers a subcategory with the parent it names, since that is one choice', () => {
     const c = book([]);
-    const children = c.appBootstrap().lists.categories.children;
+    const children = c.appOverview().lists.categories.children;
     const groceries = children.find((entry) => entry.name === 'Groceries');
 
     expect(groceries).toMatchObject({ parent: 'Food & Drink' });
@@ -543,8 +568,19 @@ describe('the bootstrap call', () => {
 
   it('works on a book with nothing in it at all', () => {
     const c = book([]);
-    expect(() => c.appBootstrap()).not.toThrow();
-    expect(c.appBootstrap().dashboard.review).toEqual([]);
+    expect(() => c.appOpen()).not.toThrow();
+    expect(() => c.appOverview()).not.toThrow();
+    expect(c.appOverview().review).toEqual([]);
+  });
+
+  it('together offers every list the page reads', () => {
+    // The lists are split across the two calls purely by which tab they come
+    // from, so a name landing in neither is a filter that renders empty.
+    const c = book([]);
+    const sent = Object.keys(c.appOpen().lists)
+      .concat(Object.keys(c.appOverview().lists)).sort();
+
+    expect(sent).toEqual(['accounts', 'cashAccounts', 'categories', 'labels', 'periods']);
   });
 });
 
@@ -676,18 +712,45 @@ describe('the page and the server agree', () => {
 
   /*
     This is the check that would have caught the change that removed the
-    prefetch. `appBootstrap` stopped sending `analytics` and `records`; a page
+    prefetch. The bootstrap stopped sending `analytics` and `records`; a page
     still reading `result.records.rows` would have thrown on open, and one
     reading `result.analytics` would have quietly drawn an empty chart.
-  */
-  it('reads no key from the bootstrap that the bootstrap does not send', () => {
-    const from = page.indexOf("call('appBootstrap')");
-    const handler = page.slice(from, page.indexOf('}).catch(', from));
-    const used = [...handler.matchAll(/result\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
 
-    expect(used.length).toBeGreaterThan(0);
-    const sent = Object.keys(book([tx()]).appBootstrap());
-    [...new Set(used)].forEach((key) => expect(sent, key).toContain(key));
+    Both halves of the open are checked, because splitting one call into two is
+    exactly the change that moves a key from one payload to the other and
+    leaves the page reading it off the wrong one.
+  */
+  ['appOpen', 'appOverview'].forEach((name) => {
+    it(`reads no key from ${name} that ${name} does not send`, () => {
+      const from = page.indexOf(`call('${name}')`);
+      expect(from, `the page never calls ${name}`).toBeGreaterThan(-1);
+
+      const handler = page.slice(from, page.indexOf('}).catch(', from));
+      const used = [...handler.matchAll(/result\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+
+      expect(used.length).toBeGreaterThan(0);
+      const sent = Object.keys(book([tx()])[name]());
+      [...new Set(used)].forEach((key) => expect(sent, key).toContain(key));
+    });
+  });
+
+  /*
+    The two halves must not both claim a key, and between them must cover what
+    the merged refresh sends — `appDashboard` distributes its result back into
+    both, so a key in neither is a block that silently stops updating after a
+    confirm.
+  */
+  it('splits the dashboard between the two calls without overlap or a gap', () => {
+    const c = book([tx()]);
+    const open = Object.keys(c.appOpen()).filter((k) => k !== 'lists');
+    const overview = Object.keys(c.appOverview()).filter((k) => k !== 'lists');
+
+    open.forEach((key) => expect(overview, key).not.toContain(key));
+
+    const merged = Object.keys(c.appDashboard());
+    merged.forEach((key) => {
+      expect(open.concat(overview), key).toContain(key);
+    });
   });
 
   /*
@@ -911,14 +974,14 @@ describe('the per-request read cache', () => {
     return c;
   };
 
-  it('reads each tab once for a whole bootstrap', () => {
+  it('reads each tab once for a whole call', () => {
     // `accounts` was fetched four times by four functions that each went and
     // got it for themselves — `appAccounts_`, `netWorthNow_`, `accountNames_`
     // and `cashAccountList_` — and `_config` eight times. Neither is visible
     // at any one call site, which is why this is asserted rather than reviewed.
     const c = stocked();
     c.__resetReads();
-    c.appBootstrap();
+    c.appOpen();
 
     expect(c.__reads('accounts')).toBe(2);   // lastRecordRow_, then the block
     expect(c.__reads('_config')).toBe(2);

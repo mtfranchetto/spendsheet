@@ -89,27 +89,49 @@ function requireOwner_() {
  * you end up caching a balance for six hours and showing last night's net
  * worth as today's.
  */
-function appBootstrap() {
-  // The gate runs inside the read cache, not before it, and the order still
-  // holds: opening the cache sets a variable and reads nothing, so a refusal
-  // throws before a single cell is touched. What it buys is that
-  // `requireOwner_`'s own `_config` read — which every endpoint makes — is the
-  // same read the screen then wants, rather than a second one.
+/**
+ * The top of the dashboard, and nothing that needs the ledger.
+ *
+ * ## Why the screen is two calls rather than one
+ *
+ * Total server time went from ~6,200ms to ~2,400ms, and the app still did not
+ * feel fast — because a spinner held the whole screen until the last number
+ * arrived. **What a person experiences is when the first real content appears,
+ * not when the last does**, and every measurement taken here so far was of the
+ * wrong end of that.
+ *
+ * Net worth and the account tiles — the top of the screen, and what you open
+ * the app to see — need `accounts`, `_status` and `_config`, about 800ms.
+ * Everything else on the dashboard needs the ledger, which is the other
+ * 1,600ms. Bundled together, the cheap half waited for the expensive half for
+ * no reason at all.
+ *
+ * So the page fires this and `appOverview` **at the same time** and draws each
+ * as it lands. Wall-clock total goes up by ~500ms, because both calls read
+ * `accounts` and `_config` for themselves and neither can share a cache with
+ * the other. That is the trade and it is the right way round: 500ms of total
+ * for 1,600ms of first paint.
+ *
+ * ## Why the health banner is not here
+ *
+ * It looks like it belongs — it is the top of the screen. But `runChecks_`
+ * ends in `checkRowLoss_`, which scans 4,615 rows of the `transactions` key
+ * column unless it is handed a count, and the only thing holding that count is
+ * the ledger. Putting health in the fast call would have put a two-second scan
+ * in it. It goes with the ledger, where the count is free.
+ */
+function appOpen() {
   return withReadCache_(function () {
     requireOwner_();
+    return appOpenData_();
+  });
+}
 
-    return {
-      dashboard: appDashboardData_(),
-      lists: {
-        accounts: accountNames_(),
-        cashAccounts: cashAccountList_(),
-        labels: labelNames_(),
-        categories: categoryChoices_(),
-        periods: appPeriods_()
-      },
-      currency: baseCurrency_(),
-      generatedAt: dayKey_(dayNumber_(new Date()))
-    };
+/** Everything on the dashboard that needs the ledger, plus the slower lists. */
+function appOverview() {
+  return withReadCache_(function () {
+    requireOwner_();
+    return appOverviewData_();
   });
 }
 
@@ -189,28 +211,62 @@ function appAddCash(entry) {
  * whether the sync is stale is precisely the thing that ends up disagreeing.
  */
 function appDashboardData_() {
+  var open = appOpenData_();
+  var overview = appOverviewData_();
+
+  return {
+    month: overview.month,
+    accounts: open.accounts,
+    netWorth: open.netWorth,
+    health: overview.health,
+    review: overview.review,
+    currency: open.currency
+  };
+}
+
+/**
+ * The half that needs no ledger: net worth, the tiles, and the two lists made
+ * from the same tab.
+ *
+ * Reads `accounts`, `_status` and `_config` — about 800ms, against the ~1,600
+ * the other half costs. That split is the entire reason the screen is two
+ * calls; see `appOpen`.
+ */
+function appOpenData_() {
+  return {
+    currency: baseCurrency_(),
+    netWorth: netWorthNow_({}),
+    accounts: appAccounts_(),
+    // Both derived from `accounts`, which this half has already read, so they
+    // are free here and would cost a tab read in the other one.
+    lists: {
+      accounts: accountNames_(),
+      cashAccounts: cashAccountList_()
+    },
+    generatedAt: dayKey_(dayNumber_(new Date()))
+  };
+}
+
+/**
+ * The half that needs the ledger: the month, the queue, the health banner.
+ *
+ * One read of the whole tab, which is not what it looks like. This screen
+ * draws two months and a short queue, so it briefly read exactly those rows:
+ * four narrow columns to decide which they were, then only those rows at full
+ * width. The arithmetic was cells transferred — four columns against thirty —
+ * and the arithmetic was the wrong model.
+ *
+ * Measured on the live book at 4,615 rows: the full thirty-column read takes
+ * **2,025ms**, and the four single-column reads that were supposed to replace
+ * it take **3,678ms between them**. A `getValues` costs roughly the same
+ * whether it returns one column or thirty; what it costs is the *call*. Four
+ * calls is four times the price for an eighth of the data.
+ */
+function appOverviewData_() {
+  var ledger = readLedger_();
   var now = new Date();
   var window = resolveWindow_({ kind: 'mtd' }, now);
   var previous = lastMonthToDate_(now);
-
-  // One read of the whole tab, which is not what it looks like.
-  //
-  // This screen draws two months and a short queue, so it briefly read exactly
-  // those rows: four narrow columns to decide which they were, then only those
-  // rows at full width. The arithmetic was cells transferred — four columns
-  // against thirty — and the arithmetic was the wrong model.
-  //
-  // Measured on the live book at 4,615 rows: the full thirty-column read takes
-  // **2,025ms**, and the four single-column reads that were supposed to replace
-  // it take **3,678ms between them**. A `getValues` costs roughly the same
-  // whether it returns one column or thirty; what it costs is the *call*. Four
-  // calls is four times the price for an eighth of the data.
-  //
-  // So the narrow path made the screen it was written for 93% slower, and
-  // `describeQueryCost` is what said so. The saving that remains — and it is
-  // the real one — is that the bootstrap no longer fetches Charts and Records,
-  // which is three of these reads down to one.
-  var ledger = readLedger_();
 
   var month = aggregate_(ledger.filter(function (row) {
     return matchesFilters_(row, { window: window });
@@ -233,14 +289,16 @@ function appDashboardData_() {
       lastMonthToDate: lastMonth.totals.expenses,
       byCategory: month.byCategory
     },
-    accounts: appAccounts_(),
-    netWorth: netWorthNow_({}),
     // The ledger's length is `lastRecordRow_ - 1` on `transactions`, which is
     // exactly what `checkRowLoss_` would scan the tab to work out. Handing it
     // over takes ~1,900ms off every dashboard — see the note on `runChecks_`.
     health: appHealth_(ledger.length),
     review: appReviewQueue_(ledger),
-    currency: baseCurrency_()
+    lists: {
+      labels: labelNames_(),
+      categories: categoryChoices_(),
+      periods: appPeriods_()
+    }
   };
 }
 
@@ -517,8 +575,12 @@ function describeDashboardCost() {
       categoryChoices_();
     }),
 
-    // The whole call the page makes, warm — what the user is timing.
-    bootstrapMs: at(appBootstrap)
+    // The two calls the page makes, warm. They run in parallel in the browser,
+    // so what the screen waits for is `openMs` for its top and `overviewMs`
+    // for the rest — not the sum, which is what a sequential reading of this
+    // would suggest and what the old single number actually was.
+    openMs: at(appOpen),
+    overviewMs: at(appOverview)
   };
 
   // What sharing the reads is worth, measured inside this one run.
@@ -530,6 +592,7 @@ function describeDashboardCost() {
   // weather, which is the only way a comparison means anything on this book.
   report.partsMs = report.ledgerSecondMs + report.accountsMs + report.netWorthMs +
     report.healthMs + report.reviewMs + report.aggregateMs + report.listsMs;
+  report.bootstrapMs = report.openMs + report.overviewMs;
   report.sharedReadsSavedMs = report.partsMs - report.bootstrapMs;
 
   // The same parts again, this time sharing one cache, in bootstrap order.
@@ -569,7 +632,8 @@ function describeDashboardCost() {
       ? onEntry.present + ' of ' + onEntry.chunks + ' chunks, version ' + onEntry.version
       : 'cold, version ' + onEntry.version) +
     '.\nLedger: ' + coldMs + 'ms from ' + coldSource + ', then ' + warmMs + 'ms from ' +
-    warmSource + '.\nWarm bootstrap ' + report.bootstrapMs + 'ms, against ' +
+    warmSource + '.\nFirst paint waits ' + report.openMs + 'ms; the rest lands at ' +
+    report.overviewMs + 'ms.\nBoth halves total ' + report.bootstrapMs + 'ms, against ' +
     report.partsMs + 'ms of parts fetching their own tabs — sharing the reads ' +
     'saves ' + report.sharedReadsSavedMs + 'ms.\nSharing one cache, in order: ' +
     'accounts ' + report.shared.accountsMs + ', net worth ' +
