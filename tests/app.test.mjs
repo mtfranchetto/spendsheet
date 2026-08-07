@@ -1016,7 +1016,18 @@ describe('the first screen, inlined into the page', () => {
     expect(screens.filters.records.period.kind).toBe('last_12');
     expect(screens.filters.analytics.period.kind).toBe('mtd');
     expect(screens.records.rows).toBeInstanceOf(Array);
-    expect(screens.analytics.totals).toBeDefined();
+  });
+
+  it('does not precompute Charts, which is not free and not always opened', () => {
+    // Measured, best of two against the live app, with appOpen as the fixed
+    // round-trip floor: appRecords 2,225ms for 33KB — below the floor, so its
+    // work is nil — against appAnalytics 3,045ms for 2KB, which is ~800ms of
+    // `balanceSeries_` walking the whole ledger. Paying that on every open to
+    // save a trip on a screen opened sometimes is the wrong way round.
+    const screens = book([tx()]).appOverview().screens;
+
+    expect(screens.analytics).toBeUndefined();
+    expect(screens.filters.analytics).toBeDefined();   // the default still ships
   });
 
   it('reads the ledger once for the whole inlined boot', () => {

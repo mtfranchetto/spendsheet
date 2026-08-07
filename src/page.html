@@ -1780,11 +1780,11 @@
     // and keyed on the server's own defaults — so `go()` finds them present
     // and asks for nothing, and a filter change still fetches.
     if (result.screens) {
+      // Both defaults, because the server owns them — but only Records comes
+      // with data. Charts costs ~800ms to precompute and is not opened every
+      // time; see the note on `screens` in 23_api.gs.
       state.filters.analytics = result.screens.filters.analytics;
       state.filters.records = result.screens.filters.records;
-
-      state.data.analytics = result.screens.analytics;
-      state.cache[signature(state.filters.analytics)] = result.screens.analytics;
 
       state.records.rows = result.screens.records.rows;
       state.records.offset = result.screens.records.rows.length;

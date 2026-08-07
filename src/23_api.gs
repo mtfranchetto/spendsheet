@@ -392,12 +392,25 @@ function appOverviewData_() {
     // after ~800ms of work and takes 3,503ms, and once took 8,692ms. Round
     // trips are very nearly the *only* cost.
     //
-    // So both screens are instant on first visit for ~10ms and ~25KB, and
-    // neither pays a trip. A filter change still fetches, which is the case
-    // that genuinely needs one.
+    // **Records only, and that was measured rather than assumed.** The first
+    // version carried Charts too, on an estimate of "~10ms for both" that was
+    // wrong by two orders of magnitude. Timed against the live app, best of
+    // two, with `appOpen` as the fixed round-trip floor:
+    //
+    //     appOpen ......... 2,981ms ...  1KB ... the floor
+    //     appRecords ...... 2,225ms ... 33KB ... below it — free
+    //     appAnalytics .... 3,045ms ...  2KB ... ~800ms of work
+    //
+    // Records is a filter, a sort and a slice over rows already in memory.
+    // Charts is `balanceSeries_` walking the whole ledger, and it would cost
+    // that ~800ms on *every* open to save a trip on a screen that is not
+    // opened every time — which is the owner's own account of how this is
+    // used: the dashboard always, the charts sometimes.
+    //
+    // A filter change still fetches, on both screens. That is the case that
+    // genuinely needs a trip.
     screens: {
       filters: appDefaultFilters_(),
-      analytics: webAppAnalytics_(appDefaultFilters_().analytics),
       records: webAppRecords_(appDefaultFilters_().records, 0)
     }
   };
