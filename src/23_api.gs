@@ -127,6 +127,65 @@ function appOpen() {
   });
 }
 
+/**
+ * The first screen, serialised into the page instead of fetched from it.
+ *
+ * ## Why this exists
+ *
+ * Profiled from outside the sandboxed iframe: `appOpen` does ~800ms of work on
+ * the server and costs the browser **~3,500ms**, twice in a row within 10ms of
+ * itself. The other ~2,700ms is a whole Apps Script execution being spun up to
+ * answer one call, and it is fixed — no amount of work removed from `appOpen`
+ * touches it.
+ *
+ * `doGet` is already an execution, already paying that startup, already ~3,350ms
+ * in before the page exists. Doing the same work *there* costs only the work.
+ * So the top of the dashboard arrives with the document and draws the instant
+ * the page parses, and the first `google.script.run` round trip disappears —
+ * about 2,000ms off an open, which is more than every server-side fix that
+ * preceded it put together.
+ *
+ * ## Why a string and not an object
+ *
+ * The caller drops this into a `<script type="application/json">` element, so
+ * the escaping has to happen once, here, next to the reason for it — rather
+ * than at a template boundary where the next person to interpolate something
+ * gets it wrong. `htmlSafeJson_` is the whole of that rule.
+ *
+ * ## Why it may return `null`
+ *
+ * Any failure returns the string `'null'` and the page falls back to fetching
+ * `appOpen` exactly as before. A dashboard that loads slowly beats one that
+ * does not load, and this runs inside `doGet` where a throw is a blank page.
+ */
+function appInlineBoot_() {
+  try {
+    return withReadCache_(function () {
+      return htmlSafeJson_(appOpenData_());
+    });
+  } catch (e) {
+    Logger.log('inline boot failed, falling back to a fetch: ' + e.message);
+    return 'null';
+  }
+}
+
+/**
+ * JSON that is safe to sit inside a `<script>` element.
+ *
+ * A transaction description containing the closing-tag sequence would end the
+ * element early and put a merchant name into the document as markup. Escaping
+ * every `<` is the entire fix, and it stays valid JSON because `<` is a
+ * legal string escape — so the parse on the other side is unchanged.
+ *
+ * Deliberately not a filter on the *dangerous* sequence: a rule that matches
+ * `</script` has to reason about case, whitespace and `/`, and this project has
+ * already learned that the narrow guard is the one that misses. Every `<` costs
+ * a few bytes and cannot be wrong.
+ */
+function htmlSafeJson_(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
 /** Everything on the dashboard that needs the ledger, plus the slower lists. */
 function appOverview() {
   return withReadCache_(function () {

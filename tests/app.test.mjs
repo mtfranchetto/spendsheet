@@ -720,15 +720,30 @@ describe('the page and the server agree', () => {
     exactly the change that moves a key from one payload to the other and
     leaves the page reading it off the wrong one.
   */
-  ['appOpen', 'appOverview'].forEach((name) => {
+  /*
+    The consumer is not always the `.then` any more: `appOpen`'s payload can
+    arrive inlined in the document instead of from a fetch, so both paths hand
+    it to `applyOpen` and that is where the keys are read.
+  */
+  const CONSUMERS = {
+    appOpen: () => {
+      const from = page.indexOf('function applyOpen(');
+      return page.slice(from, page.indexOf('\n  }', from));
+    },
+    appOverview: () => {
+      const from = page.indexOf("call('appOverview')");
+      return page.slice(from, page.indexOf('}).catch(', from));
+    }
+  };
+
+  Object.keys(CONSUMERS).forEach((name) => {
     it(`reads no key from ${name} that ${name} does not send`, () => {
-      const from = page.indexOf(`call('${name}')`);
-      expect(from, `the page never calls ${name}`).toBeGreaterThan(-1);
+      const handler = CONSUMERS[name]();
+      expect(handler.length, `could not find where ${name} is consumed`).toBeGreaterThan(0);
 
-      const handler = page.slice(from, page.indexOf('}).catch(', from));
       const used = [...handler.matchAll(/result\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
-
       expect(used.length).toBeGreaterThan(0);
+
       const sent = Object.keys(book([tx()])[name]());
       [...new Set(used)].forEach((key) => expect(sent, key).toContain(key));
     });
@@ -959,6 +974,97 @@ describe('the ledger cache', () => {
  * Two of these tests are about speed and three are about not being wrong,
  * which is the correct ratio for a cache.
  */
+/**
+ * The first screen, templated into the document instead of fetched.
+ *
+ * Measured from outside the sandboxed iframe: a `google.script.run` call costs
+ * ~2,700ms of Apps Script startup before any of our code runs, and `doGet` is
+ * an execution that has already paid it. So the top of the dashboard rides
+ * along with the page.
+ *
+ * Two things can go wrong and both are tested here: the payload escaping out
+ * of its `<script>` element, and the payload being absent in a way that leaves
+ * a blank screen rather than a fetch.
+ */
+describe('the first screen, inlined into the page', () => {
+  it('sends the same shape appOpen would have', () => {
+    const c = book([tx()]);
+    const inlined = JSON.parse(c.appInlineBoot_());
+
+    expect(Object.keys(inlined).sort()).toEqual(Object.keys(c.appOpen()).sort());
+    expect(inlined.netWorth).toBeDefined();
+    expect(inlined.accounts).toBeDefined();
+  });
+
+  it('escapes every < so nothing can close the script element', () => {
+    // A merchant name containing the closing-tag sequence would end the element
+    // and put a description into the document as markup. Asserted on `<`
+    // rather than on `</script`, because the narrow guard is the one that
+    // misses — case, whitespace and slashes all have to be got right.
+    // An *account name*, because that is what this payload actually carries —
+    // it holds balances and lists, not descriptions. Testing the escaping on a
+    // field the payload never contains would have proved nothing.
+    const c = book([tx()]);
+    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
+      c.toRow_(c.ACCOUNT_COLUMNS, {
+        account_id: 'a', name: 'ACME </script><script>x</script> LTD',
+        kind: 'cash', currency: 'EUR', balance: 5, active: true,
+        include_in_net_worth: true
+      })
+    ]);
+
+    const json = c.appInlineBoot_();
+    expect(json).toContain('ACME');
+
+    expect(json).not.toContain('<');
+    expect(json).toContain('\\u003c');
+    // Still valid JSON, because \u003c is a legal string escape — so the parse
+    // on the page is unchanged by the escaping.
+    expect(() => JSON.parse(json)).not.toThrow();
+  });
+
+  it('falls back to a fetch rather than failing the page', () => {
+    // This runs inside doGet, where a throw is a blank page for the only
+    // person allowed to open it. A dashboard that loads slowly beats one that
+    // does not load.
+    const c = book([tx()]);
+    c.SpreadsheetApp.getActiveSpreadsheet = () => { throw new Error('sheets is down'); };
+
+    expect(c.appInlineBoot_()).toBe('null');
+  });
+
+  it('is written into the served page, not just computed', () => {
+    const c = book([tx()]);
+    const html = c.webAppHtml_().getContent();
+
+    expect(html).toContain('id="boot"');
+    expect(html).not.toContain('<?!=');          // the scriptlet was evaluated
+    expect(html).toContain('"netWorth"');
+  });
+
+  it('serves a page that still boots when 23 is missing', () => {
+    // `appInlineBoot_` is in 23, which is above 20, so it is called through
+    // `functionExists_`. A checkout without it must still serve a page that
+    // fetches — which is what this did before inlining existed.
+    const c = book([tx()]);
+    c.appInlineBoot_ = undefined;
+
+    const html = c.webAppHtml_().getContent();
+    expect(html).toContain('id="boot"');
+    expect(html).toContain("call('appOpen')");
+  });
+
+  it('keeps the page able to fetch the first screen for itself', () => {
+    // The inline path is an optimisation, not a replacement. If the page ever
+    // stops being able to fetch `appOpen`, a payload that fails to parse is a
+    // blank dashboard with no way back.
+    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+
+    expect(page).toContain("call('appOpen')");
+    expect(page).toContain('function inlinedOpen()');
+  });
+});
+
 describe('the per-request read cache', () => {
   /** A book with an account and a consent on it, so every tab has rows to read. */
   const stocked = () => {

@@ -331,6 +331,21 @@
   }
 </style>
 
+<!--
+  The first screen, already here.
+
+  Written by `webAppHtml_` from `appInlineBoot_`, and read rather than fetched.
+  A `google.script.run` call costs ~2,700ms of Apps Script startup before any
+  of our code runs; `doGet` is an execution that has already paid it, so the
+  top of the dashboard rides along with the document and draws on parse.
+
+  `type="application/json"` so the browser never executes it, and every `<` in
+  the payload is escaped server-side so nothing can close this element early.
+  It says `null` if the server could not build it, and the boot below falls
+  back to fetching — which is what it did before this existed.
+-->
+<script type="application/json" id="boot"><?!= boot ?></script>
+
 <div id="screens"><div class="spinner">Loading…</div></div>
 
 <nav id="tabs"></nav>
@@ -414,7 +429,7 @@
       the sandboxed iframe load ahead of this code, cross-origin, with no clock
       either side can share. Stopwatch minus `everything` is that number.
     */
-    timing: { startedAt: Date.now(), open: 0, overview: 0 },
+    timing: { startedAt: Date.now(), open: 0, overview: 0, inlined: false },
     // Keyed by the filter signature, so going back to a slice you have already
     // looked at is instant and costs no request.
     cache: {},
@@ -887,8 +902,10 @@
       `everything`: what is left is Google's, and none of it is ours to fix.
     */
     add(root, el('p', 'muted',
-      'Top of screen in ' + (state.timing.open / 1000).toFixed(1) + 's, ' +
-      'everything in ' + (state.timing.overview / 1000).toFixed(1) + 's.'));
+      (state.timing.inlined
+        ? 'Top of screen came with the page'
+        : 'Top of screen in ' + (state.timing.open / 1000).toFixed(1) + 's') +
+      ', everything in ' + (state.timing.overview / 1000).toFixed(1) + 's.'));
   }
 
   /**
@@ -1705,15 +1722,46 @@
       'Switch accounts and reload.'));
   };
 
-  call('appOpen').then(function (result) {
+  function applyOpen(result, inlined) {
     state.currency = result.currency;
     state.lists.accounts = result.lists.accounts;
     state.lists.cashAccounts = result.lists.cashAccounts;
     state.data.open = result;
     state.data.generatedAt = result.generatedAt;
-    state.timing.open = Date.now() - state.timing.startedAt;
+    state.timing.open = inlined ? 0 : Date.now() - state.timing.startedAt;
+    state.timing.inlined = !!inlined;
     render();
-  }).catch(fatal);
+  }
+
+  /**
+   * The first screen, if the server sent it with the page.
+   *
+   * Every failure here returns null and the fetch below happens instead — a
+   * missing element, `null` because the server could not build it, or JSON that
+   * will not parse. There is no case where a broken payload is worth more than
+   * a round trip.
+   */
+  function inlinedOpen() {
+    try {
+      var node = document.getElementById('boot');
+      var raw = node ? String(node.textContent || '').trim() : '';
+      if (!raw || raw === 'null') return null;
+
+      var parsed = JSON.parse(raw);
+      // `lists` is what the tiles and the icons are built from, so a payload
+      // without it would draw a broken screen rather than no screen.
+      return parsed && parsed.lists && parsed.accounts ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  var inline = inlinedOpen();
+  if (inline) {
+    applyOpen(inline, true);
+  } else {
+    call('appOpen').then(function (result) { applyOpen(result, false); }).catch(fatal);
+  }
 
   call('appOverview').then(function (result) {
     state.lists.labels = result.lists.labels;

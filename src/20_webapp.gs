@@ -240,12 +240,30 @@ function seedWebAppOwner_(ss) {
 // ---------------------------------------------------------------------------
 
 /**
- * The page itself, from `src/page.html`.
+ * The page itself, from `src/page.html`, with the first screen already in it.
  *
- * A static file rather than a template: everything on the page arrives through
+ * **This was deliberately a static file, and the reasoning has been overtaken
+ * by a measurement.** The argument was that everything arrives through
  * `google.script.run` anyway, so there is nothing to interpolate and therefore
- * nothing that can be interpolated wrong. The one project file that renders
- * bank balances is not the place to introduce a second escaping boundary.
+ * nothing that can be interpolated wrong — a good trade when interpolation buys
+ * nothing. It buys about two seconds.
+ *
+ * A `google.script.run` call costs ~2,700ms of Apps Script startup before any
+ * of our code runs; this function is already inside an execution that has paid
+ * that. So the dashboard's first screen is templated into the document and
+ * draws as the page parses, with no round trip at all.
+ *
+ * The escaping boundary that worried the original note is real and it is
+ * exactly one line — `htmlSafeJson_`, which lives next to the data rather than
+ * here. The payload goes into a `<script type="application/json">` element, so
+ * it is never executed and never parsed as markup; the only way out of that
+ * element is a literal `<`, and every one of them is escaped.
+ *
+ * **`appInlineBoot_` is in `23_api.gs`, which is above this file**, and the
+ * numbering says nothing lower may depend on anything higher. It is called
+ * through `functionExists_` for that reason: the dependency is real — a page
+ * server that inlines data needs the data — and a partial checkout without 23
+ * still serves a page that fetches, which is what it did before.
  *
  * `viewport` is what makes a phone lay the page out at its own width instead
  * of pretending to be a 980px desktop and zooming out. Apps Script strips the
@@ -268,7 +286,10 @@ function seedWebAppOwner_(ss) {
  * direction for a fake to be wrong in, and it has now cost this project twice.
  */
 function webAppHtml_() {
-  return HtmlService.createHtmlOutputFromFile('page')
+  var template = HtmlService.createTemplateFromFile('page');
+  template.boot = functionExists_('appInlineBoot_') ? appInlineBoot_() : 'null';
+
+  return template.evaluate()
     .setTitle('Spendsheet')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);

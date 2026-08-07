@@ -873,6 +873,47 @@ export function createGoogleStubs(options = {}) {
         return htmlOutput(readFileSync(path, 'utf8'), name);
       },
       /**
+       * A template, faithful in the one way that matters: it throws.
+       *
+       * Apps Script raises a ReferenceError when a scriptlet names a variable
+       * the caller never assigned, and that is the realistic failure — a
+       * placeholder renamed on one side only, which takes the page down for
+       * the only person allowed to open it. A fake that quietly prints nothing
+       * cannot fail on it, and this project has already paid twice for a stub
+       * being more forgiving than the real thing (`XFrameOptionsMode.IFRAME`,
+       * `DriveApp.getFoldersByName`).
+       *
+       * `<?!= x ?>` prints raw and `<?= x ?>` escapes, as they do in Apps
+       * Script. Nothing else of the scriptlet language is modelled, because
+       * nothing else is used — a fake that grew a `<? if ?>` would be inviting
+       * one into the page.
+       */
+      createTemplateFromFile: (name) => {
+        const path = join(SRC, `${name}.html`);
+        if (!existsSync(path)) {
+          throw new Error(`No html file named ${name} was found in the script.`);
+        }
+        const source = readFileSync(path, 'utf8');
+        const template = {
+          evaluate() {
+            const filled = source.replace(
+              /<\?(!?)=\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\?>/g,
+              (all, raw, key) => {
+                if (!Object.prototype.hasOwnProperty.call(template, key)) {
+                  throw new Error(`ReferenceError: "${key}" is not defined.`);
+                }
+                const value = template[key];
+                const text = value === null || value === undefined ? '' : String(value);
+                return raw ? text : text
+                  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              });
+            return htmlOutput(filled, name);
+          }
+        };
+        return template;
+      },
+
+      /**
        * Exactly the two members the real enum has, and no more.
        *
        * The first version listed `IFRAME` as well — which belongs to
