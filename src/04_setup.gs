@@ -63,9 +63,7 @@ function runSetup_() {
 
   // Working tabs with no fixed schema.
   getOrCreate_(ss, TABS.IMPORT_RAW, report);      // CSV lands here via File → Import
-  getOrCreate_(ss, TABS.DASHBOARD, report);
   getOrCreate_(ss, TABS.REPORTS, report);
-  getOrCreate_(ss, TABS.RECENT, report);
 
   var sep = detectArgSeparator_(ss);
   buildImportStaged_(ss, sep, report);
@@ -74,8 +72,6 @@ function runSetup_() {
   // Later phases extending an earlier one, through the same guarded forward
   // reference the sync uses for assertNoRowLoss_. File numbering is load order;
   // by the time anything runs, everything is defined.
-  if (functionExists_('buildDashboard_')) buildDashboard_(ss, sep);
-  if (functionExists_('buildRecent_')) buildRecent_(ss, sep);
   if (functionExists_('buildCashEntryForm_')) buildCashEntryForm_(ss);
   if (functionExists_('buildAnalytics_')) buildAnalytics_(ss, sep, report);
   if (functionExists_('buildReviewTab_')) buildReviewTab_(ss, report);
@@ -1421,7 +1417,7 @@ function removeDefaultSheet_(ss) {
 /** Put the tabs you actually use in front. */
 function orderTabs_(ss) {
   var order = [
-    TABS.DASHBOARD, TABS.RECENT, TABS.REPORTS, TABS.REVIEW, TABS.TRANSACTIONS,
+    TABS.REPORTS, TABS.REVIEW, TABS.TRANSACTIONS,
     TABS.PENDING, TABS.ACCOUNTS, TABS.CASH_ENTRY, TABS.RULES,
     TABS.CATEGORIES, TABS.LABELS
   ];

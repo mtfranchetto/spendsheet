@@ -37,6 +37,62 @@ function sheetOrThrow_(name) {
 }
 
 /** 1-based column index of a named column, e.g. colIndex_(TX_COLUMNS,'amount') === 7. */
+// ---------------------------------------------------------------------------
+// Addressing a formula
+// ---------------------------------------------------------------------------
+
+/*
+ * These lived in `16_dashboard.gs` until the dashboard tab was removed, which
+ * is the wrong home for them twice over: the reports tab and the review tab
+ * both build formulas, and neither has anything to do with a dashboard. They
+ * are addressing, and addressing is what this file is.
+ */
+
+/** `AA` -> 27. The inverse of `columnLetter`. */
+function columnIndexOf_(letters) {
+  var n = 0;
+  for (var i = 0; i < letters.length; i++) {
+    n = n * 26 + (letters.toUpperCase().charCodeAt(i) - 64);
+  }
+  return n;
+}
+
+/** The column `offset` places to the right of a letter. */
+function nextColumn_(letter, offset) {
+  return columnLetter(columnIndexOf_(letter) + offset);
+}
+
+/**
+ * Every reference is built whole, `!` included.
+ *
+ * `TABS.TRANSACTIONS + '$A$2:$A'` reads correctly at the call site and produces
+ * `transactions$A$2:$A`, which does not parse. That has shipped once already,
+ * green, because a string test cannot tell a valid reference from an invalid
+ * one — so the `!` lives in one helper rather than at a dozen call sites.
+ */
+function sheetRange_(tab, headers, name) {
+  var column = colOf(headers, name);
+  return tab + '!$' + column + '$2:$' + column;
+}
+
+function txRange_(name) { return sheetRange_(TABS.TRANSACTIONS, TX_COLUMNS, name); }
+
+/**
+ * The whole `transactions` block, for QUERY.
+ *
+ * QUERY names columns by their position **within the range given**, not by
+ * their address on the sheet — so this has to start at column A or every letter
+ * in every query shifts silently.
+ */
+function txQueryRange_() {
+  return TABS.TRANSACTIONS + '!$A$2:$' + colOf(TX_COLUMNS, TX_COLUMNS[TX_COLUMNS.length - 1]);
+}
+
+/** A column letter for use inside a QUERY string. */
+function q_(name) {
+  return colOf(TX_COLUMNS, name);
+}
+
 function colIndex_(headers, name) {
   var index = headers.indexOf(name);
   if (index === -1) throw new Error('colIndex_: no column named "' + name + '"');

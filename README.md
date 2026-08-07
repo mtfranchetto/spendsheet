@@ -6,7 +6,7 @@ No server. No subscription. No Docker. No account with anyone except your bank a
 
 Built on [Enable Banking](https://enablebanking.com)'s free tier (PSD2 open banking, EU/EEA/UK) and Google Apps Script, which runs on Google's servers at no cost.
 
-> **Status: complete and in daily use.** Sync, dedup, cash, import, categorisation, monitoring, the dashboard, a date-sorted transaction view, a filterable reports tab and a phone-first review queue are all built. Verified against four live Italian banks, and against five years of imported history that ties out to the cent with the tool it came from.
+> **Status: complete and in daily use.** Sync, dedup, cash, import, categorisation, monitoring, a filterable reports tab, a phone-first review queue and a mobile web app are all built. Verified against four live Italian banks, and against five years of imported history that ties out to the cent with the tool it came from.
 
 ---
 
@@ -29,10 +29,9 @@ So the rules here are:
 - **Labels** — `kids`, `travel`, `home-renovation` — the cross-cutting axis a category can't express, since a holiday is flights *and* restaurants *and* a pharmacy
 - **A `confirmed` flag**, so a category you agreed with and a category the machine guessed are never rendered as the same fact
 - **Net worth** including things PSD2 can't see — cash, brokerage, property
-- **A dashboard with charts** — balances at a glance, this month against the same point last month, spending by category, this year against last, and a 90-day net worth trend derived from your own transactions rather than from a history nobody kept
+- **A mobile web app** — net worth, account tiles, this month against the same point last month, spending by category with a drill-down, and a review queue you can clear with your thumb. Served from the same script, gated to your account alone
 - **A reports tab you can slice** — period, account, category, label, type and group-by as dropdowns driving one `QUERY`, with the generated query in a cell you can read
 - **A review queue you can clear from your phone** — tick or recategorise a row and it writes straight back, because custom menus don't exist in the Sheets mobile app and checkboxes do
-- **A `recent` view**, newest first and filterable by year and month, because `transactions` is append-only and never sorted
 - **Monitoring that actually tells you when it breaks**, including the silent failure where a sync runs fine and returns nothing
 
 ## Requirements
@@ -76,6 +75,7 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 13. Export your history from whatever you use now, **File → Import** it into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import staged rows**. ([`docs/IMPORT.md`](docs/IMPORT.md))
 14. **Spendsheet → Learn from corrections** — imported rows arrive confirmed, so your own categorisations become the lookup table the cascade uses.
 15. **Spendsheet → Re-categorise all**, then **Rebuild charts**.
+16. Deploy the app: **Deploy → New deployment → Web app**, access **Only myself**. Paste its `/exec` URL into `_config` → `viewer_url`, then **Spendsheet → Open the app**. ([`docs/MOBILE.md`](docs/MOBILE.md))
 
 This is the step that makes categorisation work on day one rather than in six months, and it's why the import lands before the cascade rather than after it. Cadence detection is the same story: an annual insurance premium is invisible in the rolling ~90 days PSD2 gives you.
 
@@ -87,6 +87,7 @@ Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 |---|---|
 | **Banks** | Sync now · Connect a bank · Refresh accounts |
 | **History** | Import staged rows · Remove synced duplicates |
+| **The app** | Open the app |
 | **Reviewing** | Refresh review queue · Rebuild charts |
 | **Categorising** | Re-categorise all · Confirm visible rows · Learn from corrections |
 | **Housekeeping** | Setup sheet · Update mappings to defaults · Tidy retired categories · Install credentials · Install triggers · Show schedule · Health check · Accept row count · Snapshot to Drive |
@@ -113,7 +114,8 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 | [`docs/SETUP.md`](docs/SETUP.md) | Long-form setup, both Enable Banking registrations |
 | [`docs/IMPORT.md`](docs/IMPORT.md) | Importing history from BudgetBakers or any CSV |
 | [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, labels and transfers |
-| [`docs/REPORTS.md`](docs/REPORTS.md) | The dashboard, the reports tab and the review queue |
+| [`docs/REPORTS.md`](docs/REPORTS.md) | The reports tab and the review queue |
+| [`docs/MOBILE.md`](docs/MOBILE.md) | The mobile web app: the two deployments, the owner gate, the ledger cache |
 | [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: the two deployments, the owner gate, home-screen setup |
 | [`docs/SHEET-SCHEMA.md`](docs/SHEET-SCHEMA.md) | Every tab and column, and whether you or the code owns it |
 | [`docs/MONITORING.md`](docs/MONITORING.md) | What breaks, how you find out, how you fix it |

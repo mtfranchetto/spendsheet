@@ -36,7 +36,7 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `13_import.gs` | formula builders for `_import_staged`. No importer — see the governing rule. |
 | `14_categorize.gs` | the cascade: merchant keys, learned memory, transfer pairing, confirming. |
 | *(15 is free)* | `15_recurring.gs` held cadence detection and a 90-day cashflow projection. Both were removed — the most machinery in the project per question answered, and the question is one `reports` reaches directly. `git log -- src/15_recurring.gs`. |
-| `16_dashboard.gs` | every formula on the dashboard and on `recent` — the two read-only views. Called from `setup()` through `functionExists_`. |
+| *(16 is free)* | `16_dashboard.gs` built the `dashboard` and `recent` tabs. Both were removed once the mobile app answered the same questions better: between them they were ~1,300 lines and about fifty `ARRAYFORMULA` anchors, which is the single largest source of the failures listed below. Its addressing helpers — `columnIndexOf_`, `nextColumn_`, `sheetRange_`, `txRange_`, `txQueryRange_`, `q_` — moved to `03_sheets.gs`, where the reports tab and the review tab were already using them. `git log -- src/16_dashboard.gs`. |
 | `17_analytics.gs` | period arithmetic, the `reports` tab, and every chart in the book. |
 | `17_review.gs` | the review queue and the `onEdit` write-back. |
 | `18_diagnostics.gs` | smoke tests and raw dumps. Nothing here runs unattended. |
@@ -53,7 +53,9 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 
 The gap before `18` is deliberate — adding a phase should not renumber anything. It got used, and by **two** files: analytics and review are different kinds of thing (one reads, one writes back) and splitting them was cheaper than a 900-line file. Two names at the same number is fine because the numbering is load order, and `17_analytics.gs` sorts before `17_review.gs`, which is the dependency direction. It is not licence to keep adding — a third would mean 17 has become a bin.
 
-**Where the dashboard seam is:** 16 owns what you read, 17 owns what you plot. Charts need ranges that already exist, so they are built after every formula is written, and 16 exposes its layout through `DASH` for 17 to point at.
+**Where the charts seam is:** a chart is configuration pointed at a range, so charts are built after every formula that fills one. That used to span two files — 16 wrote the blocks and exposed `DASH` for 17 to point at — and now sits entirely in `17_analytics.gs`, which both writes the `reports` blocks and plots them.
+
+**The two read-only tabs are gone, and that was the point of the app.** `dashboard` and `recent` answered "what is my position" and "what happened lately" in a grid renderer that had to open 4,600 rows and fifty array formulas to do it. The phone answers both without either tab, and `appDashboardData_` deliberately *computes* its numbers rather than reading cells off a tab — so nothing depended on them when they went. `reports` stays: it is the only independent implementation of the same aggregates, and two implementations that agree is the only evidence the numbers are right.
 
 When a file starts holding two kinds of thing, split it before adding a third. `04_auth.gs` reached 769 lines by owning the consent flow, the accounts domain, the sheet primitives and the diagnostics at once; the primitives in particular were invisible there, and the sync would have grown its own copy.
 

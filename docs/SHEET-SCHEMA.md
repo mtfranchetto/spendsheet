@@ -15,7 +15,7 @@ That single rule is what makes manual corrections safe, keeps the sync logic tri
 
 Two further rules that cost nothing and remove entire categories of failure:
 
-- **`transactions` is never sorted.** Sorting a *subset* of it, or inserting a column mid-sheet, breaks row identity and every formula reference simultaneously and silently. No amount of careful scripting prevents this, because it isn't the script doing it. Sort and filter through filter views or `QUERY()` on another tab instead. This is also why the dashboard is formula-driven off `transactions` rather than being a rearrangement of it.
+- **`transactions` is never sorted.** Sorting a *subset* of it, or inserting a column mid-sheet, breaks row identity and every formula reference simultaneously and silently. No amount of careful scripting prevents this, because it isn't the script doing it. Sort and filter through filter views or `QUERY()` on another tab instead. This is also why every view is derived from `transactions` rather than being a rearrangement of it.
 - **Every report reads `amount_base`, never `amount`.**
 
 ## Customising it, and what `setup()` does on a re-run
@@ -66,7 +66,7 @@ It also names **orphans**: mappings pointing at a category that isn't in `catego
 
 The same applies to sorting `transactions` — see below.
 
-If you want a different column order for reading, build it on another tab with `QUERY()`. That's what the dashboard does, and it's why the dashboard is formula-driven rather than a rearrangement of the source.
+If you want a different column order for reading, build it on another tab with `QUERY()`. That's what `reports` does, and it's why it is formula-driven rather than a rearrangement of the source.
 
 ---
 
@@ -116,11 +116,11 @@ Append-only. **Booked transactions only** (see `pending` below).
 | AC | `in_reports` | formula | whether the row counts as spending. **Every money block reads this** |
 | AD | `subcategory_override` | **you** | the one to reach for — it names the category too |
 
-`amount_base` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry plus a dashboard count is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
+`amount_base` is blank rather than unconverted for non-EUR rows, on purpose: a GBP figure summed as though it were EUR looks entirely plausible and is silently wrong. Blank plus an `_anomalies` entry, and the app counting what it could not convert, is wrong-but-loud. Enabling real FX later changes this one formula and nothing downstream.
 
 `type` is derived, never stored, so recategorising a row fixes its type for free — and it's what keeps transfers out of spending reports.
 
-**`in_reports` is the one place that decides what counts as spending**, and it exists because there used to be six. Every dashboard block filtered `type <> 'transfer'` and nothing else, so `excluded` — a documented column you can tick — was honoured by one thing you never look at and by nothing you do. A row you had deliberately excluded still counted in this month's spending, in the trend, and in every label total.
+**`in_reports` is the one place that decides what counts as spending**, and it exists because there used to be six. Every money block filtered `type <> 'transfer'` and nothing else, so `excluded` — a documented column you can tick — was honoured by one thing you never look at and by nothing you do. A row you had deliberately excluded still counted in this month's spending, in the trend, and in every label total.
 
 It is a column rather than one more condition per query for a reason worth knowing before you write another report: `excluded` is blank on nearly every row, and `QUERY` infers a column's type from what is in it and treats blanks as null. `where Z = false` would drop nearly every row and blank the whole block. A formula that emits a real boolean on **every** row — including the ones with no transaction in them — removes both the null case and the majority-type case. That is also why the empty rows say `FALSE` rather than `""`: on a new book, thirty booleans among nine hundred empty strings is a *text* column, and `= true` would match nothing.
 
@@ -142,7 +142,7 @@ This looks blunt but it solves an otherwise unsolvable problem. `entry_reference
 
 So pending never enters the history. When a transaction settles it arrives in the booked feed with its own `entry_reference` and is inserted normally; its pending row simply isn't in the next response, so it disappears. No duplicate, no rewrite, append-only intact.
 
-**The tradeoff, stated plainly:** a transaction that stays pending for three days isn't in `transactions` for those three days. That's deliberate — it means your category totals don't wobble as holds settle at different amounts. The `pending` tab and the dashboard's "in flight" tile cover the visibility gap.
+**The tradeoff, stated plainly:** a transaction that stays pending for three days isn't in `transactions` for those three days. That's deliberate — it means your category totals don't wobble as holds settle at different amounts. The `pending` tab covers the visibility gap.
 
 ---
 
@@ -306,14 +306,14 @@ This makes a subcategory's **name** load-bearing: it has to identify one parent.
 
 A row missing an account or an amount is **left unprocessed rather than rejected** — on a phone that's someone mid-typing, not an error. It's picked up whenever it's finished, and the run message says how many are waiting so it can't sit there unnoticed. Columns can be filled in any order; a row whose date you haven't typed yet is still visible to the drain.
 
-### `dashboard`, `recent`
+### `reports`, `review`
 
-**`dashboard`**, **`reports`** and **`review`** have a page of their own: [`docs/REPORTS.md`](REPORTS.md). The short version is that all three are formulas, checkboxes and dropdowns — never a menu item — because **custom menus, sidebars and dialogs do not exist in the Google Sheets mobile app**, and those are the tabs you open on a phone.
+**`reports`** and **`review`** have a page of their own: [`docs/REPORTS.md`](REPORTS.md). The short version is that both are formulas, checkboxes and dropdowns — never a menu item — because **custom menus, sidebars and dialogs do not exist in the Google Sheets mobile app**.
+
+There were two more, `dashboard` and `recent`, and they are gone. They answered "what is my position" and "what happened lately" through a grid renderer that had to open every row and every array formula before it could show you anything — which is the problem the [mobile web app](MOBILE.md) exists to solve, and solves better. Removing them took ~1,300 lines and about fifty `ARRAYFORMULA` anchors out of the book.
 
 `review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_base` · `guess` · `why` · `confirmed` · `category_override` · `subcategory_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
 
 **`cash_entry`** — `date` · `account` · `amount` · `category` · `subcategory` · `note` · `labels` · `processed`, with dropdowns, designed for the Sheets mobile app. One blue input row, drained on the edit that completes it and again by the daily trigger. `processed` is hidden; the row it stamps is cleared moments later.
-
-**`recent`** — no schema of its own. Two `QUERY` blocks over `pending` and `transactions`, newest first, because `transactions` is append-only and never sorted.
 
 Cash entry is a Sheets tab rather than a Google Form because **Forms has no native mobile app and cannot submit offline at all**, whereas Sheets has a real offline mode. Logging a €3 coffee happens standing in a bar, sometimes with no signal.

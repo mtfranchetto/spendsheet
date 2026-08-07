@@ -21,7 +21,6 @@ var TABS = {
   // into. It was originally specified as `_labels`; it also gained a spend
   // report, which is not something to hide behind a tab you must unhide first.
   LABELS: 'labels',
-  DASHBOARD: 'dashboard',
   CASH_ENTRY: 'cash_entry',
   ANOMALIES: '_anomalies',
   STATUS: '_status',
@@ -43,12 +42,27 @@ var TABS = {
   // cells that are yours next to each row. The only surface in this project
   // you can act on from a phone.
   REVIEW: 'review',
-  // Newest first, pending on top of booked. `transactions` is append-only and
-  // never sorted, so the only way to see the latest thing you spent is a view
-  // that sorts a copy — which is what this is, and why it is two QUERYs rather
-  // than a tab anything writes to.
-  RECENT: 'recent',
+  // Where runSmokeTests() writes. Nothing here runs unattended.
+  //
+  // `dashboard` and `recent` were two more visible tabs and are gone: the app
+  // answers both questions on a phone, and between them they were fifty
+  // ARRAYFORMULA anchors — the single largest source of the failures this
+  // project has spent sessions on. `git log -- src/16_dashboard.gs`.
   TESTS: '_tests'
+};
+
+/**
+ * The three fills every tab uses to mean the same three things.
+ *
+ * Lived in `16_dashboard.gs` and outlived it: `cash_entry`, `reports` and
+ * `review` all colour an input cell, and none of them is a dashboard. Kept
+ * under the old name because renaming it would touch three files to say the
+ * same thing — the comment is cheaper than the churn.
+ */
+var DASH_COLOR = {
+  BAD: '#fce8e6',         // act now: consent expired, sync stopped
+  WARN: '#fef7e0',        // act soon: consent lapsing, a backlog forming
+  INPUT: '#e8f0fe'        // this cell is yours — type here, pick here
 };
 
 /**

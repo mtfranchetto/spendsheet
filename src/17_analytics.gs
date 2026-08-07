@@ -136,7 +136,6 @@ function buildAnalytics_(ss, sep, report) {
   buildReportsTab_(ss, sep, report);
 
   var fresh = function (tab) { return report && report.created.indexOf(tab) !== -1; };
-  if (fresh(TABS.DASHBOARD)) buildDashboardCharts_(ss);
   if (fresh(TABS.REPORTS)) buildReportCharts_(ss);
 }
 
@@ -153,7 +152,7 @@ function rebuildCharts() {
 
   var existing = chartCount_(ss);
   var answer = ui.alert('Rebuild charts',
-    'Replace the ' + existing + ' chart(s) on ' + TABS.DASHBOARD + ' and ' + TABS.REPORTS +
+    'Replace the ' + existing + ' chart(s) on ' + TABS.REPORTS +
     ' with the standard ones.\n\n' +
     'Anything you have moved, resized or restyled is discarded. The data behind ' +
     'them is untouched — the charts read the blocks on those tabs and are rebuilt ' +
@@ -164,7 +163,6 @@ function rebuildCharts() {
     return { rebuilt: 0 };
   }
 
-  buildDashboardCharts_(ss);
   buildReportCharts_(ss);
 
   var now = chartCount_(ss);
@@ -173,82 +171,13 @@ function rebuildCharts() {
 }
 
 function chartCount_(ss) {
-  return [TABS.DASHBOARD, TABS.REPORTS].reduce(function (total, name) {
-    var sheet = ss.getSheetByName(name);
-    return total + (sheet ? sheet.getCharts().length : 0);
-  }, 0);
+  var sheet = ss.getSheetByName(TABS.REPORTS);
+  return sheet ? sheet.getCharts().length : 0;
 }
 
 // ---------------------------------------------------------------------------
 // Charts
 // ---------------------------------------------------------------------------
-
-/**
- * The three charts on the dashboard, and why each one exists.
- *
- * A chart is configuration pointed at a range, so it stays live as the
- * formulas underneath it recalculate — there is no snapshot here and nothing
- * to refresh. That is why all three read blocks written by 16_dashboard.gs
- * rather than data assembled here.
- *
- * Anchored below the left-hand strips, in the one region of the tab where no
- * block ever grows. Everything that can grow — accounts, categories, labels —
- * grows downwards in a column to the right of them.
- */
-function buildDashboardCharts_(ss) {
-  var sheet = ss.getSheetByName(TABS.DASHBOARD);
-  if (!sheet) return 0;
-
-  clearCharts_(sheet);
-
-  var first = DASH.FEED_ROW;
-  var trendEnd = first + trendDays_() - 1;
-
-  // "Where did it go", in one look. Two ranges rather than one because the
-  // column between them holds the signed total the QUERY produced, and the
-  // chart wants the flipped one beside it — see `categorySpendFormula`.
-  insertChart_(sheet, {
-    type: 'COLUMN',
-    title: 'This month, by category',
-    ranges: [
-      DASH.CATEGORY_COL + first + ':' + DASH.CATEGORY_COL + (first + 40),
-      DASH.CATEGORY_VALUE_COL + first + ':' + DASH.CATEGORY_VALUE_COL + (first + 40)
-    ],
-    row: DASH.CHART_ROWS[0],
-    column: DASH.CHART_COL,
-    legend: 'none'
-  });
-
-  // "Is this normal for me". One contiguous range: month names, this year,
-  // last year — the domain and both series, in that order, already adjacent.
-  //
-  // It starts one row **above** the data, because `setNumHeaders(1)` is what
-  // makes the legend say "This year" and "Last year" rather than "Series 0"
-  // and "Series 1" — and a header row it was not given is a header row it
-  // takes from the data, which would silently drop January.
-  insertChart_(sheet, {
-    type: 'COLUMN',
-    title: 'Spending by month, this year against last',
-    ranges: [
-      DASH.MONTHLY_COL + (first - 1) + ':' + nextColumn_(DASH.MONTHLY_COL, 2) + (first + 11)
-    ],
-    row: DASH.CHART_ROWS[1],
-    column: DASH.CHART_COL,
-    legend: 'bottom',
-    headers: 1
-  });
-
-  insertChart_(sheet, {
-    type: 'LINE',
-    title: 'Net worth, last ' + trendDays_() + ' days',
-    ranges: [DASH.TREND_COL + first + ':' + nextColumn_(DASH.TREND_COL, 1) + trendEnd],
-    row: DASH.CHART_ROWS[2],
-    column: DASH.CHART_COL,
-    legend: 'none'
-  });
-
-  return 3;
-}
 
 function buildReportCharts_(ss) {
   var sheet = ss.getSheetByName(TABS.REPORTS);
