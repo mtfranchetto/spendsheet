@@ -509,14 +509,47 @@ function describeDashboardCost() {
     report.healthMs + report.reviewMs + report.aggregateMs + report.listsMs;
   report.sharedReadsSavedMs = report.partsMs - report.bootstrapMs;
 
+  // The same parts again, this time sharing one cache, in bootstrap order.
+  //
+  // Sharing halved the round trips and about twenty remain, where seven tabs
+  // should cost fourteen. Timing the parts separately cannot find the rest:
+  // each one pays for the tabs nobody fetched before it, so the *first* part
+  // in the order looks expensive and the rest look free, whoever they are.
+  //
+  // Run in order, what is left is legible: a part that still costs real time
+  // once its tabs are warm is reading something the cache does not cover.
+  // `checkRowLoss_` is the known one — it scans the `transactions` key column
+  // directly rather than through `readRecords_`, so 4,615 rows are fetched on
+  // every dashboard even when the ledger itself came from the cache.
+  //
+  // Divide any of these by `configMs` to get round trips. That ratio is the
+  // only number here that survives the read variance, because both halves of
+  // it were measured in the same run.
+  report.shared = withReadCache_(function () {
+    return {
+      accountsMs: at(appAccounts_),
+      netWorthMs: at(function () { return netWorthNow_({}); }),
+      healthMs: at(appHealth_),
+      listsMs: at(function () {
+        accountNames_();
+        cashAccountList_();
+        labelNames_();
+        categoryChoices_();
+      }),
+      rowLossMs: at(checkRowLoss_)
+    };
+  });
+
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'app dashboard cost', report);
   SpreadsheetApp.getActiveSpreadsheet().toast(
     'Ledger: ' + coldMs + 'ms from ' + coldSource + ', then ' + warmMs + 'ms from ' +
     warmSource + '.\nWarm bootstrap ' + report.bootstrapMs + 'ms, against ' +
     report.partsMs + 'ms of parts fetching their own tabs — sharing the reads ' +
-    'saves ' + report.sharedReadsSavedMs + 'ms.\nHealth ' + report.healthMs +
-    ', accounts ' + report.accountsMs + ', lists ' + report.listsMs +
-    ', net worth ' + report.netWorthMs + '. One _config read costs ' +
+    'saves ' + report.sharedReadsSavedMs + 'ms.\nSharing one cache, in order: ' +
+    'accounts ' + report.shared.accountsMs + ', net worth ' +
+    report.shared.netWorthMs + ', health ' + report.shared.healthMs +
+    ', lists ' + report.shared.listsMs + ', row-loss scan ' +
+    report.shared.rowLossMs + '.\nOne _config read costs ' +
     report.configMs + 'ms.',
     'Dashboard cost', 30);
 
