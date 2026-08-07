@@ -69,14 +69,27 @@ function selfCheck() {
   return findings;
 }
 
-function runChecks_(now) {
+/**
+ * `knownRowCount` is for a caller that has already read the ledger.
+ *
+ * Measured on the live book: the six detectors cost ~300ms between them once
+ * their tabs are shared, and `checkRowLoss_` alone costs **1,700–2,200ms** —
+ * about 40% of the whole app dashboard — because it scans 4,614 rows of the
+ * `transactions` key column to arrive at a number the caller is holding.
+ *
+ * Passed down rather than fetched, because `12_monitor.gs` sits below
+ * `21_query.gs` and may not reach for the ledger itself. A caller that has it
+ * says so; everybody else — `selfCheck`, the sync guard, the health check —
+ * omits the argument and scans, which is the behaviour that was there before.
+ */
+function runChecks_(now, knownRowCount) {
   var config = readConfig_();
   return []
     .concat(checkStaleness_(config, now))
     .concat(checkEmptyRuns_(config, now))
     .concat(checkConsents_(config, now))
     .concat(checkFailingAccounts_())
-    .concat(checkRowLoss_());
+    .concat(checkRowLoss_(knownRowCount));
 }
 
 /**
@@ -208,9 +221,24 @@ function checkFailingAccounts_() {
  * it means a sort, a deleted range, or an undo that took more than it looked
  * like. Detected by remembering the count rather than by inspecting the rows,
  * because the rows that would tell you are the ones that are gone.
+ *
+ * `knownCount` skips the scan for a caller that has already read the ledger —
+ * see `runChecks_`. Two things about it are deliberate:
+ *
+ * **`undefined` is the only thing that means "I don't know".** A count of zero
+ * is a real answer about an empty tab, and `knownCount || currentRowCount_()`
+ * would quietly rescan for it — the same shape as every blank-cell bug in this
+ * project, where the obvious guard passes and the wrong branch is taken.
+ *
+ * **The count may be up to five minutes old**, because the app's ledger comes
+ * from a cache with that TTL. So the phone's banner can be that late to notice
+ * a hole. The thing that must not be late is the sync, and it is not:
+ * `assertNoRowLoss_` calls this with no argument and scans the tab.
  */
-function checkRowLoss_() {
-  var current = currentRowCount_();
+function checkRowLoss_(knownCount) {
+  var current = knownCount === undefined || knownCount === null
+    ? currentRowCount_()
+    : Number(knownCount);
   var recorded = Number(
     PropertiesService.getScriptProperties().getProperty(ROW_COUNT_PROP) || 0);
 

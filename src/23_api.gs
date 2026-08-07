@@ -228,7 +228,10 @@ function appDashboardData_() {
     },
     accounts: appAccounts_(),
     netWorth: netWorthNow_({}),
-    health: appHealth_(),
+    // The ledger's length is `lastRecordRow_ - 1` on `transactions`, which is
+    // exactly what `checkRowLoss_` would scan the tab to work out. Handing it
+    // over takes ~1,900ms off every dashboard — see the note on `runChecks_`.
+    health: appHealth_(ledger.length),
     review: appReviewQueue_(ledger),
     currency: baseCurrency_()
   };
@@ -342,9 +345,9 @@ function consentDaysByConnection_(ss) {
  * it. A dashboard that will not load is worse than one saying it could not
  * check.
  */
-function appHealth_() {
+function appHealth_(rowCount) {
   try {
-    return runChecks_(new Date()).map(function (alert) {
+    return runChecks_(new Date(), rowCount).map(function (alert) {
       return {
         kind: String(alert.kind || ''),
         subject: String(alert.subject || ''),
@@ -529,7 +532,7 @@ function describeDashboardCost() {
     return {
       accountsMs: at(appAccounts_),
       netWorthMs: at(function () { return netWorthNow_({}); }),
-      healthMs: at(appHealth_),
+      healthMs: at(function () { return appHealth_(ledger.length); }),
       listsMs: at(function () {
         accountNames_();
         cashAccountList_();

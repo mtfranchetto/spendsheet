@@ -216,6 +216,51 @@ describe('failure 6 — rows disappeared', () => {
     addTransactions(c, 5);
     expect(kinds(c.runChecks_(NOW))).not.toContain('rows_lost');
   });
+
+  it('takes the count from a caller that already read the ledger', () => {
+    // Scanning 4,614 rows of the key column to reach a number the caller is
+    // holding cost ~1,900ms of every app dashboard — about 40% of it, and
+    // more than the other five detectors put together.
+    const c = built();
+    addTransactions(c, 10);
+    c.rememberRowCount_();
+    c.__resetReads();
+
+    expect(kinds(c.runChecks_(NOW, 10))).not.toContain('rows_lost');
+    expect(c.__reads('transactions')).toBe(0);
+  });
+
+  it('still catches a loss when the count is supplied', () => {
+    // Cheaper must not mean blinder. The detector is the point.
+    const c = built();
+    addTransactions(c, 10);
+    c.rememberRowCount_();
+
+    expect(kinds(c.runChecks_(NOW, 6))).toContain('rows_lost');
+  });
+
+  it('treats a supplied zero as a count, not as "I do not know"', () => {
+    // `knownCount || currentRowCount_()` is the trap: an empty ledger is a
+    // real answer and the obvious guard rescans for it — the same shape as
+    // every blank-cell bug here, and this one would hide a total wipe.
+    const c = built();
+    addTransactions(c, 10);
+    c.rememberRowCount_();
+
+    expect(kinds(c.runChecks_(NOW, 0))).toContain('rows_lost');
+  });
+
+  it('scans the tab for every caller that did not supply one', () => {
+    // The sync guard must never run on a five-minute-old count — that is the
+    // one caller whose whole job is to be right before it appends.
+    const c = built();
+    addTransactions(c, 10);
+    c.rememberRowCount_();
+    c.__spreadsheet.getSheetByName('transactions').getRange('A8:A11').clearContent();
+
+    expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
+    expect(() => c.syncAll({})).toThrow(/append-only/);
+  });
 });
 
 describe('alerting', () => {
