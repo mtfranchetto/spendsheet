@@ -893,6 +893,38 @@ function describeQueryCost() {
   var analytics = webAppAnalytics_({ period: { kind: 'mtd' } });
   var queryMs = Date.now() - startedQuery;
 
+  // Where a cache miss actually goes.
+  //
+  // The miss got 4.6x more expensive than the plain read it replaced — 2,025ms
+  // to 9,418ms — and "the cache write is slow" is not a finding, it is four
+  // candidates wearing one number: reading the sheet, serialising 4,600
+  // records, handing ~1.4MB to CacheService in chunks, and parsing it back.
+  // Guessing which one has already cost this project two reverts, so each is
+  // timed separately and the answer is read rather than assumed.
+  var probe = 'probe-' + Date.now();
+  var sheetStart = Date.now();
+  var probeSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
+  var records = probeSheet
+    ? readRecords_(probeSheet, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'))
+    : [];
+  var sheetMs = Date.now() - sheetStart;
+
+  var serialiseStart = Date.now();
+  var text = JSON.stringify(records);
+  var serialiseMs = Date.now() - serialiseStart;
+
+  var storeStart = Date.now();
+  cacheLedger_(probe, text);
+  var storeMs = Date.now() - storeStart;
+
+  var parseStart = Date.now();
+  JSON.parse(text);
+  var parseMs = Date.now() - parseStart;
+
+  var fetchStart = Date.now();
+  cachedLedger_(probe);
+  var fetchMs = Date.now() - fetchStart;
+
   var report = {
     rows: ledger.length,
     readMs: readMs,
@@ -900,16 +932,27 @@ function describeQueryCost() {
     matchedThisMonth: analytics.totals.count,
     unconvertible: analytics.totals.unconvertible,
 
-    verdict: readMs > 1000
-      ? 'The read is over a second and every screen pays it. A CacheService ' +
-        'read-through would pay for itself.'
-      : 'The read is comfortable. A cache would be a second copy of the ledger for nothing.'
+    cachedBytes: text.length,
+    chunks: Math.ceil(text.length / LEDGER_CACHE_CHUNK),
+    sheetMs: sheetMs,
+    serialiseMs: serialiseMs,
+    storeMs: storeMs,
+    parseMs: parseMs,
+    fetchMs: fetchMs,
+    missMs: sheetMs + serialiseMs + storeMs + parseMs,
+
+    verdict: 'Compare missMs against sheetMs. The cache is only worth keeping ' +
+      'if what it adds to a miss is repaid by the hits that follow — and the ' +
+      'miss is the first screen you see.'
   };
 
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app query cost', report);
   SpreadsheetApp.getActiveSpreadsheet().toast(
     report.rows + ' rows read in ' + readMs + 'ms; a full month-to-date query took ' +
-    queryMs + 'ms.\n\n' + report.verdict, 'Query cost', 30);
+    queryMs + 'ms.\n\nA miss costs ' + report.missMs + 'ms: sheet ' + sheetMs +
+    ', serialise ' + serialiseMs + ', store ' + storeMs + ', parse ' + parseMs +
+    '.\nA hit costs ' + fetchMs + 'ms over ' + report.chunks + ' chunks (' +
+    Math.round(text.length / 1024) + 'KB).', 'Query cost', 30);
 
   return report;
 }
