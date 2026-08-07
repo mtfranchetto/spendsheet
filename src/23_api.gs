@@ -61,35 +61,6 @@ function requireOwner_() {
 }
 
 /**
- * Everything the app needs to draw its *first* screen, in one call.
- *
- * This used to prefetch Charts and Records too, so that every screen was
- * instant once the page had opened. The argument was one round trip rather
- * than four, and it was measured against the wrong thing: the cost here is not
- * round trips, it is reading `transactions`. Each of those three screens
- * called `readLedger_` for itself, so opening the app read 4,600 rows by
- * thirty columns **three times** — and two of those reads were for screens you
- * might never visit that session.
- *
- * So the bootstrap is now the dashboard and the lists, and the dashboard reads
- * only the rows it draws. Charts and Records fetch on first navigation, which
- * `go()` in the page has always been able to do; the prefetch was pre-empting
- * it. They pay a full read when you open them, once, and they are the screens
- * that genuinely need one.
- *
- * The lists — accounts, labels, categories — still come along. They change
- * about once a month, they are what every filter on every screen is built
- * from, and they are small. Fetching them per screen would be the round-trip
- * argument applied where it actually holds.
- *
- * **"Accounts" here means `accountNames_()` — the names, and nothing else.**
- * Worth saying because the sentence above is true of the names and false of
- * the tab they come from: `accounts` also holds every balance, and those are
- * rewritten on every sync. Reading that as "the accounts tab is stable" is how
- * you end up caching a balance for six hours and showing last night's net
- * worth as today's.
- */
-/**
  * The top of the dashboard, and nothing that needs the ledger.
  *
  * ## Why the screen is two calls rather than one
@@ -152,20 +123,66 @@ function appOpen() {
  * than at a template boundary where the next person to interpolate something
  * gets it wrong. `htmlSafeJson_` is the whole of that rule.
  *
+ * ## What is in it
+ *
+ * `open` always, and `overview` only when the ledger is already cached — see
+ * `warmOverviewOrNull_`. The page fetches whichever half is missing.
+ *
  * ## Why it may return `null`
  *
  * Any failure returns the string `'null'` and the page falls back to fetching
- * `appOpen` exactly as before. A dashboard that loads slowly beats one that
+ * both halves exactly as before. A dashboard that loads slowly beats one that
  * does not load, and this runs inside `doGet` where a throw is a blank page.
  */
 function appInlineBoot_() {
   try {
     return withReadCache_(function () {
-      return htmlSafeJson_(appOpenData_());
+      return htmlSafeJson_({
+        open: appOpenData_(),
+        overview: warmOverviewOrNull_()
+      });
     });
   } catch (e) {
     Logger.log('inline boot failed, falling back to a fetch: ' + e.message);
     return 'null';
+  }
+}
+
+/**
+ * The lower half too — but only when it is nearly free.
+ *
+ * Measured against the live app: `appOverview` costs ~4,000ms from the browser
+ * and `appOpen` costs ~3,500ms for a twentieth of the work. The difference
+ * between them is ~500ms; the other ~3,300ms is `google.script.run` startup,
+ * paid by both. So the lower half is not slow because of what it does, and
+ * making it do less would barely register. **The only thing that helps is not
+ * making the call**, which is what this is.
+ *
+ * The condition is the whole design. `appOverviewData_` needs the ledger:
+ * ~300ms when it is cached and ~4,000ms when it is not. Inlining it
+ * unconditionally would put that unbounded cost *in front of first paint* — a
+ * cold cache would mean a blank page, net worth included, for the whole of it.
+ * Today a cold ledger only delays the half that needs it, while your balances
+ * are already on screen.
+ *
+ * So it is inlined exactly when the rows are already in `CacheService`, which
+ * is the case where it costs ~700ms rather than ~4,700. Every other time the
+ * page fetches it, as it did before, and pays a round trip it was going to pay
+ * anyway.
+ *
+ * **Every chunk has to be present, not just the count.** `:n` can outlive a
+ * chunk — they expire independently — and a ledger that reads as cached and
+ * misses on the fetch is precisely the miss this guard exists to avoid.
+ */
+function warmOverviewOrNull_() {
+  try {
+    var state = ledgerCacheState_();
+    if (!state.cached || state.present !== state.chunks) return null;
+    return appOverviewData_();
+  } catch (e) {
+    // A dashboard whose lower half arrives late beats one that does not arrive.
+    Logger.log('inline overview skipped: ' + e.message);
+    return null;
   }
 }
 
@@ -184,6 +201,26 @@ function appInlineBoot_() {
  */
 function htmlSafeJson_(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+/**
+ * The filters each screen opens on, defined once and on the server.
+ *
+ * The page used to hold these. Now that `appOverview` ships the first view of
+ * Records and Charts, two copies would decide what "the first view" means and
+ * the prefetched payload would silently be for a different slice than the one
+ * drawn — a screen that looks loaded and is answering a question nobody asked.
+ *
+ * They differ on purpose. Charts asks "how is this month going", so it opens on
+ * this month. Records is the screen you go to *to find something*, and a ledger
+ * that searches only the last few days is not a ledger.
+ */
+function appDefaultFilters_() {
+  return {
+    analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
+    records: { period: { kind: 'last_12' }, account: 'All', label: 'All',
+      search: '', unconfirmedOnly: false }
+  };
 }
 
 /** Everything on the dashboard that needs the ledger, plus the slower lists. */
@@ -298,6 +335,12 @@ function appOpenData_() {
     accounts: appAccounts_(),
     // Both derived from `accounts`, which this half has already read, so they
     // are free here and would cost a tab read in the other one.
+    //
+    // **"Accounts" here means the names, and nothing else.** Worth saying
+    // because the lists are otherwise stable enough to cache and the tab they
+    // come from is not: `accounts` also holds every balance, rewritten on
+    // every sync. Reading "the lists change monthly" as "the accounts tab is
+    // stable" is how you end up showing last night's net worth as today's.
     lists: {
       accounts: accountNames_(),
       cashAccounts: cashAccountList_()
@@ -357,6 +400,34 @@ function appOverviewData_() {
       labels: labelNames_(),
       categories: categoryChoices_(),
       periods: appPeriods_()
+    },
+
+    // The first view of the other two screens, and why the prefetch is back.
+    //
+    // `appBootstrap` used to carry these and the note above its replacement
+    // says why it stopped: each screen called `readLedger_` for itself, so a
+    // boot read 4,600 rows three times, twice for screens you might never
+    // open. **That reasoning is sound and both of its premises have since
+    // stopped being true**, so the conclusion flips — which is worth writing
+    // down rather than quietly reversing.
+    //
+    // The reads are no longer three. `withReadCache_` and the ledger cache
+    // mean this function already holds the rows, so a second and third pass
+    // over them is aggregation, measured at ~10ms.
+    //
+    // And the discarded half of that argument — "the cost here is not round
+    // trips" — has been measured and is false. A `google.script.run` call
+    // costs **~3,300ms before any of our code runs**: `appOpen` returns 1.1KB
+    // after ~800ms of work and takes 3,503ms, and once took 8,692ms. Round
+    // trips are very nearly the *only* cost.
+    //
+    // So both screens are instant on first visit for ~10ms and ~25KB, and
+    // neither pays a trip. A filter change still fetches, which is the case
+    // that genuinely needs one.
+    screens: {
+      filters: appDefaultFilters_(),
+      analytics: webAppAnalytics_(appDefaultFilters_().analytics),
+      records: webAppRecords_(appDefaultFilters_().records, 0)
     }
   };
 }

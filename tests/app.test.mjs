@@ -512,7 +512,7 @@ describe('the two calls the app opens with', () => {
     const overview = c.appOverview();
 
     expect(Object.keys(overview).sort()).toEqual(
-      ['health', 'lists', 'month', 'review']);
+      ['health', 'lists', 'month', 'review', 'screens']);
     expect(overview.lists.periods.map((p) => p.kind)).toContain('mtd');
   });
 
@@ -731,8 +731,8 @@ describe('the page and the server agree', () => {
       return page.slice(from, page.indexOf('\n  }', from));
     },
     appOverview: () => {
-      const from = page.indexOf("call('appOverview')");
-      return page.slice(from, page.indexOf('}).catch(', from));
+      const from = page.indexOf('function applyOverview(');
+      return page.slice(from, page.indexOf('\n  }', from));
     }
   };
 
@@ -987,13 +987,59 @@ describe('the ledger cache', () => {
  * a blank screen rather than a fetch.
  */
 describe('the first screen, inlined into the page', () => {
-  it('sends the same shape appOpen would have', () => {
+  it('sends the same shape the two calls would have', () => {
     const c = book([tx()]);
+    c.readLedger_();                       // so the overview half rides along
     const inlined = JSON.parse(c.appInlineBoot_());
 
-    expect(Object.keys(inlined).sort()).toEqual(Object.keys(c.appOpen()).sort());
-    expect(inlined.netWorth).toBeDefined();
-    expect(inlined.accounts).toBeDefined();
+    expect(Object.keys(inlined.open).sort()).toEqual(Object.keys(c.appOpen()).sort());
+    expect(Object.keys(inlined.overview).sort()).toEqual(Object.keys(c.appOverview()).sort());
+  });
+
+  it('leaves the lower half out when the ledger is not cached', () => {
+    // `appOverviewData_` needs the ledger: ~300ms cached, ~4,000ms not.
+    // Inlining that unconditionally would put an unbounded cost in front of
+    // first paint, so a cold cache means a blank page rather than a slow half.
+    const c = book([tx()]);
+    c.__cache.clear();
+
+    const inlined = JSON.parse(c.appInlineBoot_());
+    expect(inlined.open).toBeDefined();
+    expect(inlined.overview).toBeNull();
+  });
+
+  it('leaves it out when a chunk is missing, not just when the count is', () => {
+    // `:n` outlives a chunk — they expire independently — and a ledger that
+    // reads as cached and misses on the fetch is the exact miss this avoids.
+    const c = book([tx()]);
+    c.readLedger_();
+    [...c.__cache.keys()].filter((k) => k.endsWith(':0')).forEach((k) => c.__cache.delete(k));
+
+    expect(JSON.parse(c.appInlineBoot_()).overview).toBeNull();
+  });
+
+  it('carries the first view of Records and Charts, keyed on the server defaults', () => {
+    // The prefetch is back and the page must not decide what "first view"
+    // means, or it draws one slice while holding another.
+    const c = book([tx()]);
+    const screens = c.appOverview().screens;
+
+    expect(screens.filters.records.period.kind).toBe('last_12');
+    expect(screens.filters.analytics.period.kind).toBe('mtd');
+    expect(screens.records.rows).toBeInstanceOf(Array);
+    expect(screens.analytics.totals).toBeDefined();
+  });
+
+  it('reads the ledger once for the whole inlined boot', () => {
+    // Both halves plus two prefetched screens, from rows fetched once. This is
+    // the premise the returned prefetch rests on — three reads is what got it
+    // removed the first time.
+    const c = book([tx()]);
+    c.readLedger_();
+    c.__resetReads();
+
+    c.appInlineBoot_();
+    expect(c.__reads('transactions')).toBe(0);
   });
 
   it('escapes every < so nothing can close the script element', () => {
@@ -1040,6 +1086,7 @@ describe('the first screen, inlined into the page', () => {
     expect(html).toContain('id="boot"');
     expect(html).not.toContain('<?!=');          // the scriptlet was evaluated
     expect(html).toContain('"netWorth"');
+    expect(html).toContain('"open"');
   });
 
   it('serves a page that still boots when 23 is missing', () => {
@@ -1061,7 +1108,8 @@ describe('the first screen, inlined into the page', () => {
     const page = readFileSync(join(SRC, 'page.html'), 'utf8');
 
     expect(page).toContain("call('appOpen')");
-    expect(page).toContain('function inlinedOpen()');
+    expect(page).toContain("call('appOverview')");
+    expect(page).toContain('function inlinedBoot()');
   });
 });
 

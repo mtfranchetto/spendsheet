@@ -429,7 +429,8 @@
       the sandboxed iframe load ahead of this code, cross-origin, with no clock
       either side can share. Stopwatch minus `everything` is that number.
     */
-    timing: { startedAt: Date.now(), open: 0, overview: 0, inlined: false },
+    timing: { startedAt: Date.now(), open: 0, overview: 0,
+              inlined: false, overviewInlined: false },
     // Keyed by the filter signature, so going back to a slice you have already
     // looked at is instant and costs no request.
     cache: {},
@@ -905,7 +906,9 @@
       (state.timing.inlined
         ? 'Top of screen came with the page'
         : 'Top of screen in ' + (state.timing.open / 1000).toFixed(1) + 's') +
-      ', everything in ' + (state.timing.overview / 1000).toFixed(1) + 's.'));
+      ', ' + (state.timing.overviewInlined
+        ? 'and so did the rest.'
+        : 'everything in ' + (state.timing.overview / 1000).toFixed(1) + 's.')));
   }
 
   /**
@@ -1741,36 +1744,65 @@
    * will not parse. There is no case where a broken payload is worth more than
    * a round trip.
    */
-  function inlinedOpen() {
+  function inlinedBoot() {
     try {
       var node = document.getElementById('boot');
       var raw = node ? String(node.textContent || '').trim() : '';
       if (!raw || raw === 'null') return null;
 
       var parsed = JSON.parse(raw);
-      // `lists` is what the tiles and the icons are built from, so a payload
-      // without it would draw a broken screen rather than no screen.
-      return parsed && parsed.lists && parsed.accounts ? parsed : null;
+      // `open` is the half that is always there; `overview` rides along only
+      // when the ledger was already cached. A payload missing the fields the
+      // tiles are built from is treated as absent — a broken screen is worse
+      // than a slow one.
+      if (!parsed || !parsed.open || !parsed.open.lists || !parsed.open.accounts) return null;
+      return parsed;
     } catch (e) {
       return null;
     }
   }
 
-  var inline = inlinedOpen();
+  var inline = inlinedBoot();
   if (inline) {
-    applyOpen(inline, true);
+    applyOpen(inline.open, true);
   } else {
     call('appOpen').then(function (result) { applyOpen(result, false); }).catch(fatal);
   }
 
-  call('appOverview').then(function (result) {
+  function applyOverview(result, inlined) {
     state.lists.labels = result.lists.labels;
     state.lists.categories = result.lists.categories;
     state.lists.periods = result.lists.periods;
     state.data.overview = result;
-    state.timing.overview = Date.now() - state.timing.startedAt;
+
+    // The first view of the other two screens, computed on the server from
+    // rows it already had. Seeded through the same cache a fetch would fill,
+    // and keyed on the server's own defaults — so `go()` finds them present
+    // and asks for nothing, and a filter change still fetches.
+    if (result.screens) {
+      state.filters.analytics = result.screens.filters.analytics;
+      state.filters.records = result.screens.filters.records;
+
+      state.data.analytics = result.screens.analytics;
+      state.cache[signature(state.filters.analytics)] = result.screens.analytics;
+
+      state.records.rows = result.screens.records.rows;
+      state.records.offset = result.screens.records.rows.length;
+      state.records.hasMore = result.screens.records.hasMore;
+      state.records.total = result.screens.records.total;
+      state.records.loaded = true;
+    }
+
+    state.timing.overview = inlined ? 0 : Date.now() - state.timing.startedAt;
+    state.timing.overviewInlined = !!inlined;
     render();
-  }).catch(fatal);
+  }
+
+  if (inline && inline.overview) {
+    applyOverview(inline.overview, true);
+  } else {
+    call('appOverview').then(function (r) { applyOverview(r, false); }).catch(fatal);
+  }
 
 })();
 </script>
