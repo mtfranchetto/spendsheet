@@ -48,6 +48,62 @@
 /** `_config` key holding the address allowed through Door 2. */
 var WEBAPP_OWNER_KEY = 'owner_email';
 
+/** `_config` key holding the Viewer deployment's URL, for the menu to open. */
+var WEBAPP_URL_KEY = 'viewer_url';
+
+/**
+ * Only an Apps Script `/exec` URL, and nothing else.
+ *
+ * This value is read out of a cell and put into a link in a dialog, which is
+ * the one place in this project where something typed into the spreadsheet
+ * becomes something clickable. A pattern rather than an escape: the set of
+ * URLs this menu item has any business opening is exactly one shape, and
+ * checking for that shape is a stronger statement than sanitising an arbitrary
+ * one. `/u/N/` is allowed because it is what a multi-account browser needs.
+ */
+var WEBAPP_URL_PATTERN =
+  /^https:\/\/script\.google\.com\/(u\/\d+\/)?macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+
+/**
+ * Open the app from the menu, rather than typing a URL nobody remembers.
+ *
+ * A menu item cannot navigate the browser, so this is a dialog with a link in
+ * it — `target="_blank"` on an anchor the user clicks. That is the only route
+ * Apps Script offers, and it is also the honest one: the click is the user's.
+ */
+function openWebApp() {
+  var ui = SpreadsheetApp.getUi();
+  var url = String(readConfig_()[WEBAPP_URL_KEY] || '').trim();
+
+  if (!url) {
+    ui.alert('No app URL yet',
+      'Put the Viewer deployment URL in _config under "' + WEBAPP_URL_KEY + '".\n\n' +
+      'Deploy → Manage deployments → the one with access "Only myself" → copy its ' +
+      'Web app URL.', ui.ButtonSet.OK);
+    return;
+  }
+
+  if (!WEBAPP_URL_PATTERN.test(url)) {
+    ui.alert('That does not look like the app URL',
+      '"' + WEBAPP_URL_KEY + '" should be an Apps Script /exec address:\n\n' +
+      'https://script.google.com/macros/s/…/exec\n\n' +
+      'What is there now is:\n\n' + url, ui.ButtonSet.OK);
+    return;
+  }
+
+  // The URL is known to match the pattern above, so it carries no character
+  // that could close the attribute — which is why the check is a whitelist and
+  // not an escape.
+  var page = HtmlService.createHtmlOutput(
+    '<p style="font:14px system-ui;margin:0 0 16px">' +
+    'Opens in a new tab. Add it to your home screen from there.</p>' +
+    '<p style="font:14px system-ui"><a href="' + url + '" target="_blank" ' +
+    'rel="noopener">Open Spendsheet</a></p>')
+    .setWidth(360).setHeight(140);
+
+  ui.showModalDialog(page, 'The app');
+}
+
 /**
  * Which page a request wants, from its query string alone.
  *

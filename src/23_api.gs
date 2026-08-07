@@ -111,9 +111,17 @@ function appRecords(filters, offset) {
   return webAppRecords_(filters, offset);
 }
 
-/** The dashboard on its own, for a pull-to-refresh. */
+/**
+ * The dashboard on its own, for a pull-to-refresh.
+ *
+ * Forgets the cache first, because this is the one call whose entire meaning is
+ * "I do not believe what is on screen". Serving it from a cache would answer a
+ * request for fresh data with the same stale answer, and there would be no
+ * second thing to try — this *is* the retry.
+ */
 function appDashboard() {
   requireOwner_();
+  forgetLedgerCache_();
   return appDashboardData_();
 }
 

@@ -45,6 +45,7 @@ function colIndex_(headers, name) {
 
 function writeCell_(sheet, row, headers, name, value) {
   sheet.getRange(row, colIndex_(headers, name)).setValue(value);
+  if (versionedSheet_(sheet)) bumpDataVersion_();
 }
 
 function readCell_(sheet, row, headers, name) {
@@ -173,6 +174,62 @@ function readRecords_(sheet, headers, keyColumn) {
  * rows given, so a tab whose later columns hold formulas or your own notes is
  * left alone.
  */
+/**
+ * A number that changes whenever `transactions` does.
+ *
+ * The ledger cache in `21_query.gs` is keyed on this, and the whole question a
+ * cache has to answer is "has anything changed since". The obvious answer — the
+ * row count — is wrong here, and wrong in the direction that matters:
+ * confirming a transaction writes column AB and appends nothing, so the count
+ * is identical and a cache keyed on it serves the row you just confirmed
+ * straight back to you. The app's own writes would be the ones it could not
+ * see. Same for a category override, a subcategory correction, and every edit
+ * the review queue exists to make.
+ *
+ * So it counts *writes*, not rows. Bumped from `appendRows_` and `writeCell_`
+ * rather than from each of the dozen callers that reach for them, because a
+ * list of writers someone has to keep current is the thing that goes stale —
+ * and the one that gets forgotten is the one that shows you the wrong balance.
+ *
+ * Failing to read it returns something that can never match a stored key, so a
+ * broken PropertiesService means no cache rather than a stale one. That
+ * direction is not negotiable: a cache that cannot prove it is current must
+ * behave as though it is not.
+ */
+var DATA_VERSION_KEY = 'transactions_version';
+
+function dataVersion_() {
+  try {
+    return String(
+      PropertiesService.getScriptProperties().getProperty(DATA_VERSION_KEY) || '0');
+  } catch (e) {
+    return 'unreadable-' + Date.now();
+  }
+}
+
+function bumpDataVersion_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var next = (Number(props.getProperty(DATA_VERSION_KEY)) || 0) + 1;
+    props.setProperty(DATA_VERSION_KEY, String(next));
+  } catch (e) {
+    // A version that cannot be bumped is a cache that goes on serving the old
+    // answer, so this is worth an anomaly rather than a silent pass.
+    if (typeof logAnomaly_ === 'function') {
+      logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'could not bump the data version', e.message);
+    }
+  }
+}
+
+/** Whether a write to this sheet invalidates the ledger cache. */
+function versionedSheet_(sheet) {
+  try {
+    return !!sheet && sheet.getName() === TABS.TRANSACTIONS;
+  } catch (e) {
+    return false;
+  }
+}
+
 function appendRows_(sheet, keyColumn, rows) {
   if (!rows || !rows.length) return { row: null, count: 0 };
 
@@ -185,6 +242,7 @@ function appendRows_(sheet, keyColumn, rows) {
 
   var start = lastRecordRow_(sheet, keyColumn) + 1;
   sheet.getRange(start, 1, rows.length, width).setValues(rows);
+  if (versionedSheet_(sheet)) bumpDataVersion_();
   return { row: start, count: rows.length };
 }
 

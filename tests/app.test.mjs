@@ -125,8 +125,13 @@ describe('the gate on every entry point', () => {
     // `describeQueryCost` is the one exception and is a menu item, listed in
     // DIAGNOSTIC_ITEMS: it reports a row count and two timings to somebody who
     // already has edit access to the Sheet.
+    // `openWebApp` is a menu item and menu items are called by name, so it
+    // cannot take the underscore. It returns nothing, and the only thing it
+    // reads is a URL it then puts in a dialog — `SpreadsheetApp.getUi()`
+    // throws outside a container, so reaching it from a browser gets an error
+    // rather than an answer.
     const ALLOWED = { '21_query.gs': ['describeQueryCost'], '22_actions.gs': [],
-      '20_webapp.gs': [] };
+      '20_webapp.gs': ['openWebApp'] };
 
     Object.keys(ALLOWED).forEach((file) => {
       const text = readFileSync(join(SRC, file), 'utf8');
@@ -707,5 +712,129 @@ describe('the page and the server agree', () => {
       const reachable = nav.includes(`'${id}'`) || page.includes(`go('${id}')`);
       expect(reachable, id).toBe(true);
     });
+  });
+});
+
+/**
+ * The ledger cache, and the invalidation the obvious design gets wrong.
+ *
+ * Every screen paid ~2,025ms to read the same 4,615 rows, so the ledger is
+ * cached — chunked under the 100KB a cache key holds, keyed on a version that
+ * every write bumps.
+ *
+ * **On the version, not the row count.** The row count is the obvious
+ * fingerprint and it is blind to exactly the writes this app makes:
+ * confirming a transaction sets column AB and appends nothing, so the count is
+ * identical before and after. A cache keyed on it would serve the row you just
+ * confirmed straight back to you, and the app's own writes would be the ones
+ * it could not see. Same for a category override and every edit the review
+ * queue exists to make.
+ *
+ * The tests below write through `appConfirm` rather than poking the sheet,
+ * because going through the real entry point is the only way to prove the bump
+ * is wired to the path a user actually takes.
+ */
+describe('the ledger cache', () => {
+  /** Edit the sheet behind the cache's back, the way a desktop paste would. */
+  function editDescriptionDirectly(c, row, text) {
+    const sheet = c.__spreadsheet.getSheetByName('transactions');
+    sheet.getRange(row, c.colIndex_(c.TX_COLUMNS, 'description')).setValue(text);
+  }
+
+  const descriptions = (c) => c.readLedger_().map((r) => r.description);
+
+  it('serves a second read without going back to the sheet', () => {
+    const c = book([tx({ uid: 'u-1', description: 'ORIGINAL' })]);
+    expect(descriptions(c)).toEqual(['ORIGINAL']);
+
+    editDescriptionDirectly(c, 2, 'CHANGED BEHIND ITS BACK');
+    expect(descriptions(c)).toEqual(['ORIGINAL']);
+  });
+
+  /*
+    The one the row count would have failed. Confirming writes AB and appends
+    nothing at all, so a cache that fingerprints the size of the tab cannot
+    tell this happened.
+  */
+  it('is invalidated by confirming a row, which changes no row count', () => {
+    const c = book([tx({ uid: 'u-1', confirmed: '' })]);
+    const sheet = c.__spreadsheet.getSheetByName('transactions');
+    const before = c.lastRecordRow_(sheet, 1);
+
+    expect(c.readLedger_()[0].confirmed).not.toBe(true);
+    c.appConfirm([{ uid: 'u-1', confirmed: true }]);
+
+    expect(c.lastRecordRow_(sheet, 1)).toBe(before);
+    expect(c.readLedger_()[0].confirmed).toBe(true);
+  });
+
+  it('is invalidated by a category override, for the same reason', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    expect(c.readLedger_()[0].category_override).toBe('');
+
+    c.appConfirm([{ uid: 'u-1', category_override: 'Housing' }]);
+    expect(c.readLedger_()[0].category_override).toBe('Housing');
+  });
+
+  it('is invalidated by an append, which the row count would have caught', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    expect(c.readLedger_()).toHaveLength(1);
+
+    const sheet = c.__spreadsheet.getSheetByName('transactions');
+    c.appendRows_(sheet, 1, [c.toRow_(c.TX_COLUMNS_CODE, tx({ uid: 'u-2' }))]);
+    expect(c.readLedger_()).toHaveLength(2);
+  });
+
+  /*
+    A pull to refresh is a request whose whole meaning is "I do not believe
+    what is on screen". Answering it from the cache would repeat the answer
+    being disbelieved, and there is no second thing to try.
+  */
+  it('goes to the sheet for a pull to refresh', () => {
+    const c = book([tx({ uid: 'u-1', description: 'ORIGINAL', amount_base: -5 })]);
+    c.appDashboard();
+
+    editDescriptionDirectly(c, 2, 'EDITED ON THE DESKTOP');
+    c.appDashboard();
+
+    expect(descriptions(c)).toEqual(['EDITED ON THE DESKTOP']);
+  });
+
+  /*
+    Chunks expire independently. Concatenating around a hole parses into a
+    shorter ledger that is entirely valid JSON and quietly missing rows — so a
+    hole has to be a miss.
+  */
+  it('treats a missing chunk as a miss, not as a shorter ledger', () => {
+    const c = book([tx({ uid: 'u-1', description: 'ORIGINAL' })]);
+    c.readLedger_();
+
+    [...c.__cache.keys()].filter((k) => k.endsWith(':0')).forEach((k) => c.__cache.delete(k));
+    editDescriptionDirectly(c, 2, 'FRESH');
+
+    expect(descriptions(c)).toEqual(['FRESH']);
+  });
+
+  /*
+    A hit comes back through JSON, where a Date is an ISO string. If a miss
+    returned real Dates the two paths would disagree, and the symptom would be
+    "it works until it has been open five minutes".
+  */
+  it('returns the same shape whether it hit or missed', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    const miss = c.readLedger_()[0];
+    const hit = c.readLedger_()[0];
+
+    expect(typeof miss.booking_date).toBe('string');
+    expect(hit.booking_date).toBe(miss.booking_date);
+    expect(Object.keys(hit).sort()).toEqual(Object.keys(miss).sort());
+  });
+
+  it('still answers when the cache refuses to store anything', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    c.CacheService.getScriptCache = () => { throw new Error('no cache today'); };
+
+    expect(c.readLedger_()).toHaveLength(1);
+    expect(c.appDashboard().month).toBeDefined();
   });
 });

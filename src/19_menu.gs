@@ -22,6 +22,8 @@ var MENU_ITEMS = [
   { name: 'Import staged rows', fn: 'importStagedRows' },
   { name: 'Remove synced duplicates', fn: 'removeSyncedDuplicates' },
   { separator: true },
+  { name: 'Open the app', fn: 'openWebApp' },
+  { separator: true },
   { name: 'Refresh review queue', fn: 'refreshReviewQueue' },
   { name: 'Rebuild charts', fn: 'rebuildCharts' },
   { separator: true },

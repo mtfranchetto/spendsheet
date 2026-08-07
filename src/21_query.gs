@@ -590,10 +590,127 @@ function baseCurrency_() {
  * measurement calls for it, not before. `describeQueryCost()` is what takes
  * that measurement.
  */
+/**
+ * Chunk size, comfortably under the 100KB a single cache key accepts.
+ *
+ * `putAll` does not fail loudly on an oversized value — it declines to store
+ * it — so a chunk over the limit is a cache that silently never hits, which
+ * reads as "the cache made no difference" rather than as a bug.
+ */
+var LEDGER_CACHE_CHUNK = 90000;
+
+/**
+ * How long a chunk lives, and why it is not the six-hour maximum.
+ *
+ * `dataVersion_` catches every write that goes through `appendRows_` or
+ * `writeCell_`, which is every write this project makes. What it cannot catch
+ * is somebody typing into the tab with the spreadsheet open — `onEdit` covers
+ * the review columns, but a paste over a range, an undo, or an edit made from
+ * the Sheets mobile app may not fire it.
+ *
+ * So the TTL is the backstop for the case the counter cannot see, and five
+ * minutes is what it costs to be wrong: a desktop edit is invisible to the
+ * phone for at most that long. It is also long enough for the win that
+ * matters, which is within one sitting — open the app, look at Charts, look at
+ * Records, and only the first of those pays for the read.
+ */
+var LEDGER_CACHE_SECONDS = 300;
+
+/**
+ * Read `transactions` once, and preferably not at all.
+ *
+ * The whole cost of a query is this call — 4,615 rows by thirty columns,
+ * measured at **2,025ms** on the live book, against ~500ms for every loop that
+ * follows it. Quotas were checked rather than assumed: Apps Script meters
+ * runtime, not rows, and the Sheets REST API's 60-reads-a-minute limit does
+ * not apply to `SpreadsheetApp`.
+ *
+ * The cache is a second copy of the ledger, which this project spent a long
+ * time refusing to keep on a guess. It is no longer a guess: every screen paid
+ * two seconds for the same rows, and `describeQueryCost` is what said so.
+ *
+ * **The uncached path returns the parse of what it just stored, deliberately.**
+ * A cache hit comes back through JSON, where a `Date` is an ISO string; a miss
+ * would otherwise hand back real `Date` objects. Two shapes for the same data
+ * is the bug that shows up as "it works until it has been open five minutes",
+ * so both paths go through the same round trip and there is only one shape.
+ * The cost is ~100ms of stringify on a miss, which is the cheapest insurance
+ * available against a whole class of bug.
+ *
+ * Every failure here falls through to reading the sheet. A cache that cannot
+ * store, cannot read, or comes back with a hole in it is a slow app; a cache
+ * that guesses is a wrong one.
+ */
 function readLedger_() {
+  var version = dataVersion_();
+
+  var hit = cachedLedger_(version);
+  if (hit) return hit;
+
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
   if (!sheet) return [];
-  return readRecords_(sheet, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'));
+
+  var text = JSON.stringify(readRecords_(sheet, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid')));
+  cacheLedger_(version, text);
+  return JSON.parse(text);
+}
+
+/** Chunk keys carry the version, so a bump orphans the old ones and they expire. */
+function ledgerCacheKey_(version, part) {
+  return 'ledger:' + version + ':' + part;
+}
+
+function cachedLedger_(version) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var count = Number(cache.get(ledgerCacheKey_(version, 'n')));
+    if (!count || !isFinite(count)) return null;
+
+    var keys = [];
+    for (var i = 0; i < count; i++) keys.push(ledgerCacheKey_(version, i));
+
+    var parts = cache.getAll(keys);
+    var text = '';
+    for (var j = 0; j < count; j++) {
+      var part = parts[ledgerCacheKey_(version, j)];
+      // Chunks expire independently, so a hole is possible and is a miss —
+      // concatenating around one would parse into a shorter ledger that looks
+      // entirely valid.
+      if (part === null || part === undefined) return null;
+      text += part;
+    }
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+}
+
+function cacheLedger_(version, text) {
+  try {
+    var values = {};
+    var count = 0;
+    for (var i = 0; i < text.length; i += LEDGER_CACHE_CHUNK) {
+      values[ledgerCacheKey_(version, count)] = text.slice(i, i + LEDGER_CACHE_CHUNK);
+      count++;
+    }
+    // Written before the count, so a partial store leaves no `n` to find and
+    // the next read misses cleanly instead of chasing chunks that never landed.
+    var cache = CacheService.getScriptCache();
+    cache.putAll(values, LEDGER_CACHE_SECONDS);
+    cache.put(ledgerCacheKey_(version, 'n'), String(count), LEDGER_CACHE_SECONDS);
+  } catch (e) {
+    // Nothing to do. The next read pays for the sheet, which is what it did
+    // before this function existed.
+  }
+}
+
+/** Drop the current version's chunks, so the next read goes to the sheet. */
+function forgetLedgerCache_() {
+  try {
+    CacheService.getScriptCache().remove(ledgerCacheKey_(dataVersion_(), 'n'));
+  } catch (e) {
+    // A cache that will not forget still expires on its own.
+  }
 }
 
 /**

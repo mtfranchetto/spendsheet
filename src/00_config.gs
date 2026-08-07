@@ -470,7 +470,12 @@ var DEFAULT_CONFIG = [
   // carries no Google session) and both deployments run the same doGet, so the
   // app branch checks the caller against this. Blank means refuse everyone —
   // see webAppAccessDecision_ in 20_webapp.gs for why it fails closed.
-  ['owner_email', '', 'Who may open the mobile web app. Filled by Setup sheet. Blank refuses everyone.']
+  ['owner_email', '', 'Who may open the mobile web app. Filled by Setup sheet. Blank refuses everyone.'],
+  // Stored rather than detected. `ScriptApp.getService().getUrl()` answers for
+  // the context it is called from, so from the menu it returns the HEAD
+  // deployment — neither of the two real doors. Paste the Viewer's /exec URL
+  // here once and "Open the app" knows where to send you.
+  ['viewer_url', '', 'The mobile app deployment URL (Deploy → Manage deployments → Viewer).']
 ];
 
 /**

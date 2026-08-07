@@ -571,6 +571,7 @@ function htmlOutput(html, file = null) {
 export function createGoogleStubs(options = {}) {
   const spreadsheet = options.spreadsheet || new FakeSpreadsheet(options.locale);
   const properties = new Map(Object.entries(options.properties || {}));
+  const cache = new Map();
   const sent = [];
   const fetches = [];
   const uiCalls = [];
@@ -666,6 +667,39 @@ export function createGoogleStubs(options = {}) {
         setProperties: (obj) => { Object.entries(obj).forEach(([k, v]) => properties.set(k, String(v))); },
         deleteProperty: (k) => { properties.delete(k); },
         getProperties: () => Object.fromEntries(properties)
+      })
+    },
+
+    /**
+     * The ledger cache, faked no more forgivingly than the real one.
+     *
+     * Two behaviours are load-bearing and both are refusals. A value over
+     * 100KB is **declined, not thrown on** — the real service stores nothing
+     * and says nothing, so an oversized chunk is a cache that silently never
+     * hits, which reads as "caching made no difference" rather than as a bug.
+     * And `getAll` omits keys it does not hold rather than returning null for
+     * them, which is what makes a partial expiry look like a shorter ledger to
+     * anything that concatenates without checking.
+     *
+     * `expired()` is the seam the tests need: chunks expire independently in
+     * production and there is no other way to reach that case.
+     */
+    CacheService: {
+      getScriptCache: () => ({
+        get: (k) => (cache.has(k) ? cache.get(k) : null),
+        getAll: (keys) => {
+          const out = {};
+          keys.forEach((k) => { if (cache.has(k)) out[k] = cache.get(k); });
+          return out;
+        },
+        put: (k, v) => { if (String(v).length <= 100 * 1024) cache.set(k, String(v)); },
+        putAll: (obj) => {
+          Object.entries(obj).forEach(([k, v]) => {
+            if (String(v).length <= 100 * 1024) cache.set(k, String(v));
+          });
+        },
+        remove: (k) => { cache.delete(k); },
+        removeAll: (keys) => { keys.forEach((k) => cache.delete(k)); }
       })
     },
 
@@ -849,6 +883,9 @@ export function createGoogleStubs(options = {}) {
 
   // Handles for assertions.
   sandbox.__spreadsheet = spreadsheet;
+  // The cache's own store, so a test can watch what was written and expire a
+  // chunk by hand — independent expiry has no other seam.
+  sandbox.__cache = cache;
   sandbox.__properties = properties;
   sandbox.__sentMail = sent;
   sandbox.__fetches = fetches;
