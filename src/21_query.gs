@@ -872,21 +872,56 @@ function describeQueryCost() {
   var analytics = webAppAnalytics_({ period: { kind: 'mtd' } });
   var queryMs = Date.now() - startedQuery;
 
+  // The dashboard's path, timed separately, because it is a different one and
+  // the number above says nothing about it. Four narrow columns decide which
+  // rows matter, then only those rows are read at full width — and whether
+  // that actually wins is a question about per-call overhead against payload
+  // size, which is exactly the kind of thing a guess gets backwards. The
+  // components are timed rather than `appDashboardData_` itself: that lives in
+  // 23 and nothing here may reach upwards into it.
+  var startedIndex = Date.now();
+  var index = ledgerIndex_();
+  var indexMs = Date.now() - startedIndex;
+
+  var window = resolveWindow_({ kind: 'mtd' }, new Date());
+  var wanted = index.filter(function (entry) {
+    return entryInWindow_(entry, window);
+  }).map(function (entry) { return entry.row; });
+
+  var startedRows = Date.now();
+  var picked = readLedgerRows_(wanted);
+  var rowsMs = Date.now() - startedRows;
+  var dashboardMs = indexMs + rowsMs;
+
   var report = {
     rows: ledger.length,
     readMs: readMs,
     fullQueryMs: queryMs,
     matchedThisMonth: analytics.totals.count,
     unconvertible: analytics.totals.unconvertible,
+
+    indexScanMs: indexMs,
+    pickedRows: picked.length,
+    pickedRowsMs: rowsMs,
+    dashboardReadMs: dashboardMs,
+    narrowSaving: readMs > 0 ? Math.round((1 - dashboardMs / readMs) * 100) + '%' : 'n/a',
+
     verdict: readMs > 1000
-      ? 'The read is over a second. A CacheService read-through would pay for itself.'
-      : 'The read is comfortable. A cache would be a second copy of the ledger for nothing.'
+      ? 'The full read is over a second, so Charts and Records pay it on every ' +
+        'open. A CacheService read-through would pay for itself there.'
+      : 'The read is comfortable. A cache would be a second copy of the ledger for nothing.',
+    narrowVerdict: dashboardMs < readMs
+      ? 'The narrow read is cheaper than the full one, so the dashboard is right to use it.'
+      : 'The narrow read is NOT cheaper. Per-call overhead beats the saving — ' +
+        'the dashboard should go back to one full read.'
   };
 
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app query cost', report);
   SpreadsheetApp.getActiveSpreadsheet().toast(
     report.rows + ' rows read in ' + readMs + 'ms; a full month-to-date query took ' +
-    queryMs + 'ms.\n\n' + report.verdict, 'Query cost', 30);
+    queryMs + 'ms.\n\nThe dashboard reads ' + picked.length + ' rows in ' +
+    dashboardMs + 'ms (' + report.narrowSaving + ' less).\n\n' +
+    report.verdict + '\n' + report.narrowVerdict, 'Query cost', 30);
 
   return report;
 }
