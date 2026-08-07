@@ -66,7 +66,7 @@ const tx = (over = {}) => Object.assign({
 
 /** Every function a page can invoke by name. */
 const PUBLIC_API = ['appBootstrap', 'appAnalytics', 'appRecords', 'appDashboard',
-  'appConfirm', 'appAddCash'];
+  'appConfirm', 'appAddCash', 'describeDashboardCost'];
 
 describe('the gate on every entry point', () => {
   it('lets the owner past the guard on each one', () => {

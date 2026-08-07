@@ -394,6 +394,109 @@ function labelNames_() {
     .map(function (row) { return String(row.label); });
 }
 
+// ---------------------------------------------------------------------------
+// What the first screen costs
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the seconds go when the app opens, measured part by part in one run.
+ *
+ * `describeQueryCost` answered a different question — what one *ledger read*
+ * costs — and answered it well enough that the cache got built on it. It cannot
+ * answer this one: the dashboard reads `transactions` once and then reads
+ * `_config`, `accounts`, `_status`, `_runs`, `categories` and `labels` a dozen
+ * more times between them, and none of those go through the ledger cache. A
+ * cache that works perfectly and a dashboard that is still slow are entirely
+ * compatible, and telling them apart needs the parts named.
+ *
+ * Two rules are baked into the shape of this:
+ *
+ * **Both ledger reads happen here, back to back.** The cache is dropped first
+ * so the first read is a guaranteed miss and the second is the case the user
+ * actually experiences — opening the app twice. `ledgerSecond` reporting
+ * `sheet` rather than `cache` means the cache is never hitting, which is a
+ * different bug from it hitting and not helping, and no timing distinguishes
+ * the two.
+ *
+ * **Every part is timed inside one execution.** A spreadsheet read on this book
+ * has been seen to vary from 2,025ms to 9,418ms within an hour, so a number
+ * from this run compared against a number from the last one proves nothing.
+ * Compare the parts against each other, here, where they saw the same weather.
+ *
+ * `configMs` is the one to read first: it is the price of a single `_config`
+ * read, and the dashboard path takes about eight of them.
+ */
+function describeDashboardCost() {
+  requireOwner_();
+
+  var at = function (fn) {
+    var started = Date.now();
+    fn();
+    return Date.now() - started;
+  };
+
+  // A guaranteed miss, then the read the second page load actually makes.
+  forgetLedgerCache_();
+  var coldMs = at(readLedger_);
+  var coldSource = LEDGER_SOURCE;
+  var warmMs = at(readLedger_);
+  var warmSource = LEDGER_SOURCE;
+
+  var ledger = readLedger_();
+  var now = new Date();
+  var window = resolveWindow_({ kind: 'mtd' }, now);
+  var previous = lastMonthToDate_(now);
+
+  var report = {
+    rows: ledger.length,
+
+    // Does the second load hit? This is the whole question.
+    ledgerFirstMs: coldMs,
+    ledgerFirst: coldSource,
+    ledgerSecondMs: warmMs,
+    ledgerSecond: warmSource,
+
+    // One `_config` read, which several of the parts below do more than once.
+    configMs: at(readConfig_),
+
+    // The dashboard, with the ledger already cached.
+    accountsMs: at(appAccounts_),
+    netWorthMs: at(function () { return netWorthNow_({}); }),
+    healthMs: at(appHealth_),
+    reviewMs: at(function () { return appReviewQueue_(ledger); }),
+    aggregateMs: at(function () {
+      aggregate_(ledger.filter(function (row) {
+        return matchesFilters_(row, { window: window });
+      }), window);
+      aggregate_(ledger.filter(function (row) {
+        return matchesFilters_(row, { window: previous });
+      }), previous);
+    }),
+
+    // The lists the bootstrap carries alongside it.
+    listsMs: at(function () {
+      accountNames_();
+      cashAccountList_();
+      labelNames_();
+      categoryChoices_();
+    }),
+
+    // The whole call the page makes, warm — what the user is timing.
+    bootstrapMs: at(appBootstrap)
+  };
+
+  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'app dashboard cost', report);
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Ledger: ' + coldMs + 'ms from ' + coldSource + ', then ' + warmMs + 'ms from ' +
+    warmSource + '.\nWarm bootstrap ' + report.bootstrapMs + 'ms — accounts ' +
+    report.accountsMs + ', net worth ' + report.netWorthMs + ', health ' +
+    report.healthMs + ', review ' + report.reviewMs + ', lists ' + report.listsMs +
+    '.\nOne _config read costs ' + report.configMs + 'ms.',
+    'Dashboard cost', 30);
+
+  return report;
+}
+
 /**
  * The periods the app offers, named the same as on the `reports` tab.
  *

@@ -641,17 +641,38 @@ var LEDGER_CACHE_SECONDS = 300;
  * store, cannot read, or comes back with a hole in it is a slow app; a cache
  * that guesses is a wrong one.
  */
+/**
+ * Where the last `readLedger_` got its answer: `cache`, `sheet` or `missing`.
+ *
+ * A global rather than a return value, because every caller would otherwise
+ * have to unwrap a pair to get at the rows — twenty call sites paying for one
+ * diagnostic. An execution here is single-threaded and lives for one request,
+ * so the only thing that can overwrite it is the same request reading again,
+ * which is exactly what the diagnostic wants to see.
+ *
+ * It exists because "the cache made no difference" and "the cache never hits"
+ * produce the identical symptom, and no amount of timing distinguishes them.
+ */
+var LEDGER_SOURCE = '';
+
 function readLedger_() {
   var version = dataVersion_();
 
   var hit = cachedLedger_(version);
-  if (hit) return hit;
+  if (hit) {
+    LEDGER_SOURCE = 'cache';
+    return hit;
+  }
 
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
-  if (!sheet) return [];
+  if (!sheet) {
+    LEDGER_SOURCE = 'missing';
+    return [];
+  }
 
   var text = JSON.stringify(readRecords_(sheet, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid')));
   cacheLedger_(version, text);
+  LEDGER_SOURCE = 'sheet';
   return JSON.parse(text);
 }
 
