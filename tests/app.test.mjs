@@ -816,6 +816,52 @@ describe('the ledger cache', () => {
   });
 
   /*
+    Dropping only the `:n` key used to be enough, on the grounds that orphaned
+    chunks expire by themselves. That was true at a five-minute TTL and false
+    at six hours, where 3.7MB of unreachable ledger sits in a cache that evicts
+    under pressure — and what it evicts is the ledger still in use.
+  */
+  it('removes the chunks it orphans, not just the count', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    c.readLedger_();
+    expect([...c.__cache.keys()].length).toBeGreaterThan(1);
+
+    c.forgetLedgerCache_();
+
+    expect([...c.__cache.keys()]).toEqual([]);
+  });
+
+  /*
+    `ledgerFirst` in the diagnostic is a forced miss, so it can never say
+    whether a ledger survived from the last time the app was opened — which is
+    the only question a TTL raises. This is what answers it, and it has to
+    count the chunks: `:n` present with a chunk missing is a ledger that reads
+    as cached and misses on every fetch.
+  */
+  it('reports the cache state without disturbing it', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    expect(c.ledgerCacheState_().cached).toBe(false);
+
+    c.readLedger_();
+    const warm = c.ledgerCacheState_();
+    expect(warm.cached).toBe(true);
+    expect(warm.present).toBe(warm.chunks);
+
+    // Still readable afterwards — a probe that empties the cache is useless.
+    expect(c.ledgerCacheState_().cached).toBe(true);
+  });
+
+  it('reports a hole rather than calling a broken cache warm', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+    c.readLedger_();
+    [...c.__cache.keys()].filter((k) => k.endsWith(':0')).forEach((k) => c.__cache.delete(k));
+
+    const state = c.ledgerCacheState_();
+    expect(state.cached).toBe(true);
+    expect(state.present).toBeLessThan(state.chunks);
+  });
+
+  /*
     A hit comes back through JSON, where a Date is an ISO string. If a miss
     returned real Dates the two paths would disagree, and the symptom would be
     "it works until it has been open five minutes".

@@ -738,12 +738,73 @@ function cacheLedger_(version, text) {
   }
 }
 
-/** Drop the current version's chunks, so the next read goes to the sheet. */
-function forgetLedgerCache_() {
+/**
+ * Drop a version's chunks, so the next read goes to the sheet.
+ *
+ * **Removes the chunks, not just the count.** Dropping only `:n` used to be
+ * enough on the grounds that orphaned chunks expire by themselves — true at a
+ * five-minute TTL and false at six hours, where 3.7MB of unreachable ledger
+ * now sits in a cache that evicts under pressure. The thing it would evict is
+ * the ledger that is still being used.
+ *
+ * `:n` goes first regardless, so a reader arriving mid-removal misses cleanly
+ * rather than finding a count and then a hole.
+ */
+function forgetLedgerCache_(version) {
   try {
-    CacheService.getScriptCache().remove(ledgerCacheKey_(dataVersion_(), 'n'));
+    var cache = CacheService.getScriptCache();
+    var key = version === undefined ? dataVersion_() : version;
+    var count = Number(cache.get(ledgerCacheKey_(key, 'n')));
+
+    cache.remove(ledgerCacheKey_(key, 'n'));
+    if (!count || !isFinite(count)) return;
+
+    var keys = [];
+    for (var i = 0; i < count; i++) keys.push(ledgerCacheKey_(key, i));
+    cache.removeAll(keys);
   } catch (e) {
     // A cache that will not forget still expires on its own.
+  }
+}
+
+/**
+ * Whether a ledger is cached right now, without fetching one.
+ *
+ * The diagnostic drops the cache before it measures, so `ledgerFirst` is a
+ * guaranteed miss by construction and can never answer "was it still there
+ * from my last open" — which is the only question a TTL change raises. This
+ * answers it, and reports enough to tell the three failure modes apart:
+ *
+ * - `cached: false` with an unchanged `version` — it expired or was evicted.
+ * - `cached: false` with a *changed* `version` — something wrote to
+ *   `transactions` between the two opens and correctly invalidated it.
+ * - `cached: true` but `present < chunks` — chunks expire independently, so
+ *   the ledger is unreadable and every read is a miss that looks like a hit.
+ *
+ * That third one is why this counts rather than trusting `:n`. At 4,615 rows
+ * the ledger is 3.7MB over 42 keys, and `CacheService` evicts under pressure.
+ */
+function ledgerCacheState_() {
+  try {
+    var cache = CacheService.getScriptCache();
+    var version = dataVersion_();
+    var count = Number(cache.get(ledgerCacheKey_(version, 'n')));
+    if (!count || !isFinite(count)) {
+      return { version: version, cached: false, chunks: 0, present: 0 };
+    }
+
+    var keys = [];
+    for (var i = 0; i < count; i++) keys.push(ledgerCacheKey_(version, i));
+
+    var parts = cache.getAll(keys);
+    var present = 0;
+    keys.forEach(function (key) {
+      if (parts[key] !== null && parts[key] !== undefined) present++;
+    });
+
+    return { version: version, cached: true, chunks: count, present: present };
+  } catch (e) {
+    return { version: 'unreadable', cached: false, chunks: 0, present: 0 };
   }
 }
 
@@ -958,6 +1019,13 @@ function describeQueryCost() {
   var fetchStart = Date.now();
   cachedLedger_(probe);
   var fetchMs = Date.now() - fetchStart;
+
+  // The probe is a second 3.7MB copy of the ledger and it must not outlive the
+  // measurement. At the old five-minute TTL it aged out before it mattered; at
+  // six hours, three runs of this diagnostic would leave 11MB of unreachable
+  // ledger in a cache that evicts under pressure — and the thing it would
+  // evict is the real one. Measuring a cache must not be what breaks it.
+  forgetLedgerCache_(probe);
 
   var report = {
     rows: ledger.length,

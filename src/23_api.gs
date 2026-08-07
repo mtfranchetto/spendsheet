@@ -451,6 +451,13 @@ function describeDashboardCost() {
     return Date.now() - started;
   };
 
+  // Before anything is dropped: was a ledger still cached from the last time
+  // the app was opened? Everything below this line destroys the evidence, so
+  // it is the first thing measured. Run this, use the app, come back to it ten
+  // minutes later — `cacheWarmOnEntry` is the only number that says whether
+  // the six-hour TTL is doing what it was raised to do.
+  var onEntry = ledgerCacheState_();
+
   // A guaranteed miss, then the read the second page load actually makes.
   forgetLedgerCache_();
   var coldMs = at(readLedger_);
@@ -465,6 +472,12 @@ function describeDashboardCost() {
 
   var report = {
     rows: ledger.length,
+
+    // Was it warm before this ran? `ledgerFirst` cannot say — it is forced.
+    cacheWarmOnEntry: onEntry.cached,
+    cacheChunksOnEntry: onEntry.chunks,
+    cacheChunksPresent: onEntry.present,
+    dataVersion: onEntry.version,
 
     // Does the second load hit? This is the whole question.
     ledgerFirstMs: coldMs,
@@ -545,7 +558,10 @@ function describeDashboardCost() {
 
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'app dashboard cost', report);
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    'Ledger: ' + coldMs + 'ms from ' + coldSource + ', then ' + warmMs + 'ms from ' +
+    'Cache on entry: ' + (onEntry.cached
+      ? onEntry.present + ' of ' + onEntry.chunks + ' chunks, version ' + onEntry.version
+      : 'cold, version ' + onEntry.version) +
+    '.\nLedger: ' + coldMs + 'ms from ' + coldSource + ', then ' + warmMs + 'ms from ' +
     warmSource + '.\nWarm bootstrap ' + report.bootstrapMs + 'ms, against ' +
     report.partsMs + 'ms of parts fetching their own tabs — sharing the reads ' +
     'saves ' + report.sharedReadsSavedMs + 'ms.\nSharing one cache, in order: ' +
