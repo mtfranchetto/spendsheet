@@ -83,32 +83,43 @@ function requireOwner_() {
  * argument applied where it actually holds.
  */
 function appBootstrap() {
-  requireOwner_();
+  // The gate runs inside the read cache, not before it, and the order still
+  // holds: opening the cache sets a variable and reads nothing, so a refusal
+  // throws before a single cell is touched. What it buys is that
+  // `requireOwner_`'s own `_config` read — which every endpoint makes — is the
+  // same read the screen then wants, rather than a second one.
+  return withReadCache_(function () {
+    requireOwner_();
 
-  return {
-    dashboard: appDashboardData_(),
-    lists: {
-      accounts: accountNames_(),
-      cashAccounts: cashAccountList_(),
-      labels: labelNames_(),
-      categories: categoryChoices_(),
-      periods: appPeriods_()
-    },
-    currency: baseCurrency_(),
-    generatedAt: dayKey_(dayNumber_(new Date()))
-  };
+    return {
+      dashboard: appDashboardData_(),
+      lists: {
+        accounts: accountNames_(),
+        cashAccounts: cashAccountList_(),
+        labels: labelNames_(),
+        categories: categoryChoices_(),
+        periods: appPeriods_()
+      },
+      currency: baseCurrency_(),
+      generatedAt: dayKey_(dayNumber_(new Date()))
+    };
+  });
 }
 
 /** The Analytics screen, for one set of filters. */
 function appAnalytics(filters) {
-  requireOwner_();
-  return webAppAnalytics_(filters);
+  return withReadCache_(function () {
+    requireOwner_();
+    return webAppAnalytics_(filters);
+  });
 }
 
 /** One page of the ledger. */
 function appRecords(filters, offset) {
-  requireOwner_();
-  return webAppRecords_(filters, offset);
+  return withReadCache_(function () {
+    requireOwner_();
+    return webAppRecords_(filters, offset);
+  });
 }
 
 /**
@@ -120,9 +131,11 @@ function appRecords(filters, offset) {
  * second thing to try — this *is* the retry.
  */
 function appDashboard() {
-  requireOwner_();
-  forgetLedgerCache_();
-  return appDashboardData_();
+  return withReadCache_(function () {
+    requireOwner_();
+    forgetLedgerCache_();
+    return appDashboardData_();
+  });
 }
 
 /**
@@ -485,13 +498,26 @@ function describeDashboardCost() {
     bootstrapMs: at(appBootstrap)
   };
 
+  // What sharing the reads is worth, measured inside this one run.
+  //
+  // Every part above is timed *unwrapped*, so each pays full price for the
+  // tabs it fetches for itself — which is exactly what the bootstrap used to
+  // do. `bootstrapMs` runs the same work through `withReadCache_`. The
+  // difference between them is the duplication, and both numbers saw the same
+  // weather, which is the only way a comparison means anything on this book.
+  report.partsMs = report.ledgerSecondMs + report.accountsMs + report.netWorthMs +
+    report.healthMs + report.reviewMs + report.aggregateMs + report.listsMs;
+  report.sharedReadsSavedMs = report.partsMs - report.bootstrapMs;
+
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'app dashboard cost', report);
   SpreadsheetApp.getActiveSpreadsheet().toast(
     'Ledger: ' + coldMs + 'ms from ' + coldSource + ', then ' + warmMs + 'ms from ' +
-    warmSource + '.\nWarm bootstrap ' + report.bootstrapMs + 'ms — accounts ' +
-    report.accountsMs + ', net worth ' + report.netWorthMs + ', health ' +
-    report.healthMs + ', review ' + report.reviewMs + ', lists ' + report.listsMs +
-    '.\nOne _config read costs ' + report.configMs + 'ms.',
+    warmSource + '.\nWarm bootstrap ' + report.bootstrapMs + 'ms, against ' +
+    report.partsMs + 'ms of parts fetching their own tabs — sharing the reads ' +
+    'saves ' + report.sharedReadsSavedMs + 'ms.\nHealth ' + report.healthMs +
+    ', accounts ' + report.accountsMs + ', lists ' + report.listsMs +
+    ', net worth ' + report.netWorthMs + '. One _config read costs ' +
+    report.configMs + 'ms.',
     'Dashboard cost', 30);
 
   return report;

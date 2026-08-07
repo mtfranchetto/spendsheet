@@ -88,12 +88,24 @@ export function parseA1(a1, maxRows, maxCols) {
 const DEFAULT_ROWS = 1000;
 const DEFAULT_COLS = 26;
 
+/**
+ * Every `getValues` in the run, by tab.
+ *
+ * A round trip is what a spreadsheet read costs — ~175ms on the live book,
+ * near enough the same whether it returns one column or thirty — so the thing
+ * worth testing about a read cache is *how many calls happened*, not how long
+ * they took. A duration cannot be asserted in a harness with no spreadsheet
+ * behind it; a call count can, exactly.
+ */
+const readCounts = new Map();
+
 class FakeRange {
   constructor(sheet, row, col, numRows, numCols) {
     Object.assign(this, { sheet, row, col, numRows, numCols });
   }
 
   getValues() {
+    readCounts.set(this.sheet.getName(), (readCounts.get(this.sheet.getName()) || 0) + 1);
     const out = [];
     for (let r = 0; r < this.numRows; r++) {
       const line = [];
@@ -895,6 +907,11 @@ export function createGoogleStubs(options = {}) {
   sandbox.__driveFolders = folders;
   /** Take or release the script lock from a test, after the sheet is built. */
   sandbox.__setLockHeld = (held) => { lockHeld = held; };
+  /** `getValues` calls since the last reset, per tab — see `readCounts`. */
+  sandbox.__reads = (tab) => (tab === undefined
+    ? [...readCounts.values()].reduce((a, b) => a + b, 0)
+    : readCounts.get(tab) || 0);
+  sandbox.__resetReads = () => readCounts.clear();
 
   return sandbox;
 }

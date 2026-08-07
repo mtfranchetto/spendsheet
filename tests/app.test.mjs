@@ -838,3 +838,98 @@ describe('the ledger cache', () => {
     expect(c.appDashboard().month).toBeDefined();
   });
 });
+
+/**
+ * The per-request read cache.
+ *
+ * Counted rather than timed, because a round trip is what a spreadsheet read
+ * costs and the harness has no spreadsheet to time. The measurement that
+ * prompted this is in `describeDashboardCost`: 35 `getValues` over 7 tabs,
+ * ~175ms each, and only the ledger of them had a cache.
+ *
+ * Two of these tests are about speed and three are about not being wrong,
+ * which is the correct ratio for a cache.
+ */
+describe('the per-request read cache', () => {
+  /** A book with an account and a consent on it, so every tab has rows to read. */
+  const stocked = () => {
+    const c = book([tx()]);
+    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'b', name: 'Revolut', kind: 'bank',
+        currency: 'EUR', balance: 100, active: true, include_in_net_worth: true,
+        connection_id: 'c-1' })
+    ]);
+    c.appendRows_(c.__spreadsheet.getSheetByName('_status'), 1, [
+      c.toRow_(c.STATUS_COLUMNS, { connection_id: 'c-1', provider: 'Revolut', days_left: 60 })
+    ]);
+    return c;
+  };
+
+  it('reads each tab once for a whole bootstrap', () => {
+    // `accounts` was fetched four times by four functions that each went and
+    // got it for themselves — `appAccounts_`, `netWorthNow_`, `accountNames_`
+    // and `cashAccountList_` — and `_config` eight times. Neither is visible
+    // at any one call site, which is why this is asserted rather than reviewed.
+    const c = stocked();
+    c.__resetReads();
+    c.appBootstrap();
+
+    expect(c.__reads('accounts')).toBe(2);   // lastRecordRow_, then the block
+    expect(c.__reads('_config')).toBe(2);
+    expect(c.__reads('_status')).toBe(2);
+  });
+
+  it('is off unless a read-only request switched it on', () => {
+    // The default has to be off. `setup()` and the sync write a cell and read
+    // it back, repeatedly, and a memo that is always on turns that into a
+    // silently stale answer — the worst failure this project has.
+    const c = stocked();
+    c.__resetReads();
+    c.readConfig_();
+    c.readConfig_();
+
+    expect(c.__reads('_config')).toBe(4);
+  });
+
+  it('does not hand two callers the same record objects', () => {
+    // The values are shared; the records built from them are not. Sharing the
+    // objects means a field one caller sets appears in another's copy, which
+    // surfaces a month later on one tab and is untraceable when it does.
+    const c = stocked();
+    const sheet = c.__spreadsheet.getSheetByName('accounts');
+
+    c.withReadCache_(() => {
+      const first = c.readRecords_(sheet, c.ACCOUNT_COLUMNS, 1);
+      const second = c.readRecords_(sheet, c.ACCOUNT_COLUMNS, 1);
+      expect(first[0]).not.toBe(second[0]);
+
+      first[0].name = 'mutated';
+      expect(second[0].name).not.toBe('mutated');
+    });
+  });
+
+  it('forgets what it read as soon as anything is written', () => {
+    const c = stocked();
+    const sheet = c.__spreadsheet.getSheetByName('accounts');
+
+    c.withReadCache_(() => {
+      const before = c.readRecords_(sheet, c.ACCOUNT_COLUMNS, 1);
+      c.writeCell_(sheet, before[0]._row, c.ACCOUNT_COLUMNS, 'name', 'Renamed');
+
+      expect(c.readRecords_(sheet, c.ACCOUNT_COLUMNS, 1)[0].name).toBe('Renamed');
+    });
+  });
+
+  it('leaves the writing endpoints unmemoised', () => {
+    // `appConfirm` and `appAddCash` read, write, and read again. They are the
+    // 22 half of the seam and they deliberately do not switch the cache on —
+    // asserted by reading the file, because the failure is a wrapper somebody
+    // adds later for symmetry.
+    const api = readFileSync(join(SRC, '23_api.gs'), 'utf8');
+
+    ['appConfirm', 'appAddCash'].forEach((name) => {
+      const body = api.slice(api.indexOf(`function ${name}(`));
+      expect(body.slice(0, body.indexOf('\n}')), name).not.toContain('withReadCache_');
+    });
+  });
+});
