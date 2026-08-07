@@ -123,10 +123,22 @@ function appOpen() {
  * than at a template boundary where the next person to interpolate something
  * gets it wrong. `htmlSafeJson_` is the whole of that rule.
  *
- * ## What is in it
+ * ## Why only the top half
  *
- * `open` always, and `overview` only when the ledger is already cached — see
- * `warmOverviewOrNull_`. The page fetches whichever half is missing.
+ * The lower half was inlined here too, gated on the ledger already being
+ * cached so the cost would be ~700ms rather than ~4,700. **Measured on the
+ * live app, it made the document three to seven times slower** — the `/exec`
+ * response went from 3,116/3,351/3,686ms to 5,875/7,030/**23,928**ms, and
+ * first paint with it. Everything the overview does lands in front of the
+ * document, where there is nothing else to look at.
+ *
+ * The asymmetry is the point and it is worth stating: work belongs here only
+ * if it is **bounded and small**. `appOpenData_` reads three tabs and is
+ * ~800ms whatever the ledger holds, and it disappeared into the noise.
+ * `appOverviewData_` touches the ledger, and even warm it did not.
+ *
+ * So the lower half stays a round trip — which costs ~3,300ms but costs it
+ * *after* the balances are on screen, where waiting is survivable.
  *
  * ## Why it may return `null`
  *
@@ -137,52 +149,11 @@ function appOpen() {
 function appInlineBoot_() {
   try {
     return withReadCache_(function () {
-      return htmlSafeJson_({
-        open: appOpenData_(),
-        overview: warmOverviewOrNull_()
-      });
+      return htmlSafeJson_({ open: appOpenData_() });
     });
   } catch (e) {
     Logger.log('inline boot failed, falling back to a fetch: ' + e.message);
     return 'null';
-  }
-}
-
-/**
- * The lower half too — but only when it is nearly free.
- *
- * Measured against the live app: `appOverview` costs ~4,000ms from the browser
- * and `appOpen` costs ~3,500ms for a twentieth of the work. The difference
- * between them is ~500ms; the other ~3,300ms is `google.script.run` startup,
- * paid by both. So the lower half is not slow because of what it does, and
- * making it do less would barely register. **The only thing that helps is not
- * making the call**, which is what this is.
- *
- * The condition is the whole design. `appOverviewData_` needs the ledger:
- * ~300ms when it is cached and ~4,000ms when it is not. Inlining it
- * unconditionally would put that unbounded cost *in front of first paint* — a
- * cold cache would mean a blank page, net worth included, for the whole of it.
- * Today a cold ledger only delays the half that needs it, while your balances
- * are already on screen.
- *
- * So it is inlined exactly when the rows are already in `CacheService`, which
- * is the case where it costs ~700ms rather than ~4,700. Every other time the
- * page fetches it, as it did before, and pays a round trip it was going to pay
- * anyway.
- *
- * **Every chunk has to be present, not just the count.** `:n` can outlive a
- * chunk — they expire independently — and a ledger that reads as cached and
- * misses on the fetch is precisely the miss this guard exists to avoid.
- */
-function warmOverviewOrNull_() {
-  try {
-    var state = ledgerCacheState_();
-    if (!state.cached || state.present !== state.chunks) return null;
-    return appOverviewData_();
-  } catch (e) {
-    // A dashboard whose lower half arrives late beats one that does not arrive.
-    Logger.log('inline overview skipped: ' + e.message);
-    return null;
   }
 }
 

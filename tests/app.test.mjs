@@ -987,35 +987,24 @@ describe('the ledger cache', () => {
  * a blank screen rather than a fetch.
  */
 describe('the first screen, inlined into the page', () => {
-  it('sends the same shape the two calls would have', () => {
+  it('sends the shape appOpen would have, and only that', () => {
     const c = book([tx()]);
-    c.readLedger_();                       // so the overview half rides along
     const inlined = JSON.parse(c.appInlineBoot_());
 
+    expect(Object.keys(inlined)).toEqual(['open']);
     expect(Object.keys(inlined.open).sort()).toEqual(Object.keys(c.appOpen()).sort());
-    expect(Object.keys(inlined.overview).sort()).toEqual(Object.keys(c.appOverview()).sort());
   });
 
-  it('leaves the lower half out when the ledger is not cached', () => {
-    // `appOverviewData_` needs the ledger: ~300ms cached, ~4,000ms not.
-    // Inlining that unconditionally would put an unbounded cost in front of
-    // first paint, so a cold cache means a blank page rather than a slow half.
-    const c = book([tx()]);
-    c.__cache.clear();
-
-    const inlined = JSON.parse(c.appInlineBoot_());
-    expect(inlined.open).toBeDefined();
-    expect(inlined.overview).toBeNull();
-  });
-
-  it('leaves it out when a chunk is missing, not just when the count is', () => {
-    // `:n` outlives a chunk — they expire independently — and a ledger that
-    // reads as cached and misses on the fetch is the exact miss this avoids.
+  it('does not carry the lower half, however warm the ledger is', () => {
+    // It was inlined here too, gated on the ledger being cached. Measured on
+    // the live app the document went from ~3,400ms to 5,875/7,030/23,928ms —
+    // everything the overview does lands in front of the page, where there is
+    // nothing else to look at. Work belongs in `doGet` only if it is bounded
+    // and small, and only `appOpenData_` is.
     const c = book([tx()]);
     c.readLedger_();
-    [...c.__cache.keys()].filter((k) => k.endsWith(':0')).forEach((k) => c.__cache.delete(k));
 
-    expect(JSON.parse(c.appInlineBoot_()).overview).toBeNull();
+    expect(JSON.parse(c.appInlineBoot_()).overview).toBeUndefined();
   });
 
   it('carries the first view of Records and Charts, keyed on the server defaults', () => {

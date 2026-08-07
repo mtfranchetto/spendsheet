@@ -1798,11 +1798,9 @@
     render();
   }
 
-  if (inline && inline.overview) {
-    applyOverview(inline.overview, true);
-  } else {
-    call('appOverview').then(function (r) { applyOverview(r, false); }).catch(fatal);
-  }
+  // The lower half is always fetched. It was briefly inlined too — see
+  // `appInlineBoot_`, which has the measurement that took it back out.
+  call('appOverview').then(function (r) { applyOverview(r, false); }).catch(fatal);
 
 })();
 </script>
