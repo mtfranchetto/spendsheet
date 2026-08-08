@@ -162,6 +162,11 @@
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
   .filters > * { flex: 1 1 45%; min-width: 130px; }
   .filters > .wide { flex: 1 1 100%; }
+  /* A date range is one control with two ends — see `filterBar`. `min-width: 0`
+     because a date input has a wide intrinsic width and would otherwise refuse
+     to shrink below it, pushing its partner off the row this exists to hold. */
+  .filters > .range { display: flex; gap: 8px; }
+  .filters > .range > * { flex: 1 1 50%; min-width: 0; }
 
   /*
     Every control says what it filters.
@@ -295,11 +300,16 @@
     display: flex; flex-direction: column; align-items: stretch;
     background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 12px 14px;
+    /* The tile is the tap target — see `accountTile`. */
+    cursor: pointer;
   }
   .tile button.face {
     background: none; border: none; border-radius: 0; padding: 0;
     min-height: auto; text-align: left; width: 100%;
     display: flex; flex-direction: column; gap: 2px;
+    /* Take the slack a grid row leaves when a neighbour is taller, so the
+       button's own hit box matches what the tile now accepts. */
+    flex: 1;
   }
   .tile .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .tile .amount { font-size: 19px; font-weight: 600; margin-top: 4px; }
@@ -1017,6 +1027,49 @@
       return;
     }
 
+    // Holds go directly under the balances they qualify, and above the month
+    // they are not in.
+    //
+    // Position is the whole argument. A hold is the reason a balance is not the
+    // number you expected, so it belongs where you are still looking at the
+    // balance — put it lower and you have already read the tiles, believed
+    // them, and moved on. It stops short of saying the tiles are wrong by that
+    // amount, because that depends on which balance your bank reports:
+    // `BALANCE_PREFERENCE` prefers `CLBD`, which is booked and excludes holds,
+    // but falls through to `ITAV`, which is available and already nets them.
+    // The claim that is true whatever the bank sent is the one made below —
+    // these rows are not in `transactions`, so nothing computed from the ledger
+    // counts them.
+    var held = data.pending || [];
+    if (held.length) {
+      add(root, el('h2', null, 'Pending'));
+      var holds = el('div', 'card');
+      var group = el('div', 'daygroup');
+      held.slice(0, 5).forEach(function (record) { add(group, pendingRow(record)); });
+      add(holds, group);
+
+      if (held.length > 5) {
+        var allHolds = el('button', 'link', 'See all ' + held.length + ' in Records');
+        allHolds.type = 'button';
+        allHolds.addEventListener('click', function () {
+          // Clearing the account filter is what makes the label true. Records
+          // scopes its own holds to whatever it is filtered to — correctly, and
+          // it is why the dashboard carries its own copy — so landing there
+          // still filtered to one account would show fewer than the number the
+          // button just promised.
+          state.filters.records.account = 'All';
+          state.filters.records.unconfirmedOnly = false;
+          go('records');
+          loadRecords();
+        });
+        add(holds, allHolds);
+      }
+
+      add(holds, el('p', 'pending-note',
+        'Not settled yet, so no total below counts them'));
+      add(root, holds);
+    }
+
     var month = el('div', 'card');
     add(month, add(el('div', 'row'),
       el('span', null, 'Spent since ' + shortDate(data.month.from)),
@@ -1107,6 +1160,22 @@
    *
    * Nesting a button inside a button would be neither — a keyboard reaches one
    * of them and a screen reader announces something that does not exist.
+   *
+   * **The whole tile is the target, and the listener is on the tile for that
+   * reason rather than on the face.** A button is only as big as its box, and
+   * this one is not the tile: the tile's 12/14px padding is outside it, a grid
+   * row stretches every tile to match its tallest neighbour and the face does
+   * not grow with it, and "+ Add cash" is `align-self: flex-start`, so the
+   * space to its right belongs to nothing at all. Four dead strips around a
+   * control whose entire job is to be tapped with a thumb.
+   *
+   * Delegating from the tile fixes all four at once and keeps the button, which
+   * is what a keyboard tabs to and what a screen reader announces — its own
+   * click bubbles here like any other. The secondary actions are the one
+   * exception, and they are excluded by asking where the click landed rather
+   * than by `stopPropagation` in each of them: this way a third action added
+   * later is a `button.link` and is handled, instead of being a tile that
+   * navigates when you meant to press it.
    */
   function accountTile(account, currency) {
     var tile = el('div', 'tile' + (account.severity ? ' sev' + account.severity : ''));
@@ -1129,7 +1198,12 @@
 
     face.setAttribute('aria-label', 'Show records for ' + account.name +
       (account.severity ? '. ' + account.sync : ''));
-    face.addEventListener('click', function () {
+    add(tile, face);
+
+    tile.addEventListener('click', function (event) {
+      // A secondary action inside the tile is itself and not the tile.
+      if (event.target.closest && event.target.closest('button.link')) return;
+
       // Same reload the review queue's "see all" needs: `go` only fetches a
       // screen that has nothing on it, so after a first visit the filter would
       // change and the list would not.
@@ -1138,7 +1212,6 @@
       go('records');
       loadRecords();
     });
-    add(tile, face);
 
     if (isCashAccount(account.name)) {
       var entry = el('button', 'link', '+ Add cash');
@@ -1758,6 +1831,15 @@
     }));
 
     if (filters.period.kind === 'custom') {
+      // The two ends of one range, in one full-width box of their own.
+      //
+      // Added straight to the bar they were two independent 45% children of a
+      // wrapping flex row, so what they paired with depended on how many
+      // filters the screen happened to show: on Charts, `From` sat beside
+      // `Label` and `To` wrapped onto a line by itself. A range read down a
+      // corner is not a range. Grouping them makes the pairing a property of
+      // what they are rather than of how many neighbours they have.
+      var range = el('div', 'wide range');
       ['from', 'to'].forEach(function (edge) {
         var input = el('input');
         input.type = 'date';
@@ -1768,8 +1850,9 @@
           filters.period[edge] = input.value;
           refreshCurrentScreen();
         });
-        add(bar, labelled(edge === 'from' ? 'From' : 'To', input));
+        add(range, labelled(edge === 'from' ? 'From' : 'To', input));
       });
+      add(bar, range);
     }
 
     if (options.search) {
@@ -2608,6 +2691,11 @@
     value.className = 'field';
     add(form, value);
 
+    // Tapping the field selects what is in it, because the field arrives
+    // pre-filled — see `prefill`. Without this, correcting 12,700 to 14,500 on a
+    // phone is eight taps of backspace before the first digit of the new number.
+    value.addEventListener('focus', function () { value.select(); });
+
     var preview = el('div', 'muted');
     add(form, preview);
 
@@ -2626,6 +2714,9 @@
     var chosen = function () {
       return assetAccount(account.value) || { balance: null };
     };
+
+    /** Whether the field still holds what `prefill` put there. */
+    var pristine = true;
 
     var describe = function () {
       var was = chosen().balance;
@@ -2647,7 +2738,13 @@
       var rounded = Number(delta.toFixed(2));
 
       if (rounded === 0) {
-        preview.textContent = 'That is what it already says — nothing to record.';
+        // Two different situations reach zero and only one of them is a
+        // correction. Arriving on a pre-filled field and typing the same number
+        // back are indistinguishable by value, so `pristine` tells them apart —
+        // otherwise the screen greets you by saying you got it wrong.
+        preview.textContent = pristine
+          ? 'Edit this to the value it holds now.'
+          : 'That is what it already says — nothing to record.';
         submit.disabled = true;
         return;
       }
@@ -2657,8 +2754,33 @@
         ' — recorded as one transaction dated today.';
     };
 
-    account.addEventListener('change', describe);
-    value.addEventListener('input', describe);
+    /**
+     * Start from the number that is already there.
+     *
+     * An empty field asks you to type the whole total when the change is usually
+     * a few digits at the end of it — and worse, it asks you to type it from
+     * memory or from the line just above, which is the transcription error this
+     * screen exists to avoid. Editing 12,700.00 into 14,500.00 is one gesture.
+     *
+     * A plain `toFixed(2)` and not `money()`: this value is read straight back
+     * by `Number(String(...).replace(',', '.'))`, so a currency symbol or a
+     * thousands separator would come back `NaN`. It is written with a dot even
+     * in a decimal-comma locale because that parser takes either, and a dot is
+     * the one of the two that cannot be mistaken for a group separator.
+     *
+     * Called on render and on every account change, never from `describe` —
+     * `describe` runs on `input`, and prefilling from there would overwrite each
+     * keystroke as it was typed.
+     */
+    var prefill = function () {
+      var was = chosen().balance;
+      value.value = was === null ? '' : was.toFixed(2);
+      pristine = true;
+    };
+
+    account.addEventListener('change', function () { prefill(); describe(); });
+    value.addEventListener('input', function () { pristine = false; describe(); });
+    prefill();
     describe();
 
     submit.addEventListener('click', function () {
@@ -2954,6 +3076,7 @@
         month: result.month,
         health: result.health,
         review: result.review,
+        pending: result.pending || [],
         lists: state.data.overview ? state.data.overview.lists : state.lists
       };
       state.overviewError = '';

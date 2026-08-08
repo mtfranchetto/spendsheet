@@ -290,6 +290,48 @@ describe('confirming from the app', () => {
     expect(uidRow(c, 'u-1').labels).toBe('travel, kids');
   });
 
+  /*
+    A boolean in the labels column is not a label called "false".
+
+    It reached the phone as a fourth chip beside three real labels, selected,
+    on a row nobody had labelled. `isBlankCell_` is the reason and is right to
+    be: a cleared checkbox is a real answer and must not read as unanswered. But
+    a label column holds no checkboxes, so a boolean there came from somewhere
+    else — an import mapping an absent field, a formula returning FALSE rather
+    than `""` — and `String(false)` is a perfectly serviceable five-character
+    label as far as everything downstream can tell.
+
+    The write is the half that matters. Confirming that row would have stored
+    the word, and a stray boolean would have become a real label that the
+    `labels` tab counts and totals from then on.
+  */
+  it('does not read a boolean cell as a label called "false"', () => {
+    const c = book();
+    expect(c.splitLabels_(false)).toEqual([]);
+    expect(c.splitLabels_(true)).toEqual([]);
+  });
+
+  it('does not send one to the page as a chip', () => {
+    const c = book([tx({ uid: 'u-1', labels: false })]);
+
+    expect(c.appRecords({ period: { kind: 'last_12' } }, 0).rows[0].labels).toEqual([]);
+  });
+
+  it('does not write one back when the row is confirmed', () => {
+    const c = book([tx({ uid: 'u-1', labels: false })]);
+
+    c.appConfirm([{ uid: 'u-1', confirmed: true, labels: false }]);
+    expect(uidRow(c, 'u-1').labels).toBe('');
+  });
+
+  it('does not offer one as a chip from the labels tab', () => {
+    const c = book([tx()]);
+    const labels = c.__spreadsheet.getSheetByName('labels');
+    c.appendRows_(labels, 1, [c.toRow_(c.LABEL_COLUMNS, { label: false })]);
+
+    expect(c.labelNames_()).not.toContain('false');
+  });
+
   it('takes labels as a string too, which is what the tab holds', () => {
     const c = book([tx({ uid: 'u-1' })]);
 
@@ -1013,8 +1055,58 @@ describe('the two calls the app opens with', () => {
     const overview = c.appOverview();
 
     expect(Object.keys(overview).sort()).toEqual(
-      ['health', 'lists', 'month', 'review', 'screens']);
+      ['health', 'lists', 'month', 'pending', 'review', 'screens']);
     expect(overview.lists.periods.map((p) => p.kind)).toContain('mtd');
+  });
+
+  /*
+    The holds reach the dashboard on both calls that draw it, and they reach it
+    at the top level rather than through `screens.records`.
+
+    That distinction is the whole reason the field exists twice. `screens` seeds
+    the Records *screen*, which has an account filter; the dashboard has none and
+    must not inherit one. Reading the dashboard's holds off the prefetch would be
+    correct on the first open and wrong the moment a filter was touched — which
+    is a bug that never appears in a fresh book and always appears in a used one.
+  */
+  const withHold = (rows) => {
+    const c = book(rows);
+    const sheet = c.__spreadsheet.getSheetByName('pending');
+    c.appendRows_(sheet, 1, [c.toRow_(c.PENDING_COLUMNS, {
+      uid: 'p-1', account_id: 'acc-1', account_name: 'Revolut',
+      booking_date: new Date(2026, 6, 22), amount: -18.4, currency: 'EUR',
+      description: 'HOTEL BOOKING', source: 'enablebanking'
+    })]);
+    return c;
+  };
+
+  it('sends the holds to the dashboard, not only to Records', () => {
+    const overview = withHold([tx()]).appOverview();
+
+    expect(overview.pending.map((p) => p.description)).toEqual(['HOTEL BOOKING']);
+    expect(overview.pending[0].pending).toBe(true);
+  });
+
+  it('sends them again on the call pull-to-refresh makes', () => {
+    // You pull *because* a card payment has not shown up. A refresh that redrew
+    // every number except the holds would be the worst version of this.
+    expect(withHold([tx()]).appDashboard().pending.map((p) => p.description))
+      .toEqual(['HOTEL BOOKING']);
+  });
+
+  it('reads the pending tab once for both of them', () => {
+    // The top-level field is a second reference to the array `screens.records`
+    // already holds, not a second trip to the tab. Same rows, same objects.
+    const overview = withHold([tx()]).appOverview();
+    expect(overview.pending).toEqual(overview.screens.records.pending);
+  });
+
+  it('sends an empty list rather than nothing when there are no holds', () => {
+    // The page does `data.pending || []`, so this is belt and braces — but a
+    // missing key and an empty list read the same in JS and differently in a
+    // test, and only one of them is what the server means.
+    expect(book([tx()]).appOverview().pending).toEqual([]);
+    expect(book([tx()]).appDashboard().pending).toEqual([]);
   });
 
   /**

@@ -318,6 +318,10 @@ function appDashboardData_() {
     netWorth: open.netWorth,
     health: overview.health,
     review: overview.review,
+    // Pulling to refresh is very often *about* the holds — you tap it because a
+    // card payment has not shown up yet. A dashboard that redrew every number
+    // except the one you pulled for would be the worst version of this.
+    pending: overview.pending,
     currency: open.currency
   };
 }
@@ -382,6 +386,9 @@ function appOverviewData_() {
     return matchesFilters_(row, { window: previous });
   }), previous);
 
+  var defaults = appDefaultFilters_();
+  var records = webAppRecords_(defaults.records, 0);
+
   return {
     month: {
       from: dayKey_(window.from),
@@ -399,6 +406,18 @@ function appOverviewData_() {
     // exactly what `checkRowLoss_` would scan the tab to work out. Handing it
     // over takes ~1,900ms off every dashboard — see the note on `runChecks_`.
     health: appHealth_(ledger.length),
+
+    // The holds, for the dashboard, and **a second reference to the same rows
+    // rather than a second read** — `webAppRecords_` above has already been to
+    // the `pending` tab, and this costs the bytes of a handful of rows.
+    //
+    // It is sent at the top level and not read off `screens.records` for a
+    // reason that only shows up later: `screens` seeds the Records screen, and
+    // Records has filters. Filter it to one account and `state.records.pending`
+    // becomes that account's holds — correct there, and silently wrong on a
+    // dashboard that has no filters and never asked for any. Two consumers with
+    // different scopes need two fields, even when today they hold the same rows.
+    pending: records.pending,
     review: appReviewQueue_(ledger),
     lists: {
       labels: labelNames_(),
@@ -445,8 +464,8 @@ function appOverviewData_() {
     // A filter change still fetches, on both screens. That is the case that
     // genuinely needs a trip.
     screens: {
-      filters: appDefaultFilters_(),
-      records: webAppRecords_(appDefaultFilters_().records, 0)
+      filters: defaults,
+      records: records
     }
   };
 }
@@ -619,8 +638,15 @@ function labelNames_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.LABELS);
   if (!sheet) return [];
 
+  // The boolean test is the same one `splitLabels_` makes and for the same
+  // reason — see the note there. It is spelled out rather than delegated
+  // because that function splits on commas, and a label is one name: routing
+  // through it would quietly truncate `Bills, utilities` to `Bills`, trading a
+  // visible bug for an invisible one.
   return readRecords_(sheet, LABEL_COLUMNS)
-    .filter(function (row) { return !isBlankCell_(row.label); })
+    .filter(function (row) {
+      return !isBlankCell_(row.label) && typeof row.label !== 'boolean';
+    })
     .map(function (row) { return String(row.label); });
 }
 

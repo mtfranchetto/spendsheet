@@ -327,9 +327,27 @@ function matchesAccount_(row, filters) {
   return want.some(function (entry) { return String(entry) === name; });
 }
 
-/** `kids, travel` as `['kids','travel']`, trimmed and without the empties. */
+/**
+ * `kids, travel` as `['kids','travel']`, trimmed and without the empties.
+ *
+ * **A boolean is not a label, and `isBlankCell_` will not tell you that.** That
+ * helper is deliberate about `false` — a cleared checkbox is a real answer, and
+ * a column of them must not read as unanswered — but this column has no
+ * checkboxes in it, so a boolean here is a cell that came from somewhere else:
+ * an import mapping an absent CSV field, a formula returning FALSE rather than
+ * `""`. `String(false)` is `'false'`, which is five characters and a perfectly
+ * good label as far as everything downstream is concerned.
+ *
+ * It showed up as a fourth chip called **false**, already selected, in a sheet
+ * offering three real labels — and it was not only cosmetic. `normalizeLabels_`
+ * calls this on the way *in*, so confirming that row would have written the
+ * word back into the cell, turning a stray boolean into a real label that the
+ * `labels` tab would then count and total. The same rule as blank amounts, one
+ * type over: test the input, because the output is indistinguishable from a
+ * legitimate one.
+ */
 function splitLabels_(value) {
-  if (isBlankCell_(value)) return [];
+  if (isBlankCell_(value) || typeof value === 'boolean') return [];
   return String(value).split(',').map(function (part) {
     return part.trim();
   }).filter(function (part) { return part.length > 0; });
