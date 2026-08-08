@@ -70,6 +70,30 @@ A free Google account allows 100 mail recipients a day. A persistent failure che
 
 **Failure 5 is why `selfCheck()` is its own trigger** rather than part of `syncAll()`. If it lived inside the sync, a crash would take the alarm down with it — precisely the failure where you most need to hear something.
 
+## A formula that stopped spilling
+
+The six detectors above watch the *sync*. The thing they cannot see is a formula that has quietly stopped producing anything, and **Spendsheet → Diagnostics → Run smoke tests** is what checks for that — every `ARRAYFORMULA` anchor in the book, by reading what its cell actually evaluates to. Two failures look similar and have opposite fixes:
+
+| | What it means | Where the fix is |
+|---|---|---|
+| `#ERROR!` | the formula itself is wrong — most often a comma in a decimal-comma locale | the code |
+| `#REF!` in row 2 | the formula is fine and **something is sitting in the column underneath it** | the sheet |
+
+An `ARRAYFORMULA` anchored in row 2 expands down through the cells below it, and it will not overwrite anything. One non-empty cell in that column and the whole thing collapses to `#REF!` — the column goes blank, and so does everything that reads it.
+
+The report names the blocking cell, so the repair is a selection and a Delete rather than a search:
+
+```
+categories!E2 #REF! — The array cannot expand: E3 holds the text "Housing",
+and 11 of the 998 cells below E2 are not empty (0 of them formulas).
+```
+
+**Read "0 of them formulas" as the go-ahead.** It means nothing down there is a formula of yours, so what is in the way is stored values — usually a derived column's own output, written back as data by something that read it and wrote it again. Select from row 3 to the bottom of that column, delete, and re-run **Setup sheet** to put the formula back. Then re-run the smoke tests.
+
+If the column is *yours* — a note column you added — the answer is the opposite: move it to the right of the schema. The two never share a column, and appending on the right is always safe.
+
+`categories` column E is the one that costs the most when it goes: `parent_list` is the range every category dropdown on the book points at, so a `#REF!` there empties the pickers on `categories`, `transactions` and `cash_entry` at once. The phone app is unaffected, because it reads the stored columns rather than the derived list — which is a good way to be sure this is what you are looking at.
+
 ## The honest limit
 
 `selfCheck()` catches `syncAll()` being broken, hung or crashing. It **cannot** catch both triggers being deleted, or the whole project being disabled: nothing inside the script can report that the script isn't running.
