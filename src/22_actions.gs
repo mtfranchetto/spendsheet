@@ -1,10 +1,17 @@
 /**
- * 22_actions.gs — the two things the app writes.
+ * 22_actions.gs — the three things the app writes.
  *
  * Reading is 21_query.gs and it is careful to write nothing at all. This file
- * is the other half: confirming a guess, and adding a cash transaction. Both
- * existed already as spreadsheet gestures — a checkbox on `review`, a row on
- * `cash_entry` — and neither of those gestures is reachable from a web page.
+ * is the other half: confirming a guess, adding a cash transaction, and adding
+ * a rule. All three existed already as spreadsheet gestures — a checkbox on
+ * `review`, a row on `cash_entry`, a row on `rules` — and none of them is
+ * reachable from a web page.
+ *
+ * The third arrived last and is the one with no existing mechanism to reuse.
+ * Confirming had `writeReviewRow_`'s three rules to reproduce and cash had
+ * `drainCashEntries_` to call outright; `rules` had only "type a row on the
+ * tab", which is why `webAppAddRule_` carries its own validation rather than
+ * borrowing any.
  *
  * ## Why the existing write-backs could not simply be called
  *
@@ -48,10 +55,10 @@ var MAX_APP_DECISIONS = 100;
 /**
  * Push a batch of decisions from the app back into `transactions`.
  *
- * A decision is `{uid, confirmed?, category_override?, subcategory_override?}`,
- * and the uid is the whole of the addressing. The same choice `17_review.gs`
- * makes and for the same reason: a list on a phone re-sorts as you act on it,
- * so a position is not a thing you can send back.
+ * A decision is `{uid, confirmed?, category_override?, subcategory_override?,
+ * labels?}`, and the uid is the whole of the addressing. The same choice
+ * `17_review.gs` makes and for the same reason: a list on a phone re-sorts as
+ * you act on it, so a position is not a thing you can send back.
  *
  * The three rules, each one taken from `writeReviewRow_`:
  *
@@ -69,6 +76,18 @@ var MAX_APP_DECISIONS = 100;
  *   needs to send both. `isConfirmedRow_` counts a row carrying one as
  *   confirmed — typing the category is a stronger statement than ticking a box
  *   next to it.
+ *
+ * **`labels` deliberately does not follow the first rule, and the difference is
+ * in where the two values come from.** An override arrives from a picker whose
+ * first option is "Leave as it is", so blank genuinely means untouched and
+ * there is no gesture that means "clear". Labels arrive from a set of chips the
+ * page rendered *holding the row's current value* — un-ticking the last one is
+ * a deliberate act with an empty string as its result, and reading that as
+ * "untouched" would make the labels column additive for ever. So it takes the
+ * `confirmed` test instead: written when the key was supplied at all, absent
+ * when it was not. `labels` never affects a total, which is what makes this the
+ * safe direction to differ in; getting it wrong on `category_override` would
+ * silently erase a categorisation.
  *
  * The uid index is built once for the batch rather than once per decision:
  * re-reading five thousand uids for each of thirty rows is how a request runs
@@ -120,6 +139,13 @@ function applyReviewDecisions_(decisions) {
       writeCell_(tx, row, TX_COLUMNS, 'confirmed', isTruthyCell_(decision.confirmed));
       wrote.push('confirmed');
     }
+    // Same test as `confirmed` and not the one the overrides use — see the
+    // header. An empty string here is "I removed the last label", which is a
+    // thing a person does and has to be able to do.
+    if (decision.labels !== undefined && decision.labels !== null) {
+      writeCell_(tx, row, TX_COLUMNS, 'labels', normalizeLabels_(decision.labels));
+      wrote.push('labels');
+    }
 
     if (!wrote.length) {
       result.skipped++;
@@ -132,6 +158,357 @@ function applyReviewDecisions_(decisions) {
   });
 
   return result;
+}
+
+/**
+ * Whatever the page sent, as the one string the `labels` column holds.
+ *
+ * Accepts an array — which is the shape `recordForPage_` sends *out*, so it is
+ * the shape a page naturally sends back — or a string, which is what typing
+ * into the tab produces. Both land as `kids, travel`, with the comma and the
+ * space, because `splitLabels_` is what reads this column: it splits on commas
+ * and trims the parts, and a value written any other way filters correctly by
+ * luck rather than by construction.
+ *
+ * Blanks dropped and duplicates removed, because both are reachable by
+ * accident: un-ticking every chip yields `['']` if you are not careful, which
+ * would write a lone comma, and a label that is already on the row and also in
+ * the known set would otherwise be stored twice. `indexOf` rather than a lookup
+ * object on purpose — a label called `constructor` is a perfectly ordinary
+ * thing to type, and it is truthy on every plain object in JavaScript.
+ */
+function normalizeLabels_(value) {
+  var parts = Array.isArray(value) ? value : splitLabels_(value);
+  var kept = [];
+
+  parts.forEach(function (part) {
+    var label = String(part == null ? '' : part).trim();
+    if (label && kept.indexOf(label) === -1) kept.push(label);
+  });
+
+  return kept.join(', ');
+}
+
+// ---------------------------------------------------------------------------
+// Transfers
+// ---------------------------------------------------------------------------
+
+/**
+ * What the page sends when a transfer went somewhere this book does not track.
+ *
+ * A sentinel rather than a blank, because blank is what an unanswered form
+ * field looks like and the two mean opposite things: "I have not said where
+ * this went" must not silently become "it left my accounts".
+ */
+var TRANSFER_OUTSIDE = '__outside__';
+
+/**
+ * Mark a transaction as a transfer, and say where the money went.
+ *
+ * ## The bug this exists to fix
+ *
+ * A cash withdrawal is **one row**. The bank debits you €100; nothing credits
+ * your wallet, because a wallet has no API to report with. Marking it
+ * `Transfer` — which the seed rules already do for `PRELIEVO` — keeps it out of
+ * spending, correctly, and leaves the arithmetic wrong in a way nothing shows
+ * you: `accountBalanceFormula` sums transactions per account, so the wallet
+ * never gains the €100, and net worth drops by money that is in your pocket.
+ *
+ * So a transfer needs a destination, and a destination means writing the leg
+ * the bank never will.
+ *
+ * ## Only untracked-by-API accounts may be a destination
+ *
+ * `cash` and `asset` only — never `bank`. A bank destination reports its own
+ * credit on its own next sync, and `detectTransfers_` pairs the two by amount
+ * and date without help. Writing a leg there would double the money: one row
+ * from us, one from the bank, and dedup cannot catch it because ours has no
+ * `entry_reference` and a different uid by construction. Refused rather than
+ * quietly skipped — a destination you picked and that did nothing is worse
+ * than being told it is not on the list.
+ *
+ * ## `TRANSFER_OUTSIDE` writes no leg, deliberately
+ *
+ * Money moved to an account this book does not follow: another bank, someone
+ * else's. There is nothing to credit, so this only excludes the row from
+ * spending, which is what marking a transfer has always done. Worth being clear
+ * that net worth **does** fall in that case, and correctly — net worth here is
+ * the sum of accounts you track, and the money has left them.
+ *
+ * ## Idempotent by uid
+ *
+ * The leg's uid is a hash of the source uid and the destination, so marking the
+ * same row twice finds the leg already there and writes nothing. Without that,
+ * a double tap on a slow connection credits your wallet twice.
+ */
+function webAppLinkTransfer_(request) {
+  var want = request || {};
+  var uid = String(want.uid || '');
+  var destination = String(want.destination || '');
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  if (!tx) throw new Error('No "' + TABS.TRANSACTIONS + '" tab. Run Spendsheet → Setup sheet first.');
+  if (!uid) throw new Error('No transaction to mark.');
+  if (!destination) throw new Error('Say where the money went.');
+
+  var index = uidIndex_(tx);
+  var row = index[uid];
+  if (!row) throw new Error('That transaction is no longer in ' + TABS.TRANSACTIONS + '.');
+
+  var source = readRecords_(tx, TX_COLUMNS).filter(function (record) {
+    return String(record.uid) === uid;
+  })[0];
+  if (!source) throw new Error('That transaction is no longer in ' + TABS.TRANSACTIONS + '.');
+
+  var outside = destination === TRANSFER_OUTSIDE;
+  var target = outside ? null : transferDestination_(destination);
+
+  if (!outside && !target) {
+    throw new Error('"' + destination + '" is not an account this can move money into. ' +
+      'Only cash and asset accounts, because a bank reports its own side.');
+  }
+  if (target && String(target.account_id) === String(source.account_id)) {
+    throw new Error('That is the same account the transaction is already on.');
+  }
+
+  // The category is how this book stores transfer-ness — `type` is a formula
+  // over it — so this is the same write `applyReviewDecisions_` would make.
+  writeCell_(tx, row, TX_COLUMNS, 'category_override', TRANSFER_CATEGORY_NAME);
+  writeCell_(tx, row, TX_COLUMNS, 'subcategory_override',
+    transferSubcategoryFor_(target, source));
+  writeCell_(tx, row, TX_COLUMNS, 'confirmed', true);
+
+  if (!target) {
+    return { linked: false, outside: true,
+      message: 'Marked as a transfer out of your tracked accounts.' };
+  }
+
+  var legUid = transferLegUid_(uid, target.account_id);
+  if (index[legUid]) {
+    return { linked: false, already: true,
+      message: 'That transfer was already recorded on ' + target.name + '.' };
+  }
+
+  var amount = -Number(source.amount);
+  var written = appendRows_(tx, 1, [toRow_(TX_COLUMNS_CODE, {
+    uid: legUid,
+    account_id: target.account_id,
+    account_name: target.name,
+    booking_date: source.booking_date,
+    value_date: source.value_date || source.booking_date,
+    transaction_date: source.transaction_date || source.booking_date,
+    amount: amount,
+    currency: source.currency,
+    description: (amount > 0 ? 'Transfer from ' : 'Transfer to ') +
+      String(source.account_name || ''),
+    counterparty: String(source.account_name || ''),
+    entry_reference: '',
+    bank_transaction_code: '',
+    mcc: '',
+    source: TX_SOURCE_TRANSFER_LEG,
+    imported_at: new Date()
+  })]);
+
+  // The leg is a transfer too, or it lands in your spending as income.
+  writeCell_(tx, written.row, TX_COLUMNS, 'category_override', TRANSFER_CATEGORY_NAME);
+  writeCell_(tx, written.row, TX_COLUMNS, 'subcategory_override',
+    transferSubcategoryFor_(target, source));
+  writeCell_(tx, written.row, TX_COLUMNS, 'confirmed', true);
+
+  // Both sides carry the group now rather than waiting for the next sync.
+  // `detectTransfers_` would derive exactly this pair on its own — same amount,
+  // opposite sign, different accounts, same day — and it computes the id from
+  // the *debit's* uid, so this matches what the re-run will write rather than
+  // being overwritten by it.
+  var group = 'tr:' + (Number(source.amount) < 0 ? uid : legUid);
+  writeCell_(tx, row, TX_COLUMNS, 'transfer_group', group);
+  writeCell_(tx, written.row, TX_COLUMNS, 'transfer_group', group);
+
+  return {
+    linked: true,
+    account: target.name,
+    amount: amount,
+    message: (amount > 0 ? 'Added ' : 'Took ') + Math.abs(amount).toFixed(2) +
+      (amount > 0 ? ' to ' : ' from ') + target.name + '.'
+  };
+}
+
+/** The category name transfer-ness is stored as. Must exist on `categories`. */
+var TRANSFER_CATEGORY_NAME = 'Transfer';
+
+/**
+ * An account money can actually be moved *into*, by name — or null.
+ *
+ * Cash and asset only, and the reason is dedup rather than taxonomy: a bank
+ * account reports its own side of the transfer on its next sync, and a leg
+ * written here would be a second copy of it that nothing can match.
+ */
+function transferDestination_(name) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ACCOUNTS);
+  if (!sheet) return null;
+
+  return readRecords_(sheet, ACCOUNT_COLUMNS).filter(function (account) {
+    return account.account_id &&
+      isTruthyCell_(account.active) &&
+      String(account.name || '') === String(name) &&
+      (String(account.kind) === ACCOUNT_KIND.CASH ||
+       String(account.kind) === ACCOUNT_KIND.ASSET);
+  })[0] || null;
+}
+
+/**
+ * `Cash withdrawal` when cash is involved, `Between accounts` otherwise.
+ *
+ * Both are seeded subcategories of `Transfer`, so both resolve to `kind:
+ * transfer` and neither counts anywhere. The distinction is only for reading
+ * the ledger later — and it matches what the seed rules already write for
+ * `PRELIEVO` and MCC 6011, so a withdrawal the cascade found and one you
+ * marked by hand are filed identically.
+ */
+function transferSubcategoryFor_(target, source) {
+  if (target && String(target.kind) === ACCOUNT_KIND.CASH && Number(source.amount) < 0) {
+    return 'Cash withdrawal';
+  }
+  return 'Between accounts';
+}
+
+/**
+ * The leg's uid: a hash of what it is a leg *of*.
+ *
+ * Deterministic on purpose — it is the whole of the idempotency. Marking the
+ * same row twice computes the same uid, finds it in the index, and writes
+ * nothing; without it, a double tap on a slow connection credits the wallet
+ * twice and there is no later signal that it happened.
+ */
+function transferLegUid_(sourceUid, destinationId) {
+  return sha256Hex([TX_SOURCE_TRANSFER_LEG, sourceUid, String(destinationId)]
+    .join(UID_SEPARATOR));
+}
+
+// ---------------------------------------------------------------------------
+// Rules
+// ---------------------------------------------------------------------------
+
+/**
+ * Append one row to `rules`, built from a transaction you were looking at.
+ *
+ * `rules` is the user-owned escape hatch — `14_categorize.gs` says so plainly:
+ * a categorisation you want to *impose* goes here, because this tab is never
+ * rewritten, where `_memory` is derived and rebuilt wholesale on every run. Up
+ * to now the only way to add one was to type a row on the tab, which is not a
+ * thing anyone does standing in a shop having just seen the same merchant
+ * miscategorised for the fourth time. That is the gesture this exists for.
+ *
+ * **Placed with `lastFilledRow_` rather than `appendRows_`.** That helper wants
+ * a key column to find the last *record*, and `rules` has none — `priority` is
+ * column A and repeats freely. The tab also carries no ARRAYFORMULA, so the
+ * `getLastRow()` trap `appendRows_` exists to dodge does not apply here. Same
+ * placement `webAppAddCash_` uses on `cash_entry`, for the same reasons.
+ *
+ * **Everything is validated against the enums rather than trusted.** This is
+ * reached from a browser, and the failure mode of a bad `field` or `match_type`
+ * is silence: `ruleField_` returns null for a name it does not know and
+ * `matchesPattern_` returns false for a match type it does not know, so the
+ * rule sits on the tab looking correct and matching nothing, for ever.
+ *
+ * A new rule **does not recategorise anything already in the book.** The
+ * cascade runs on sync, and `frozenVerdict_` holds a confirmed row to what it
+ * was confirmed with. The caller has to say so — see `appAddRule`.
+ */
+function webAppAddRule_(rule) {
+  var request = rule || {};
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.RULES);
+  if (!sheet) throw new Error('No "' + TABS.RULES + '" tab. Run Spendsheet → Setup sheet first.');
+
+  var problem = ruleProblem_(request, sheet);
+  if (problem) throw new Error(problem);
+
+  var at = lastFilledRow_(sheet, RULE_COLUMNS.length) + 1;
+  var priority = nextRulePriority_(sheet);
+
+  sheet.getRange(at, 1, 1, RULE_COLUMNS.length).setValues([toRow_(RULE_COLUMNS, {
+    priority: priority,
+    field: String(request.field),
+    match_type: String(request.match_type),
+    pattern: String(request.pattern).trim(),
+    account_filter: String(request.account_filter || ''),
+    category: String(request.category),
+    subcategory: String(request.subcategory || ''),
+    // Not read by the cascade — a row's type comes from its category's `kind`
+    // — but the column exists and a blank in it reads as an unfinished row.
+    type: String(request.type || ''),
+    enabled: true
+  })]);
+
+  return { added: true, row: at, priority: priority };
+}
+
+/**
+ * What is wrong with this rule, in words, or null.
+ *
+ * The category is checked against the `categories` tab rather than merely for
+ * being non-blank, because a rule naming a category that does not exist is the
+ * quietest failure available: it matches, it writes a category, `typeFormula`'s
+ * VLOOKUP finds nothing, `type` comes back empty and `in_reports` excludes the
+ * row from every report without saying why.
+ */
+function ruleProblem_(rule, sheet) {
+  var request = rule || {};
+
+  if (isBlankCell_(request.pattern)) return 'Type something for the rule to match.';
+  if (String(request.pattern).trim().length < 2) {
+    return 'That pattern is too short to be a rule.';
+  }
+  if (RULE_FIELDS.indexOf(String(request.field)) === -1) {
+    return 'A rule can only match on ' + RULE_FIELDS.join(', ') + '.';
+  }
+  if (RULE_MATCH_TYPES.indexOf(String(request.match_type)) === -1) {
+    return 'A rule can only match by ' + RULE_MATCH_TYPES.join(', ') + '.';
+  }
+  if (isBlankCell_(request.category)) return 'Pick a category for the rule to set.';
+
+  var known = categoryChoices_();
+  var parents = known.parents.map(function (entry) { return entry.name; });
+  if (parents.indexOf(String(request.category)) === -1) {
+    return 'There is no category called "' + request.category + '".';
+  }
+  if (!isBlankCell_(request.subcategory)) {
+    var fits = known.children.some(function (entry) {
+      return entry.name === String(request.subcategory) &&
+        entry.parent === String(request.category);
+    });
+    if (!fits) {
+      return '"' + request.subcategory + '" is not under ' + request.category + '.';
+    }
+  }
+
+  // A regex that will not compile matches nothing, silently, for ever.
+  if (String(request.match_type) === 'regex') {
+    try {
+      new RegExp(String(request.pattern));
+    } catch (e) {
+      return 'That is not a pattern this can read: ' + e.message;
+    }
+  }
+  return null;
+}
+
+/**
+ * One step past the highest priority on the tab.
+ *
+ * Rules are sorted ascending and the first match wins, so a rule added from the
+ * app goes **last** — it is a correction to what the seed rules already do, and
+ * the seed is what it is correcting. Ten at a time so there is room to slot one
+ * in by hand between two of them without renumbering.
+ */
+function nextRulePriority_(sheet) {
+  var highest = 0;
+  readRecords_(sheet, RULE_COLUMNS, ANY_COLUMN).forEach(function (row) {
+    var value = Number(row.priority);
+    if (isFinite(value) && value > highest) highest = value;
+  });
+  return highest + 10;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +654,40 @@ function cashAccountList_() {
 }
 
 /**
+ * The accounts whose value you set rather than sync — with the value.
+ *
+ * The balance comes too, which is the difference between this and
+ * `cashAccountList_`. Setting an asset's value is a *difference* — you type
+ * 14,500 where it said 13,000 and a €1,500 transaction is written — so the
+ * screen has to know what it currently says before you can answer. Sending it
+ * with the list rather than fetching it per account keeps that screen at zero
+ * round trips, which on this platform is ~2,700ms each.
+ *
+ * `cashEntryProblem_` never checks an account's kind and `resolveCashAccount_`
+ * resolves any name, so the write path needs no change at all: an asset
+ * adjustment goes through `webAppAddCash_` exactly as a cash entry does. This
+ * list exists to decide what the *app* offers, not what the server accepts.
+ */
+function assetAccountList_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.ACCOUNTS);
+  if (!sheet) return [];
+
+  return readRecords_(sheet, ACCOUNT_COLUMNS)
+    .filter(function (account) {
+      return account.account_id &&
+        String(account.kind || '') === ACCOUNT_KIND.ASSET &&
+        isTruthyCell_(account.active);
+    })
+    .map(function (account) {
+      return {
+        name: String(account.name || account.account_id),
+        balance: cellNumber_(account.balance),
+        currency: String(account.currency || '')
+      };
+    });
+}
+
+/**
  * The taxonomy, as a phone needs it: a subcategory, its parent, and an icon.
  *
  * Flat rather than nested, because picking a subcategory names its parent on
@@ -286,6 +697,18 @@ function cashAccountList_() {
  *
  * `categories.icon` is carried through, so the emoji beside a category costs
  * nothing and stays yours to change on the tab.
+ *
+ * So is `kind`, on both halves, and that is what lets the page stop offering
+ * `Groceries` on a salary. It was already on `children` and not on `parents`,
+ * which is the sort of asymmetry that reads as deliberate and was not: the two
+ * lists feed the same two pickers in the same sheet.
+ *
+ * A parent's kind is taken from its **first** row, because `kind` describes the
+ * parent — `typeFormula()` resolves a transaction's type by looking the parent
+ * up in `categories!A:C`, so a parent whose children disagreed would already be
+ * resolving to whichever row `VLOOKUP` reached first. Reading the first row
+ * here means the page and the formula are wrong in the same direction, which is
+ * the only kind of agreement available without validating the tab.
  */
 function categoryChoices_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
@@ -296,15 +719,17 @@ function categoryChoices_() {
 
   var parents = [];
   var iconFor = {};
+  var kindFor = {};
   rows.forEach(function (row) {
     var name = String(row.category);
     if (parents.indexOf(name) === -1) parents.push(name);
     if (!iconFor[name] && row.icon) iconFor[name] = String(row.icon);
+    if (!kindFor[name] && row.kind) kindFor[name] = String(row.kind);
   });
 
   return {
     parents: parents.map(function (name) {
-      return { name: name, icon: iconFor[name] || '' };
+      return { name: name, icon: iconFor[name] || '', kind: kindFor[name] || '' };
     }),
     children: rows.map(function (row) {
       return {

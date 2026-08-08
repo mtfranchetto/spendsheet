@@ -861,10 +861,29 @@ function txColumnRange_(name) {
  *
  *   bank  → whatever the API last reported
  *   cash  → derived from its own transactions, so a wallet maintains itself
- *   asset → the value you typed
+ *   asset → the value you typed, **plus its transactions** — see below
  *
  * This split is why adding a manual account is typing a row rather than
  * running a script: no column is ever written by both code and a formula.
+ *
+ * ## An asset behaves like a wallet, and that is what gives it a history
+ *
+ * `asset` used to be `balance_manual` alone: whatever number you last typed.
+ * That reads correctly and records nothing. `balanceSeries_` reconstructs the
+ * net-worth curve by walking transactions backwards from today, so an account
+ * whose value only ever moved by being overwritten contributed a flat line —
+ * and the day you typed 14,200 over 12,700, the whole curve shifted by 1,500
+ * with no date attached to the change.
+ *
+ * So an asset is now the same shape as cash: a starting value plus everything
+ * booked against it. Setting a new balance in the app writes the *difference*
+ * as one transaction dated today (`Transfer › Valuation change`), which the
+ * SUMIF below picks up and the balance curve can therefore see.
+ *
+ * **This needs no migration and changes no displayed number on the day it
+ * ships.** The value already sitting in `balance_manual` becomes the opening
+ * value, an account with no adjustments yet sums to exactly what it showed
+ * before, and adjustments accumulate on top from here.
  */
 function accountBalanceFormula() {
   var id = colOf(ACCOUNT_COLUMNS, 'account_id');
@@ -877,15 +896,24 @@ function accountBalanceFormula() {
   var txAmount = TABS.TRANSACTIONS + '!$' + colOf(TX_COLUMNS, 'amount_base') + '$2:$' + colOf(TX_COLUMNS, 'amount_base');
   var idRange = '$' + id + '$2:$' + id;
 
+  // The same shape for both of the derived kinds: a starting value that may be
+  // blank, plus everything booked against the account. They differ only in
+  // which column holds the start — `opening_balance` for cash, `balance_manual`
+  // for an asset — so the expression is built once rather than twice.
+  //
+  // IF(blank,0,x) rather than N(x): N does not vectorise reliably inside
+  // ARRAYFORMULA, and an empty starting cell would otherwise poison the
+  // addition with #VALUE! down the whole column.
+  var derived = function (startCol) {
+    return 'IF($' + startCol + '$2:$' + startCol + '="",0,' +
+      '$' + startCol + '$2:$' + startCol + ')' +
+      '+SUMIF(' + txAccount + ',' + idRange + ',' + txAmount + ')';
+  };
+
   return '=ARRAYFORMULA(IF(LEN(' + idRange + ')=0,"",' +
     'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.BANK + '",$' + api + '$2:$' + api + ',' +
-    'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.ASSET + '",$' + man + '$2:$' + man + ',' +
-    'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.CASH + '",' +
-    // IF(blank,0,x) rather than N(x): N does not vectorise reliably inside
-    // ARRAYFORMULA, and an empty opening_balance would otherwise poison the
-    // addition with #VALUE!.
-    'IF($' + open + '$2:$' + open + '="",0,$' + open + '$2:$' + open + ')' +
-    '+SUMIF(' + txAccount + ',' + idRange + ',' + txAmount + '),' +
+    'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.ASSET + '",' + derived(man) + ',' +
+    'IF($' + kind + '$2:$' + kind + '="' + ACCOUNT_KIND.CASH + '",' + derived(open) + ',' +
     '"")))))';
 }
 

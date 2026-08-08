@@ -565,11 +565,13 @@ function htmlOutput(html, file = null) {
     title: null,
     metaTags: [],
     xFrameOptionsMode: null,
+    faviconUrl: null,
     getContent: () => html,
     setTitle(t) { out.title = t; return out; },
     getTitle: () => out.title,
     addMetaTag(name, content) { out.metaTags.push({ name, content }); return out; },
     setXFrameOptionsMode(mode) { out.xFrameOptionsMode = mode; return out; },
+    setFaviconUrl(url) { out.faviconUrl = url; return out; },
     setWidth() { return out; },
     setHeight() { return out; }
   };

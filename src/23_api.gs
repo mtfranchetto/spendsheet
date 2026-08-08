@@ -253,6 +253,37 @@ function appAddCash(entry) {
   return webAppAddCash_(entry);
 }
 
+/**
+ * Mark a transaction as a transfer and say which account received the money.
+ *
+ * The one write in this file that *appends* to `transactions` rather than
+ * touching the columns past O — see `webAppLinkTransfer_` for why a cash
+ * withdrawal has no other honest answer.
+ */
+function appMarkTransfer(request) {
+  requireOwner_();
+  return webAppLinkTransfer_(request);
+}
+
+/**
+ * Add a categorisation rule, built from a transaction you were looking at.
+ *
+ * The result says plainly that **nothing already in the book moves**, because
+ * the alternative is a feature that reads as broken: you make a rule for a
+ * merchant you have seen ten times, go back to the list, and all ten are
+ * exactly as they were. The cascade runs on sync, and `frozenVerdict_` holds a
+ * confirmed row to whatever it was confirmed with — both deliberate, and
+ * neither discoverable from the app.
+ */
+function appAddRule(rule) {
+  requireOwner_();
+
+  var result = webAppAddRule_(rule);
+  result.message = 'Rule saved. It applies to new transactions from the next ' +
+    'sync — rows already in the book keep the category they have.';
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // The dashboard screen
 // ---------------------------------------------------------------------------
@@ -314,7 +345,9 @@ function appOpenData_() {
     // stable" is how you end up showing last night's net worth as today's.
     lists: {
       accounts: accountNames_(),
-      cashAccounts: cashAccountList_()
+      cashAccounts: cashAccountList_(),
+      // Carries balances, unlike the other two — see `assetAccountList_`.
+      assetAccounts: assetAccountList_()
     },
     generatedAt: dayKey_(dayNumber_(new Date()))
   };
@@ -370,7 +403,9 @@ function appOverviewData_() {
     lists: {
       labels: labelNames_(),
       categories: categoryChoices_(),
-      periods: appPeriods_()
+      // Handed the rows this function already holds, so naming the years costs
+      // one more pass over memory rather than another read of the tab.
+      periods: appPeriods_(ledger)
     },
 
     // The first view of the other two screens, and why the prefetch is back.
@@ -770,13 +805,62 @@ function describeDashboardCost() {
  *
  * `Custom` carries no dates here: the page sends them, and the two cells the
  * `reports` tab uses for that are a desktop thing.
+ *
+ * **Every entry carries an `id`, and that is not decoration.** The page used to
+ * send `{kind: <the option's value>}` and compare options on `kind` alone,
+ * which works only while every entry has a distinct kind. The named years below
+ * are all `kind: 'year'` and differ by their `year`, so the old arrangement
+ * would have marked all of them selected at once and sent a spec with no year
+ * in it. The `id` is the option's identity; the rest of the entry is the spec.
+ *
+ * **The years come from the ledger** rather than from a count backwards from
+ * today, so the list never offers a year with nothing in it — the one thing a
+ * period picker must not do, because an empty result from a period you chose is
+ * indistinguishable from a filter bug. Newest first, and the current year is
+ * skipped: `ytd` already covers it and covers it more honestly.
  */
-function appPeriods_() {
-  return [
-    { kind: 'mtd', label: 'This month' },
-    { kind: 'last_month', label: 'Last month' },
-    { kind: 'last_12', label: 'Last 12 months' },
-    { kind: 'year', label: 'This year' },
-    { kind: 'custom', label: 'Custom' }
+function appPeriods_(ledger) {
+  var periods = [
+    { id: 'week', kind: 'week', label: 'This week' },
+    { id: 'mtd', kind: 'mtd', label: 'This month' },
+    { id: 'last_month', kind: 'last_month', label: 'Last month' },
+    { id: 'ytd', kind: 'ytd', label: 'Year to date' },
+    { id: 'last_12', kind: 'last_12', label: 'Last 12 months' }
   ];
+
+  ledgerYears_(ledger).forEach(function (year) {
+    periods.push({ id: 'year:' + year, kind: 'year', year: year, label: String(year) });
+  });
+
+  periods.push({ id: 'custom', kind: 'custom', label: 'Custom' });
+  return periods;
+}
+
+/**
+ * The calendar years the ledger has rows in, newest first, this one excluded.
+ *
+ * Reads `booking_date` through `dayNumber_` rather than trusting the cell to be
+ * a `Date`: a ledger arriving from the cache has been through JSON and holds
+ * ISO strings, and `new Date(...).getFullYear()` on a blank cell is `NaN`,
+ * which would put an `id` of `year:NaN` in the picker.
+ *
+ * Capped, because the list is a dropdown on a phone. Ten years of history is
+ * more than this project can have — it cannot see further back than the bank
+ * will export — but a corrupt date reading as 1899 is entirely possible, and
+ * without a cap one bad cell adds a hundred entries.
+ */
+function ledgerYears_(ledger) {
+  var thisYear = new Date().getFullYear();
+  var seen = [];
+
+  (ledger || []).forEach(function (row) {
+    var day = dayNumber_(row.booking_date);
+    if (day === null) return;
+
+    var year = Number(dayKey_(day).slice(0, 4));
+    if (!year || year >= thisYear) return;
+    if (seen.indexOf(year) === -1) seen.push(year);
+  });
+
+  return seen.sort(function (a, b) { return b - a; }).slice(0, 10);
 }

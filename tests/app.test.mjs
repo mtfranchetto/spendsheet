@@ -66,7 +66,7 @@ const tx = (over = {}) => Object.assign({
 
 /** Every function a page can invoke by name. */
 const PUBLIC_API = ['appOpen', 'appOverview', 'appAnalytics', 'appRecords',
-  'appDashboard', 'appConfirm', 'appAddCash', 'describeDashboardCost'];
+  'appDashboard', 'appConfirm', 'appAddCash', 'appAddRule', 'appMarkTransfer', 'describeDashboardCost'];
 
 describe('the gate on every entry point', () => {
   it('lets the owner past the guard on each one', () => {
@@ -246,6 +246,504 @@ describe('confirming from the app', () => {
     const c = book([tx({ uid: 'u-1' })]);
     expect(c.appConfirm([])).toMatchObject({ written: 0, skipped: 0 });
     expect(c.appConfirm(null)).toMatchObject({ written: 0 });
+  });
+
+  /*
+    Labels take the `confirmed` rule and not the override rule, and the pair of
+    tests below is the whole of the difference. It is the one place this
+    function deliberately treats a blank as a value, so it is the one place
+    where "which rule does this field follow" has to be asserted rather than
+    read off the call site — the two branches are four lines apart and look
+    identical at a glance.
+  */
+  it('clears labels when sent an empty value, unlike an override', () => {
+    const c = book([tx({ uid: 'u-1', labels: 'kids, travel' })]);
+
+    c.appConfirm([{ uid: 'u-1', labels: [] }]);
+    expect(uidRow(c, 'u-1').labels).toBe('');
+  });
+
+  it('leaves labels alone when the key is absent', () => {
+    // The other half. Confirming a row from a sheet that has no labels control
+    // on it must not be a way to wipe the column.
+    const c = book([tx({ uid: 'u-1', labels: 'kids, travel' })]);
+
+    c.appConfirm([{ uid: 'u-1', confirmed: true }]);
+    expect(uidRow(c, 'u-1').labels).toBe('kids, travel');
+  });
+
+  it('stores labels in the shape splitLabels_ reads back', () => {
+    // The round trip is the point: `recordForPage_` sends an array out, the
+    // page sends one back, and `matchesFilters_` filters on the parts that
+    // `splitLabels_` finds. A value stored in any other shape filters by luck.
+    const c = book([tx({ uid: 'u-1' })]);
+
+    c.appConfirm([{ uid: 'u-1', labels: ['travel', 'kids'] }]);
+    expect(uidRow(c, 'u-1').labels).toBe('travel, kids');
+    expect(c.splitLabels_(uidRow(c, 'u-1').labels)).toEqual(['travel', 'kids']);
+  });
+
+  it('drops blanks and duplicates rather than storing a lone comma', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+
+    c.appConfirm([{ uid: 'u-1', labels: ['travel', '', ' travel ', null, 'kids'] }]);
+    expect(uidRow(c, 'u-1').labels).toBe('travel, kids');
+  });
+
+  it('takes labels as a string too, which is what the tab holds', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+
+    c.appConfirm([{ uid: 'u-1', labels: 'travel,kids' }]);
+    expect(uidRow(c, 'u-1').labels).toBe('travel, kids');
+  });
+
+  it('does not let a label called constructor vanish', () => {
+    // `kept.indexOf` rather than a lookup object, because every plain object in
+    // JavaScript already answers truthily to `constructor`, `toString` and
+    // friends — and those are ordinary words to label a transaction with.
+    const c = book([tx({ uid: 'u-1' })]);
+
+    c.appConfirm([{ uid: 'u-1', labels: ['constructor', 'toString'] }]);
+    expect(uidRow(c, 'u-1').labels).toBe('constructor, toString');
+  });
+});
+
+describe('adding a rule from the app', () => {
+  const good = (over = {}) => Object.assign({
+    field: 'description', match_type: 'contains', pattern: 'esselunga',
+    category: 'Food & Drink', subcategory: 'Groceries'
+  }, over);
+
+  const rules = (c) => c.readRecords_(c.__spreadsheet.getSheetByName('rules'),
+    c.RULE_COLUMNS, c.ANY_COLUMN);
+
+  it('appends a rule without disturbing the seeded ones', () => {
+    const c = book([tx()]);
+    const before = rules(c).length;
+
+    c.appAddRule(good());
+    const after = rules(c);
+
+    expect(after).toHaveLength(before + 1);
+    expect(after[after.length - 1]).toMatchObject({
+      field: 'description', match_type: 'contains', pattern: 'esselunga',
+      category: 'Food & Drink', subcategory: 'Groceries', enabled: true
+    });
+  });
+
+  it('puts a new rule last, because it is correcting the seed', () => {
+    // Rules sort ascending and the first match wins. A rule added from the app
+    // has to lose to nothing and win against the seed rule it is fixing.
+    const c = book([tx()]);
+    c.appAddRule(good());
+
+    const all = rules(c);
+    const mine = all[all.length - 1];
+    const highest = Math.max(...all.slice(0, -1).map((r) => Number(r.priority) || 0));
+
+    expect(Number(mine.priority)).toBeGreaterThan(highest);
+  });
+
+  it('says a new rule changes nothing already in the book', () => {
+    // The cascade runs on sync and `frozenVerdict_` holds a confirmed row. A
+    // feature that silently does nothing to the ten rows you made it for reads
+    // as broken, so the result has to say so.
+    const c = book([tx()]);
+    expect(c.appAddRule(good()).message).toMatch(/next sync/i);
+  });
+
+  /*
+    Every refusal below is a rule that would otherwise sit on the tab looking
+    correct and matching nothing, for ever. `ruleField_` returns null for a
+    field it does not know and `matchesPattern_` returns false for a match type
+    it does not know — neither logs, neither throws.
+  */
+  it('refuses a field the cascade cannot read', () => {
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ field: 'merchant' }))).toThrow(/can only match on/);
+  });
+
+  it('refuses a match type the cascade cannot apply', () => {
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ match_type: 'fuzzy' }))).toThrow(/can only match by/);
+  });
+
+  it('refuses a pattern too short to be one', () => {
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ pattern: '' }))).toThrow(/Type something/);
+    expect(() => c.appAddRule(good({ pattern: 'a' }))).toThrow(/too short/);
+  });
+
+  it('refuses a regex that will not compile', () => {
+    // A broken regex is caught and returns false, so the rule matches nothing
+    // and never says why.
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ match_type: 'regex', pattern: '([unclosed' })))
+      .toThrow(/not a pattern/);
+  });
+
+  it('refuses a category that is not on the categories tab', () => {
+    // The quietest failure of all: the rule matches, writes a category,
+    // `typeFormula`'s VLOOKUP finds nothing, and `in_reports` drops the row
+    // out of every report with nothing to explain it.
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ category: 'Groceries' })))
+      .toThrow(/no category called/);
+  });
+
+  it('refuses a subcategory that belongs to a different parent', () => {
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ subcategory: 'Fuel' })))
+      .toThrow(/is not under Food & Drink/);
+  });
+
+  it('accepts a rule with no subcategory, which is a parent-only rule', () => {
+    const c = book([tx()]);
+    expect(() => c.appAddRule(good({ subcategory: '' }))).not.toThrow();
+  });
+
+  it('writes a rule the cascade then actually reads back', () => {
+    // The end-to-end check: the enums agreeing is one thing, `readRules_`
+    // accepting the row is the thing that matters.
+    const c = book([tx()]);
+    c.appAddRule(good({ pattern: 'esselunga' }));
+
+    const loaded = c.readRules_(c.__spreadsheet, false);
+    expect(loaded.some((r) => String(r.pattern) === 'esselunga')).toBe(true);
+  });
+});
+
+/*
+  A cash withdrawal is one row: the bank debits €100 and nothing credits the
+  wallet, because a wallet has no API. Marking it a transfer kept it out of
+  spending and left net worth €100 short of the money in your pocket.
+
+  These are the tests where a mistake *creates or destroys money*, so they check
+  the arithmetic end to end — both balances, not just that a row appeared.
+*/
+describe('marking a transfer, with somewhere for the money to go', () => {
+  const withAccounts = (rows) => {
+    const c = book(rows);
+    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'w-1', name: 'Wallet', kind: 'cash',
+        currency: 'EUR', opening_balance: 0, active: true, include_in_net_worth: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'a-1', name: 'Degiro', kind: 'asset',
+        currency: 'EUR', balance_manual: 5000, active: true, include_in_net_worth: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'b-2', name: 'Fineco', kind: 'bank',
+        currency: 'EUR', balance_api: 900, active: true, include_in_net_worth: true })
+    ]);
+    return c;
+  };
+
+  const withdrawal = () => withAccounts([tx({
+    uid: 'w-tx', amount: -100, amount_base: -100, description: 'PRELIEVO ATM',
+    category: 'Transfer', subcategory: 'Cash withdrawal', type: 'transfer',
+    in_reports: false
+  })]);
+
+  const ledger = (c) => c.readRecords_(
+    c.__spreadsheet.getSheetByName('transactions'), c.TX_COLUMNS);
+
+  it('writes the leg no bank will ever report', () => {
+    const c = withdrawal();
+    const before = ledger(c).length;
+
+    const result = c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+    const after = ledger(c);
+
+    expect(result.linked).toBe(true);
+    expect(after).toHaveLength(before + 1);
+
+    const leg = after[after.length - 1];
+    expect(leg.account_name).toBe('Wallet');
+    expect(leg.amount).toBe(100);
+    expect(leg.source).toBe(c.TX_SOURCE_TRANSFER_LEG);
+  });
+
+  it('leaves net worth where it was, which is the whole point', () => {
+    // €100 moved from a bank to a pocket is not €100 gone.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+
+    const legs = ledger(c).filter((r) => String(r.account_id) === 'w-1');
+    const credited = legs.reduce((sum, r) => sum + Number(r.amount), 0);
+
+    expect(credited).toBe(100);
+  });
+
+  it('keeps both sides out of spending', () => {
+    // The leg is a credit. Filed as anything but a transfer it lands in your
+    // ledger as €100 of income.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+
+    ledger(c).filter((r) => ['w-tx'].includes(String(r.uid)) ||
+      String(r.source) === c.TX_SOURCE_TRANSFER_LEG).forEach((r) => {
+      expect(String(r.category_override)).toBe('Transfer');
+    });
+  });
+
+  it('writes one leg however many times you tap', () => {
+    // A double tap on a slow connection would otherwise credit the wallet
+    // twice, and nothing afterwards would say it had happened.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+    const after = ledger(c).length;
+
+    const second = c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+    expect(second.already).toBe(true);
+    expect(ledger(c)).toHaveLength(after);
+  });
+
+  it('refuses a bank destination, because the bank reports its own side', () => {
+    // The failure this prevents is doubled money: our leg plus the bank's, with
+    // no `entry_reference` on ours for dedup to match on.
+    const c = withdrawal();
+    expect(() => c.appMarkTransfer({ uid: 'w-tx', destination: 'Fineco' }))
+      .toThrow(/not an account this can move money into/);
+    expect(ledger(c)).toHaveLength(1);
+  });
+
+  it('refuses the account the transaction is already on', () => {
+    const c = withdrawal();
+    expect(() => c.appMarkTransfer({ uid: 'w-tx', destination: 'Revolut' })).toThrow();
+  });
+
+  it('takes an asset account as a destination', () => {
+    const c = withAccounts([tx({ uid: 't-1', amount: -1500, amount_base: -1500,
+      description: 'GIROCONTO A DEGIRO' })]);
+
+    expect(c.appMarkTransfer({ uid: 't-1', destination: 'Degiro' }).linked).toBe(true);
+    expect(ledger(c).filter((r) => String(r.account_id) === 'a-1')[0].amount).toBe(1500);
+  });
+
+  it('credits the source and debits the destination when the money came in', () => {
+    // The other direction: cash paid back into a bank. The leg has to be the
+    // debit, or both accounts gain.
+    const c = withAccounts([tx({ uid: 'in-1', amount: 250, amount_base: 250,
+      description: 'VERSAMENTO CONTANTI' })]);
+    c.appMarkTransfer({ uid: 'in-1', destination: 'Wallet' });
+
+    expect(ledger(c).filter((r) => String(r.account_id) === 'w-1')[0].amount).toBe(-250);
+  });
+
+  it('marks a transfer out of your tracked accounts without inventing a leg', () => {
+    // Money to another bank or to someone else. Nothing here to credit, so net
+    // worth falls — correctly: it is the sum of what you track, and it left.
+    const c = withdrawal();
+    const before = ledger(c).length;
+
+    const result = c.appMarkTransfer({ uid: 'w-tx', destination: c.TRANSFER_OUTSIDE });
+    expect(result).toMatchObject({ linked: false, outside: true });
+    expect(ledger(c)).toHaveLength(before);
+    expect(ledger(c)[0].category_override).toBe('Transfer');
+  });
+
+  it('will not read an unanswered field as "it left my accounts"', () => {
+    // A blank and the outside sentinel mean opposite things, and a form that
+    // serialises an empty select must not silently pick one.
+    const c = withdrawal();
+    expect(() => c.appMarkTransfer({ uid: 'w-tx', destination: '' }))
+      .toThrow(/where the money went/);
+  });
+
+  it('says so rather than guessing when the uid has gone', () => {
+    const c = withdrawal();
+    expect(() => c.appMarkTransfer({ uid: 'nope', destination: 'Wallet' }))
+      .toThrow(/no longer in transactions/);
+  });
+
+  it('gives the pair the group id the next sync would derive anyway', () => {
+    // `detectTransfers_` pairs by amount, sign and date and computes the id
+    // from the *debit's* uid. Writing a different one would be silently
+    // replaced on the next categorise run.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+
+    const groups = ledger(c).map((r) => String(r.transfer_group)).filter(Boolean);
+    expect(new Set(groups).size).toBe(1);
+    expect(groups[0]).toBe('tr:w-tx');
+    expect(groups).toHaveLength(2);
+  });
+
+  it('writes a leg only in the code-owned columns, plus the overrides', () => {
+    // Same contract every other writer here honours: A–O is the append, and
+    // the only columns past it are the three that are yours.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+
+    const leg = ledger(c)[ledger(c).length - 1];
+    expect(leg.category_auto).toBeFalsy();
+    expect(leg.notes).toBeFalsy();
+    expect(leg.entry_reference).toBeFalsy();
+  });
+});
+
+describe('asset accounts, which behave like wallets', () => {
+  const withAsset = () => {
+    const c = book([tx()]);
+    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'a-1', name: 'Degiro', kind: 'asset',
+        currency: 'EUR', balance: 14200, balance_manual: 14200, active: true,
+        include_in_net_worth: true })
+    ]);
+    return c;
+  };
+
+  it('offers asset accounts with their balances, unlike the other two lists', () => {
+    // Setting a value is a *difference*, so the screen cannot ask the question
+    // without already knowing the answer it is changing.
+    const c = withAsset();
+    expect(c.appOpen().lists.assetAccounts)
+      .toEqual([{ name: 'Degiro', balance: 14200, currency: 'EUR' }]);
+  });
+
+  it('offers no bank or cash account among them', () => {
+    const c = withAsset();
+    const names = c.appOpen().lists.assetAccounts.map((a) => a.name);
+    expect(names).not.toContain('Revolut');
+  });
+
+  it('takes an adjustment through the unchanged cash path', () => {
+    // `cashEntryProblem_` never checks an account's kind and
+    // `resolveCashAccount_` resolves any name, so this needed no new writer.
+    const c = withAsset();
+    c.appAddCash({ amount: 1500, account: 'Degiro', category: 'Transfer',
+      subcategory: 'Valuation change', note: 'up' });
+
+    const rows = c.readRecords_(c.__spreadsheet.getSheetByName('transactions'), c.TX_COLUMNS);
+    const written = rows[rows.length - 1];
+
+    expect(written.account_name).toBe('Degiro');
+    expect(written.amount).toBe(1500);
+    expect(written.category_override).toBe('Transfer');
+    expect(written.subcategory_override).toBe('Valuation change');
+  });
+
+  it('keeps a gain positive and a loss negative', () => {
+    // The sign rule this leans on rather than reimplementing: a positive delta
+    // with a `transfer` category stays positive, and a typed minus always wins.
+    const c = book();
+    expect(c.cashEntryAmount(1500, 'transfer')).toBe(1500);
+    expect(c.cashEntryAmount(-800, 'transfer')).toBe(-800);
+  });
+
+  it('seeds a valuation subcategory that is a transfer, not income', () => {
+    // A €1,500 market gain moves net worth and is emphatically not income this
+    // month. `in_reports` excludes transfers from every total.
+    const seeded = book().DEFAULT_CATEGORIES
+      .filter((row) => row[1] === 'Valuation change');
+
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0][0]).toBe('Transfer');
+    expect(seeded[0][2]).toBe('transfer');
+  });
+});
+
+describe('the merchant key a rule is built from', () => {
+  it('is sent on every record, computed by the categoriser itself', () => {
+    // Not reimplemented in the page: `normalizeMerchant` strips dates, card
+    // references, digit runs and a list of Italian POS noise words, and a
+    // second copy in JS would be a second thing to keep in step with the
+    // cascade it exists to agree with.
+    const c = book([tx({ uid: 'u-1', description: 'ESSELUNGA CARTA *1234 12/07' })]);
+    const row = c.appRecords({ period: { kind: 'last_12' } }, 0).rows[0];
+
+    expect(row.merchantKey).toBe(c.normalizeMerchant('ESSELUNGA CARTA *1234 12/07', ''));
+    expect(row.merchantKey).not.toMatch(/1234/);
+  });
+});
+
+describe('the periods the picker offers', () => {
+  const years = (list) => list.filter((p) => p.kind === 'year').map((p) => p.year);
+
+  it('offers only years the ledger has rows in', () => {
+    // A period picker must never offer a window that is empty by construction:
+    // an empty result from a period you chose is indistinguishable from a
+    // filter bug, and there is nothing on the screen to tell them apart.
+    const c = book();
+    const ledger = [
+      { booking_date: new Date(2024, 3, 2) },
+      { booking_date: new Date(2022, 10, 9) },
+      { booking_date: new Date(2024, 8, 1) }
+    ];
+
+    expect(years(c.appPeriods_(ledger))).toEqual([2024, 2022]);
+  });
+
+  it('leaves the current year to year-to-date', () => {
+    const c = book();
+    const now = new Date().getFullYear();
+    const list = c.appPeriods_([{ booking_date: new Date() }]);
+
+    expect(years(list)).not.toContain(now);
+    expect(list.some((p) => p.kind === 'ytd')).toBe(true);
+  });
+
+  it('gives every entry an id, and every id is distinct', () => {
+    // The whole reason `id` exists: the named years all share `kind: "year"`,
+    // so a page matching on kind would mark them all selected and send a spec
+    // with no year in it — which resolves to the current year.
+    const c = book();
+    const list = c.appPeriods_([
+      { booking_date: new Date(2024, 1, 1) },
+      { booking_date: new Date(2023, 1, 1) }
+    ]);
+
+    const ids = list.map((p) => p.id);
+    expect(ids.every(Boolean)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain('year:2024');
+  });
+
+  it('survives an empty ledger and a ledger of unreadable dates', () => {
+    const c = book();
+    [[], [{ booking_date: '' }, { booking_date: 'not a date' }, {}]].forEach((ledger) => {
+      const list = c.appPeriods_(ledger);
+      expect(years(list)).toEqual([]);
+      // The fixed entries are always there, so the picker is never empty.
+      expect(list.map((p) => p.id)).toContain('mtd');
+      expect(list.map((p) => p.id)).toContain('custom');
+    });
+  });
+
+  it('caps the years, so one corrupt date cannot fill the dropdown', () => {
+    const c = book();
+    const ledger = [];
+    for (let y = 1900; y < 2020; y++) ledger.push({ booking_date: new Date(y, 5, 1) });
+
+    expect(years(c.appPeriods_(ledger)).length).toBe(10);
+  });
+});
+
+describe('the taxonomy the sheet offers', () => {
+  it('carries kind on parents as well as children', () => {
+    // The page filters the pickers by kind so a salary is not offered
+    // `Groceries`. `children` always had it and `parents` did not, which read
+    // as deliberate and was not — both feed the same sheet.
+    const c = book([tx()]);
+    const choices = c.categoryChoices_();
+
+    const income = choices.parents.filter((p) => p.name === 'Income')[0];
+    const transfer = choices.parents.filter((p) => p.name === 'Transfer')[0];
+
+    expect(income.kind).toBe('income');
+    expect(transfer.kind).toBe('transfer');
+    expect(choices.parents.filter((p) => p.name === 'Food & Drink')[0].kind).toBe('expense');
+  });
+
+  it('agrees with the formula about which kind a parent is', () => {
+    // `typeFormula()` resolves a row's type by VLOOKUP into categories!A:C,
+    // which takes the first matching row. This reads the first row too, so the
+    // page and the sheet are wrong in the same direction or not at all.
+    const c = book([tx()]);
+    const rows = c.readRecords_(c.__spreadsheet.getSheetByName('categories'),
+      c.CATEGORY_COLUMNS);
+
+    c.categoryChoices_().parents.forEach((parent) => {
+      const first = rows.filter((r) => String(r.category) === parent.name)[0];
+      expect(parent.kind, parent.name).toBe(String(first.kind));
+    });
   });
 });
 
@@ -494,7 +992,10 @@ describe('the two calls the app opens with', () => {
 
     expect(Object.keys(open).sort()).toEqual(
       ['accounts', 'currency', 'generatedAt', 'lists', 'netWorth']);
-    expect(Object.keys(open.lists).sort()).toEqual(['accounts', 'cashAccounts']);
+    // All three are derived from `accounts`, which this half has already read,
+    // so they are free here and would each cost a tab read in the other one.
+    expect(Object.keys(open.lists).sort())
+      .toEqual(['accounts', 'assetAccounts', 'cashAccounts']);
   });
 
   it('reads no transaction row for the first paint', () => {
@@ -544,17 +1045,54 @@ describe('the two calls the app opens with', () => {
       .toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('names a period the same way the reports tab does', () => {
-    // "Last month" has to mean the same thing on the phone and on the desktop,
-    // and neither can drift into meaning something else.
+  /*
+    The invariant is **a shared name means a shared window**, not "the phone
+    offers a subset of the desktop". The two surfaces are different — a picker
+    on a phone against two cells on a tab — and the phone has since gained a
+    week, year-to-date and one entry per year in the ledger, none of which the
+    reports tab has any way to offer.
+
+    Written the other way round, this test missed the drift it existed to
+    catch. Both sides had a **"This year"** and they did not agree: the tab's is
+    `DATE(YEAR(TODAY()),1,1)` to `TODAY()`, which is year-to-date, and the
+    phone's resolved to the whole calendar year including months that have not
+    happened. Identical labels, different windows, and a test asserting only
+    that the label existed on both. The phone's entry is now called "Year to
+    date" and computes what that says — so the label is no longer shared, which
+    is why the list below is the assertion rather than a subset check.
+  */
+  it('gives a period shared with the reports tab the same meaning', () => {
     const c = book([]);
     const onPhone = c.appOverview().lists.periods.map((p) => p.label);
     const onDesktop = c.REPORT_PERIODS.map((p) => p.label);
 
-    onPhone.forEach((label) => {
-      if (label === 'Last 12 months') return expect(onDesktop).toContain('Last 12 months');
-      expect(onDesktop).toContain(label);
-    });
+    const shared = onPhone.filter((label) => onDesktop.indexOf(label) !== -1);
+    expect(shared.sort()).toEqual(['Custom', 'Last 12 months', 'Last month', 'This month']);
+
+    // And the one that drifted must not come back by that name.
+    expect(onPhone).not.toContain('This year');
+    expect(onPhone).toContain('Year to date');
+  });
+
+  it('computes each shared period the way the reports tab describes it', () => {
+    // The labels agreeing is half of it; this is the half that would have
+    // caught "This year". Checked against the tab's own formulas, read as
+    // intent rather than evaluated — the harness has no spreadsheet engine.
+    const c = book([]);
+    const now = new Date(2026, 7, 6, 12);
+    const key = (spec) => {
+      const w = c.resolveWindow_(spec, now);
+      return [c.dayKey_(w.from), c.dayKey_(w.to)];
+    };
+
+    // EOMONTH(TODAY(),-1)+1 .. TODAY()
+    expect(key({ kind: 'mtd' })).toEqual(['2026-08-01', '2026-08-06']);
+    // EOMONTH(TODAY(),-2)+1 .. EOMONTH(TODAY(),-1)
+    expect(key({ kind: 'last_month' })).toEqual(['2026-07-01', '2026-07-31']);
+    // EOMONTH(TODAY(),-12)+1 .. TODAY()
+    expect(key({ kind: 'last_12' })).toEqual(['2025-09-01', '2026-08-06']);
+    // The tab's "This year": DATE(YEAR(TODAY()),1,1) .. TODAY()
+    expect(key({ kind: 'ytd' })).toEqual(['2026-01-01', '2026-08-06']);
   });
 
   it('offers a subcategory with the parent it names, since that is one choice', () => {
@@ -580,7 +1118,8 @@ describe('the two calls the app opens with', () => {
     const sent = Object.keys(c.appOpen().lists)
       .concat(Object.keys(c.appOverview().lists)).sort();
 
-    expect(sent).toEqual(['accounts', 'cashAccounts', 'categories', 'labels', 'periods']);
+    expect(sent).toEqual(['accounts', 'assetAccounts', 'cashAccounts',
+      'categories', 'labels', 'periods']);
   });
 });
 
@@ -1110,6 +1649,58 @@ describe('the first screen, inlined into the page', () => {
     expect(page).toContain("call('appOpen')");
     expect(page).toContain("call('appOverview')");
     expect(page).toContain('function inlinedBoot()');
+  });
+
+  /*
+    The third thing a *file* test can prove about the page, beside "no string is
+    assigned as markup" and "every name it calls exists": that it parses at all.
+
+    Worth having because of what the failure looks like. `page.html` is the one
+    file `node:vm` never loads, so a stray bracket in it passes `npm test`,
+    passes `clasp push`, and reaches the phone as a blank white screen with the
+    error in a console no phone opens — indistinguishable from the owner gate
+    refusing, or from Apps Script being slow.
+
+    Parsing only. This deliberately does not *run* it: the script is an IIFE
+    that reaches for `document` on its first line, and faking the DOM to the
+    depth this page uses would be a second implementation of a browser in
+    service of testing drawing, which is the trade the header above rejects.
+  */
+  /*
+    The inverse of the two checks above, and the gap they left.
+
+    They ask "does the page read a key the server stopped sending". This asks
+    "does the server send a list the page never picks up" — which is what
+    happened to `assetAccounts`: added to `appOpenData_`, asserted in a test,
+    serialised over the wire, and dropped on the floor by `applyOpen`, so the
+    Set-value action and the transfer destination picker were both silently
+    absent. Nothing failed. The list was simply never there.
+
+    Scoped to `lists` because that is the shape with a fixed home: every one of
+    them lands in `state.lists.<name>` and is read by name.
+  */
+  it('picks up every list the two calls send', () => {
+    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const c = book([]);
+
+    const sent = Object.keys(c.appOpen().lists)
+      .concat(Object.keys(c.appOverview().lists));
+
+    sent.forEach((name) => {
+      expect(page, `${name} is sent but never assigned into state.lists`)
+        .toContain(`state.lists.${name} =`);
+    });
+  });
+
+  it('parses as JavaScript', () => {
+    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const script = page.slice(page.lastIndexOf('<script>') + '<script>'.length,
+      page.lastIndexOf('</script>'));
+
+    expect(script.length, 'no script block found in page.html').toBeGreaterThan(1000);
+    // `new Function` compiles without executing, which is exactly the line
+    // this test wants to sit on.
+    expect(() => new Function(script)).not.toThrow();
   });
 });
 

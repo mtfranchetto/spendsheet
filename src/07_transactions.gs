@@ -27,6 +27,17 @@ var TX_SOURCE_API = 'enablebanking';
 var TX_SOURCE_CASH = 'manual';
 
 /**
+ * The other half of a transfer, written because no API will ever report it.
+ *
+ * A cash withdrawal is one row: the bank debits you €100 and nothing credits
+ * your wallet, because your wallet has no API. Left alone, the money leaves
+ * your net worth while still being in your pocket. `webAppLinkTransfer_` writes
+ * the missing leg, and this is what marks a row as one — distinct from `manual`
+ * so that a row nobody typed is never mistaken for one somebody did.
+ */
+var TX_SOURCE_TRANSFER_LEG = 'transfer-leg';
+
+/**
  * What an imported row's `source` starts with — `csv:budgetbakers` and friends.
  *
  * A prefix rather than a value, because the preset is part of it: knowing which

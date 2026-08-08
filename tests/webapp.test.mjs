@@ -86,12 +86,90 @@ describe('the owner gate', () => {
     expect(decide('   ', 'you@example.com').ok).toBe(false);
   });
 
+  /*
+    Two people share a household ledger, so `owner_email` is a list. The
+    alternative — one person using the other's Google account — is worse in
+    every direction, including this one: it would make the audit trail on the
+    sheet say one name for two pairs of hands.
+
+    The refusals below matter more than the admissions. Door 2 can only be
+    shared by opening it to "anyone with a Google account", at which point this
+    comparison is the *entire* thing standing between the internet and a set of
+    bank balances.
+  */
+  it('lets a second address through, and still refuses a third party', () => {
+    const both = 'you@example.com, her@example.com';
+    expect(decide(both, 'her@example.com').ok).toBe(true);
+    expect(decide(both, 'you@example.com').ok).toBe(true);
+    expect(decide(both, 'someone@else.com').ok).toBe(false);
+  });
+
+  it('ignores spacing and case in a list, the way it does for one', () => {
+    expect(decide(' You@Example.com ,  HER@example.com ', 'her@example.com').ok).toBe(true);
+  });
+
+  it('does not let a trailing comma open the door to nobody', () => {
+    // The failure this prevents: a stray comma yields an empty entry, and an
+    // empty entry compares equal to the '' that `activeUserEmail_` returns when
+    // Google declines to say who is calling — which is the exact case the gate
+    // exists to refuse. "We do not know who this is" must never resolve to yes.
+    expect(decide('you@example.com,', '').ok).toBe(false);
+    expect(decide('you@example.com,,', undefined).ok).toBe(false);
+    expect(decide(',', 'you@example.com').ok).toBe(false);
+  });
+
+  it('refuses a list of nothing but noise', () => {
+    expect(decide('nobody, , not-an-address', 'you@example.com').ok).toBe(false);
+  });
+
   it('refuses when the runtime throws instead of answering', () => {
     // A throw is not "probably fine". activeUserEmail_ turns it into '', which
     // the decision above already refuses.
     const c = load();
     c.Session.getActiveUser = () => { throw new Error('no user for this deployment'); };
     expect(c.activeUserEmail_()).toBe('');
+  });
+});
+
+describe('the browser tab icon', () => {
+  const withFavicon = (url) => {
+    const c = load({ userEmail: 'owner@example.com' });
+    c.setup();
+
+    const config = c.__spreadsheet.getSheetByName('_config');
+    const row = c.findRowByValue_(config, 1, 'favicon_url');
+    if (url !== undefined) c.writeCell_(config, row, c.CONFIG_COLUMNS, 'value', url);
+    return c;
+  };
+
+  it('sets the favicon when one is configured', () => {
+    const c = withFavicon('https://example.com/icon.png');
+    expect(c.webAppHtml_().faviconUrl).toBe('https://example.com/icon.png');
+  });
+
+  it('asks for nothing when the cell is blank', () => {
+    // A blank is a question nobody has answered, not a default. Passing '' asks
+    // Google to fetch the current page as an image.
+    expect(withFavicon().webAppHtml_().faviconUrl).toBeNull();
+    expect(withFavicon('   ').webAppHtml_().faviconUrl).toBeNull();
+  });
+
+  it('refuses anything that is not an https URL', () => {
+    // Google fetches this server-side. A `data:` URI is rejected outright, and
+    // `javascript:` in a cell that ends up in a document is the shape of thing
+    // this project checks by whitelist rather than by escaping.
+    ['data:image/png;base64,iVBOR', 'javascript:alert(1)', 'http://example.com/i.png',
+      '/relative.png'].forEach((bad) => {
+      expect(withFavicon(bad).webAppHtml_().faviconUrl, bad).toBeNull();
+    });
+  });
+
+  it('still serves the page when the icon is refused', () => {
+    // The icon is decoration; the page is the thing. A bad cell must not be a
+    // blank screen for the only person allowed to open it.
+    const page = withFavicon('nonsense').webAppHtml_();
+    expect(page.getTitle()).toBe('Spendsheet');
+    expect(page.getContent()).toContain('id="boot"');
   });
 });
 

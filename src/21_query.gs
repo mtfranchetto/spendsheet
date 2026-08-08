@@ -155,12 +155,26 @@ function cellNumber_(value) {
  *
  * The kinds, and what each one is for:
  *
+ *   `week`        this week so far, Monday to today.
  *   `mtd`         this month so far. The default, and the only one that moves.
  *   `last_month`  the whole of the month before this one.
  *   `month`       a named month: `{year, month}`, with month 1-12.
- *   `year`        a named year: `{year}`.
+ *   `ytd`         1 January to today.
+ *   `year`        a named year: `{year}` — the whole of it, ending 31 December.
  *   `last_12`     the twelve months ending today, for a trend.
  *   `custom`      `{from, to}`, whatever they say.
+ *
+ * **`ytd` and `year` are not the same question and that is why both exist.**
+ * `year` runs to 31 December, so asking it about *this* year includes months
+ * that have not happened. For an aggregate that is harmless — there are no rows
+ * in the future — but the label is a lie, and it stops being harmless the
+ * moment anything divides by the length of the window. `ytd` is the one the
+ * picker offers for the current year; `year` is what the named years use.
+ *
+ * The week starts on **Monday**, which is the ISO week and the one this book's
+ * owner lives in. `getDay()` counts from Sunday, so the conversion is
+ * `(day + 6) % 7` rather than a subtraction that reads more obviously and is
+ * wrong every Sunday.
  *
  * An unrecognised kind resolves to `mtd` rather than throwing. This runs behind
  * a web request, where a throw is a blank screen and the honest fallback is the
@@ -184,6 +198,16 @@ function resolveWindow_(spec, now) {
     return from <= to
       ? { kind: kind, from: from, to: to }
       : { kind: kind, from: to, to: from };
+  }
+
+  if (kind === 'week') {
+    // Monday of the week `today` falls in. `getDay()` is 0 for Sunday, so
+    // `(d + 6) % 7` maps Monday→0 … Sunday→6 without a special case.
+    return { kind: kind, from: today - ((now.getDay() + 6) % 7), to: today };
+  }
+
+  if (kind === 'ytd') {
+    return { kind: kind, from: startOfMonth_(now.getFullYear(), 0), to: today };
   }
 
   if (kind === 'last_month') {
@@ -277,11 +301,30 @@ function matchesFilters_(row, filters) {
   return true;
 }
 
-/** The account test on its own, because the balance trend is not a spending question. */
+/**
+ * The account test on its own, because the balance trend is not a spending
+ * question.
+ *
+ * Takes **either a name or a list of them**, and the list is what the phone
+ * sends: `<select multiple>` is unusable on a touch screen, so the filter is a
+ * row of chips and several can be on at once. The single-string form is kept
+ * rather than migrated because `netWorthNow_` and `balanceSeries_` pass filter
+ * objects straight through, and a signature that quietly stopped accepting a
+ * string would fail as "the net worth chart is empty" a long way from here.
+ *
+ * An empty list means the same as `All`. It is what you get by turning the last
+ * chip off, and the honest reading of that gesture is "stop filtering" — the
+ * alternative is a screen that goes blank and looks broken.
+ */
 function matchesAccount_(row, filters) {
   var want = (filters || {}).account;
   if (!want || want === 'All') return true;
-  return String(row.account_name || '') === String(want);
+
+  var name = String(row.account_name || '');
+  if (!Array.isArray(want)) return name === String(want);
+  if (!want.length || want.indexOf('All') !== -1) return true;
+
+  return want.some(function (entry) { return String(entry) === name; });
 }
 
 /** `kids, travel` as `['kids','travel']`, trimmed and without the empties. */
@@ -898,9 +941,71 @@ function webAppRecords_(filters, offset) {
     total: matched.length,
     offset: start,
     hasMore: start + page.length < matched.length,
+    // A separate list, deliberately. See `pendingForPage_`.
+    pending: start === 0 ? pendingForPage_(scope, request) : [],
     currency: baseCurrency_(),
     window: { kind: window.kind, from: dayKey_(window.from), to: dayKey_(window.to) }
   };
+}
+
+/**
+ * The holds a bank has placed but not settled, for the top of the records list.
+ *
+ * These live on their own tab and always have. `pending` carries
+ * `TX_COLUMNS_CODE` only — A–O, no `amount_base`, no `category`, no
+ * `in_reports`, no `confirmed` — because a pending authorisation has no stable
+ * identity: the amount, the date and the description all change on the way to
+ * being booked, and `entry_reference` is booked-only. `rewritePending_` throws
+ * the tab away and rewrites it on every sync for exactly that reason.
+ *
+ * **Returned beside `rows` rather than merged into them**, which is the whole
+ * shape of this. `total`, `offset` and `hasMore` are paging arithmetic over the
+ * ledger; interleaving rows that are not in the ledger would make the count
+ * disagree with the list and the second page skip whatever the first page's
+ * pending rows displaced. They are also never *many* — a handful of holds — so
+ * there is nothing to page.
+ *
+ * Sent only with the first page, because they are drawn once at the top and
+ * "load more" appending them again is the obvious bug.
+ *
+ * `amount` is the raw signed amount and not a base-currency figure, because
+ * `amount_base` is a formula on `transactions` and there is none here. On a
+ * foreign-currency hold that means the number shown is the one the bank sent,
+ * which is the honest answer — converting it here would invent a rate.
+ */
+function pendingForPage_(scope, request) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.PENDING);
+  if (!sheet) return [];
+
+  return readRecords_(sheet, PENDING_COLUMNS, colIndex_(PENDING_COLUMNS, 'uid'))
+    .filter(function (row) {
+      if (!matchesAccount_(row, scope)) return false;
+
+      // No window test. A hold is by definition recent and by definition not
+      // yet dated the way it will be once it books — filtering it out of "last
+      // 12 months" on a date the bank has not finalised would hide the rows
+      // this exists to show.
+      var search = String((request || {}).search || '').trim().toLowerCase();
+      if (!search) return true;
+
+      return [row.description, row.counterparty].some(function (field) {
+        return String(field == null ? '' : field).toLowerCase().indexOf(search) !== -1;
+      });
+    })
+    .sort(function (a, b) {
+      return (dayNumber_(b.booking_date) || 0) - (dayNumber_(a.booking_date) || 0);
+    })
+    .map(function (row) {
+      return {
+        uid: String(row.uid || ''),
+        date: dayKey_(dayNumber_(row.booking_date)),
+        account: String(row.account_name || ''),
+        description: String(row.description || row.counterparty || ''),
+        amount: cellNumber_(row.amount),
+        currency: String(row.currency || ''),
+        pending: true
+      };
+    });
 }
 
 /**
@@ -940,6 +1045,15 @@ function matchesRecordFilters_(row, scope, request) {
  * `uid` is here because it is what a confirmation is addressed to — the same
  * pointer the `review` tab carries, and for the same reason: a list re-sorts
  * under you and a position does not survive that.
+ *
+ * `categoryAuto` is the cascade's own guess, carried **beside** the resolved
+ * `category` rather than instead of it. The page needs both to undo a
+ * categorisation: `applyReviewDecisions_` reads a blank `category_override` as
+ * "I did not touch this" and not as "clear it", deliberately, so there is no
+ * way to send an erasure. Putting a row back to its guess is therefore done by
+ * writing that guess as the override — which needs the guess, and only the
+ * server knows it. Blank here means the cascade had no opinion, and the page
+ * must offer no undo rather than invent one.
  */
 function recordForPage_(row) {
   return {
@@ -952,6 +1066,15 @@ function recordForPage_(row) {
     currency: String(row.currency || ''),
     category: String(row.category || ''),
     subcategory: String(row.subcategory || ''),
+    categoryAuto: String(row.category_auto || ''),
+    // What a rule built from this row should match on, computed by the same
+    // `normalizeMerchant` the cascade itself uses. Sent rather than derived in
+    // the page on purpose: it strips dates, card references, digit runs and a
+    // list of Italian POS noise words, and a second implementation in JS would
+    // be a second thing to keep in step with the categoriser it exists to
+    // agree with. Blank when the row has nothing to key on, and the page
+    // offers no rule in that case.
+    merchantKey: normalizeMerchant(row.description, row.counterparty),
     labels: splitLabels_(row.labels),
     type: String(row.type || ''),
     source: String(row.category_source || ''),

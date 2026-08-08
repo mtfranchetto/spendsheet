@@ -484,12 +484,14 @@ var DEFAULT_CONFIG = [
   // carries no Google session) and both deployments run the same doGet, so the
   // app branch checks the caller against this. Blank means refuse everyone —
   // see webAppAccessDecision_ in 20_webapp.gs for why it fails closed.
-  ['owner_email', '', 'Who may open the mobile web app. Filled by Setup sheet. Blank refuses everyone.'],
+  ['owner_email', '', 'Who may open the mobile web app. Comma-separate to share it — see docs/SHARING.md. Filled by Setup sheet. Blank refuses everyone.'],
   // Stored rather than detected. `ScriptApp.getService().getUrl()` answers for
   // the context it is called from, so from the menu it returns the HEAD
   // deployment — neither of the two real doors. Paste the Viewer's /exec URL
   // here once and "Open the app" knows where to send you.
-  ['viewer_url', '', 'The mobile app deployment URL (Deploy → Manage deployments → Viewer).']
+  ['viewer_url', '', 'The mobile app deployment URL (Deploy → Manage deployments → Viewer).'],
+  // Blank is a question, not a default — nothing is fetched until you answer it.
+  ['favicon_url', '', 'Public HTTPS image for the app’s browser tab. Must be reachable without signing in.']
 ];
 
 /**
@@ -628,6 +630,13 @@ var DEFAULT_CATEGORIES = [
   ['Fees & Taxes', 'Interest paid', 'expense', '💸'],
   ['Transfer', 'Between accounts', 'transfer', '🔄'],
   ['Transfer', 'Cash withdrawal', 'transfer', '🏧'],
+  // What an `asset` account's value moving is recorded as. Setting a new
+  // balance on an investment account writes the *difference* as a transaction,
+  // which is what makes the balance formula and the net-worth curve able to see
+  // it at all — see `accountBalanceFormula`. `kind: transfer` is the load-
+  // bearing part: a €1,500 market gain moves your net worth and is emphatically
+  // not income this month, and `in_reports` excludes transfers from every total.
+  ['Transfer', 'Valuation change', 'transfer', '📈'],
   ['Other', 'Uncategorised', 'expense', '❓']
 ];
 

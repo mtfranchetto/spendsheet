@@ -114,6 +114,11 @@
   .big { font-size: 28px; font-weight: 600; }
   .out { color: var(--out); }
   .in { color: var(--in); }
+  /* A transfer is neither. It is money you still have, moved — so it takes the
+     muted colour rather than the red that says "spent" or the green that says
+     "earned". `in_reports` has always excluded these from every total; this is
+     the row finally saying so. */
+  .moved { color: var(--muted); }
 
   .sev1 { border-left: 4px solid var(--warn); }
   .sev2 { border-left: 4px solid var(--bad); }
@@ -156,6 +161,7 @@
   .field { width: 100%; }
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
   .filters > * { flex: 1 1 45%; min-width: 130px; }
+  .filters > .wide { flex: 1 1 100%; }
 
   /*
     Every control says what it filters.
@@ -170,15 +176,81 @@
   .flabel { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
             color: var(--muted); font-weight: 600; padding-left: 2px; }
 
+  /*
+    A set of things you can turn on and off, several at a time.
+
+    A `<select multiple>` is the obvious control and is unusable on a phone: iOS
+    renders it as a scrolling box with no visible affordance for the modifier
+    key it wants, and what you get is a picker that silently replaces your
+    selection instead of adding to it. Chips make the state visible without
+    being tapped, which is the whole of what a filter has to do.
+
+    `aria-pressed` rather than a class alone, because "on" is the only thing
+    distinguishing these and a colour is not a signal everyone receives.
+  */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    border-radius: 999px; padding: 7px 12px; font-size: 13px; min-height: 34px;
+  }
+  .chip[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+
   /* A row you can act on. 44px is the smallest thing a thumb hits reliably. */
   .tap {
     display: flex; align-items: center; gap: 10px; width: 100%;
     background: none; border: none; border-bottom: 1px solid var(--line);
     padding: 10px 6px; text-align: left; min-height: var(--tap);
   }
-  .tap:last-child { border-bottom: none; }
+  /* Both forms, because a row is now wrapped for the swipe and the wrapper is
+     what sits last in the list. Losing this reads as one stray rule under the
+     final row of every card. */
+  .tap:last-child, .swipe:last-child .tap { border-bottom: none; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); flex: none; }
   .dot.hidden { visibility: hidden; }
+
+  /*
+    Swipe right to confirm.
+
+    The row sits in a clipping wrapper with the green behind it, so dragging the
+    row uncovers the action rather than animating a separate thing into place —
+    one transform, no second element to keep in sync.
+
+    `touch-action: pan-y` is the load-bearing line. It tells the browser this
+    element handles horizontal gestures and vertical ones are still the page's,
+    which keeps scrolling native and at 60fps instead of being reimplemented in
+    JavaScript. Without it the browser waits to see whether `touchmove` calls
+    `preventDefault` before scrolling anything, and the list feels stuck.
+  */
+  .swipe { position: relative; overflow: hidden; }
+  .swipe .tap {
+    position: relative; background: var(--surface);
+    touch-action: pan-y;
+  }
+  .swipe.sliding .tap { transition: none; }
+  .swipe.springing .tap { transition: transform .18s ease-out; }
+  .swipe-action {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    padding-left: 18px; font-size: 20px; color: #fff;
+    background: var(--in); opacity: 0;
+  }
+  .swipe.armed .swipe-action { opacity: 1; }
+
+  /* A hold the bank has placed but not settled. Not a button and not styled as
+     one: there is nothing to confirm and no category to set, because the
+     `pending` tab carries none of those columns. The dashed edge says
+     "provisional" without needing a legend. */
+  .pending-row {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 6px; min-height: var(--tap);
+    border-bottom: 1px solid var(--line);
+    border-left: 3px dashed var(--muted);
+    opacity: .72;
+  }
+  .pending-row:last-child { border-bottom: none; }
+  .pending-note { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                  color: var(--muted); font-weight: 600; }
 
   /*
     A spinner rather than the word "Loading…".
@@ -312,13 +384,46 @@
   }
   #toast[hidden] { display: none; }
 
+  /*
+    Pull to refresh.
+
+    Fixed rather than in the flow, so nothing below it moves while you drag —
+    the list staying still is what makes the indicator read as *over* the page
+    rather than as the page stretching. `translateY` and `opacity` are both set
+    from JS as the pull grows, so the gesture is continuous rather than a thing
+    that appears once you have gone far enough.
+  */
+  #pull {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: center;
+    height: 56px; pointer-events: none; z-index: 15;
+    color: var(--muted); font-size: 13px;
+    transform: translateY(-56px);
+  }
+  #pull[hidden] { display: none; }
+
   dialog {
     border: none; border-radius: 16px 16px 0 0; padding: 16px;
     background: var(--bg); color: var(--text);
     width: 100%; max-width: 560px;
     margin: auto auto 0; /* a sheet from the bottom, which is where a thumb is */
+    position: relative; /* the anchor for .sheet-close, which is absolute */
   }
   dialog::backdrop { background: rgba(0,0,0,.45); }
+
+  /* The close button is the dialog's *first* child, because `showModal` hands
+     focus to the first focusable descendant and the thing that used to be
+     first was a <select> — which on iOS opens its wheel picker the instant the
+     sheet appears. It is only *drawn* in the corner. Do not move it in the
+     markup to move it on screen. */
+  .sheet-close {
+    position: absolute; top: 4px; right: 4px;
+    width: 44px; height: 44px; /* the tap target, not the glyph */
+    border: none; background: none; color: var(--muted);
+    font-size: 20px; line-height: 1; padding: 0;
+  }
+  /* Room for it, so a long description does not run under the button. */
+  .sheet-body > h2:first-child { padding-right: 44px; }
 
   .skeleton { color: var(--muted); padding: 24px 4px; }
 
@@ -350,6 +455,7 @@
 
 <nav id="tabs"></nav>
 <div id="toast" hidden></div>
+<div id="pull" hidden></div>
 
 <script>
 (function () {
@@ -358,6 +464,47 @@
   // -------------------------------------------------------------------------
   // Making nodes
   // -------------------------------------------------------------------------
+
+  /**
+   * `TX_TYPE.TRANSFER`, spelled once.
+   *
+   * The server sends `type` on every record and four places here now branch on
+   * it. A literal at each of those is four chances to type `transfers` and get
+   * a comparison that is silently always false — which would present as
+   * transfers drawn in red again, indistinguishable from this never having
+   * been built.
+   */
+  var TRANSFER = 'transfer';
+
+  /**
+   * The subcategory a transfer gets when you mark one from the app.
+   *
+   * `Transfer` is a real category with `kind: transfer` on the `categories`
+   * tab, and `typeFormula()` resolves a row's type by looking its category up
+   * there — so setting the category *is* setting the type. There is no
+   * separate flag to write and deliberately so: a stored type could disagree
+   * with the category, and `in_reports` would have to pick one of them.
+   */
+  var TRANSFER_CATEGORY = 'Transfer';
+  var TRANSFER_SUBCATEGORY = 'Between accounts';
+
+  /**
+   * What an asset account's value moving is filed as.
+   *
+   * Under `Transfer` on purpose, so `in_reports` keeps a market gain out of
+   * "income this month" while the balance formula's SUMIF and the net-worth
+   * curve both still see it. See `renderSetValue`.
+   */
+  var VALUATION_SUBCATEGORY = 'Valuation change';
+
+  /**
+   * "It went somewhere this book does not track."
+   *
+   * A sentinel and not a blank, because a blank is what an unanswered form
+   * looks like and the two mean opposite things — see `TRANSFER_OUTSIDE` on the
+   * server, which refuses the blank rather than guessing.
+   */
+  var TRANSFER_OUTSIDE = '__outside__';
 
   /**
    * The one way anything gets onto this page.
@@ -400,7 +547,7 @@
   var state = {
     screen: 'dashboard',
     currency: 'EUR',
-    lists: { accounts: [], cashAccounts: [], labels: [],
+    lists: { accounts: [], cashAccounts: [], assetAccounts: [], labels: [],
              categories: { parents: [], children: [] }, periods: [] },
 
     /*
@@ -418,19 +565,6 @@
     },
     data: {},
 
-    /*
-      What the round trip cost the *client*, which is not what the server
-      reports. `describeDashboardCost` times the function; this times the whole
-      journey — `google.script.run`'s transport and serialisation included —
-      from the moment the page's script started running. The two differ, and
-      the difference had never once been measured.
-
-      It cannot see the part before that: the wrapper at script.google.com and
-      the sandboxed iframe load ahead of this code, cross-origin, with no clock
-      either side can share. Stopwatch minus `everything` is that number.
-    */
-    timing: { startedAt: Date.now(), open: 0, overview: 0,
-              inlined: false, overviewInlined: false },
     // Keyed by the filter signature, so going back to a slice you have already
     // looked at is instant and costs no request.
     cache: {},
@@ -438,14 +572,14 @@
     // navigation now that the bootstrap no longer prefetches it, and a filter
     // that legitimately matches nothing would otherwise look exactly like a
     // screen that has never been opened — so every visit would re-fetch it.
-    records: { rows: [], offset: 0, hasMore: false, total: 0, loading: false, loaded: false },
+    records: { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
+               loading: false, loaded: false },
     // Which account a cash entry is being added to, set by the tile that
     // opened the form and read back by it as the default.
     addAccount: '',
     // Which categories are showing their subcategories. Keyed by name rather
     // than by position, so it survives the list re-ranking under a new filter.
-    expanded: {},
-    pending: {}
+    expanded: {}
   };
 
   /**
@@ -655,6 +789,40 @@
   }
 
   /**
+   * A *sub*category's icon, which is a different question and a separate list.
+   *
+   * Deliberately not folded into `categoryIcon`: that one falls through to
+   * nothing for a subcategory on purpose, because it feeds the row avatars,
+   * where a dozen parent icons are a vocabulary you learn and sixty child ones
+   * are noise. The sheet is the opposite case — one row, named in full, where
+   * `🛒 Groceries` is the confirmation that you picked the right thing.
+   *
+   * `children` is the flat list `categoryChoices_` sends, so the names here are
+   * unique by construction: a subcategory that named two parents could not
+   * resolve through `VLOOKUP` either, which is why the seed has none.
+   */
+  function subcategoryIcon(name) {
+    if (!name) return '';
+    var found = state.lists.categories.children.filter(function (entry) {
+      return entry.name === name;
+    })[0];
+    return found ? found.icon : '';
+  }
+
+  /**
+   * `🛒 Groceries`, or just `Groceries` when the icon column is empty.
+   *
+   * A helper rather than a ternary at each call site because the empty case is
+   * the one that goes wrong: `icon + ' ' + name` with no icon is a name with a
+   * leading space, which is invisible in a mockup and shows up as a wobbling
+   * left edge down a list of them. `categories.icon` is a cell the user owns
+   * and may clear.
+   */
+  function withIcon(icon, name) {
+    return icon ? icon + ' ' + name : String(name || '');
+  }
+
+  /**
    * The category breakdown, as bars.
    *
    * The best form on a narrow screen: lengths from a common baseline, read
@@ -759,7 +927,9 @@
     { id: 'dashboard', label: 'Home', glyph: '\u{1F3E0}', render: renderDashboard },
     { id: 'records', label: 'Records', glyph: '\u{1F4C4}', render: renderRecords },
     { id: 'analytics', label: 'Charts', glyph: '\u{1F4CA}', render: renderAnalytics },
-    { id: 'add', label: 'Add cash', glyph: '\u{2795}', render: renderAdd }
+    { id: 'add', label: 'Add cash', glyph: '\u{2795}', render: renderAdd },
+    // Reached from an asset tile only, like `add` from a cash one.
+    { id: 'revalue', label: 'Set value', glyph: '\u{2195}', render: renderSetValue }
   ];
 
   /**
@@ -892,23 +1062,14 @@
     }
     add(root, review);
 
-    /*
-      What the two calls cost this device, measured from the moment this
-      script started running. Deliberately on the screen rather than in a
-      console nobody opens on a phone.
-
-      It cannot include the wrapper at script.google.com or the sandboxed
-      iframe that loads ahead of this code — those are cross-origin and there
-      is no clock both sides can read. Time the open by hand and subtract
-      `everything`: what is left is Google's, and none of it is ours to fix.
-    */
-    add(root, el('p', 'muted',
-      (state.timing.inlined
-        ? 'Top of screen came with the page'
-        : 'Top of screen in ' + (state.timing.open / 1000).toFixed(1) + 's') +
-      ', ' + (state.timing.overviewInlined
-        ? 'and so did the rest.'
-        : 'everything in ' + (state.timing.overview / 1000).toFixed(1) + 's.')));
+    // The two round-trip timings that used to print here are gone. They were
+    // instrumentation for the sessions that took the open from ~7s to ~6s, and
+    // they earned their place then; what they are now is a line of diagnostics
+    // at the bottom of a finance app. `describeDashboardCost` measures the same
+    // thing properly, from the menu, part by part, and it always did the half
+    // of it that mattered. Profiling the client is Playwright over CDP against
+    // the live deployment, which is the only vantage point that can see the
+    // ~3,300ms of Google that this line could never include anyway.
   }
 
   /**
@@ -989,7 +1150,174 @@
       add(tile, entry);
     }
 
+    // An asset is a wallet you top up by stating the total rather than the
+    // change: you read 14,500 off a broker's app, you do not compute the €1,500
+    // it moved by. The screen does that subtraction — see `renderSetValue`.
+    if (assetAccount(account.name)) {
+      var revalue = el('button', 'link', '\u{2195} Set value');
+      revalue.type = 'button';
+      revalue.addEventListener('click', function () {
+        state.addAccount = account.name;
+        go('revalue');
+      });
+      add(tile, revalue);
+    }
+
     return tile;
+  }
+
+  /** The asset entry for a name, or null. Carries its balance — see `assetAccountList_`. */
+  function assetAccount(name) {
+    return (state.lists.assetAccounts || []).filter(function (entry) {
+      return entry.name === name;
+    })[0] || null;
+  }
+
+  /**
+   * How far right you have to drag before the swipe means anything.
+   *
+   * A fraction of the row rather than a fixed distance, so it feels the same on
+   * a 320px phone and a tablet — bounded at both ends, because a quarter of a
+   * 900px row is a swipe nobody completes and a quarter of a narrow one is
+   * close enough to a stray finger to fire by accident.
+   */
+  function swipeThreshold(width) {
+    return Math.min(96, Math.max(60, width * 0.25));
+  }
+
+  /**
+   * The distance that decides whether a gesture is a scroll or a swipe.
+   *
+   * Below this nothing is claimed, because the first few pixels of every
+   * gesture are ambiguous and guessing early is what makes a list feel like it
+   * fights you.
+   */
+  var SWIPE_INTENT = 10;
+
+  /**
+   * Gestures starting this close to the left edge belong to the browser.
+   *
+   * iOS puts back-navigation there, and a row that swallowed it would trap
+   * someone on a screen. Losing the leftmost 24px of a gesture that has 60px
+   * to travel is the cheaper side of that trade.
+   */
+  var EDGE_GUARD = 24;
+
+  /**
+   * Swipe a row right to confirm it.
+   *
+   * The gesture the whole screen was missing: confirming used to be tap → wait
+   * for a sheet → tap Confirm → the sheet closes, three actions and a modal for
+   * the answer that is right most of the time. This is one.
+   *
+   * The row is wrapped rather than restyled, so the green sits *behind* it in a
+   * clipping box and dragging uncovers it. One transform moves, and there is no
+   * second element whose position has to be kept in step.
+   *
+   * Five things this has to get right, each of which is a real failure:
+   *
+   *   **Vertical wins.** The direction is decided once, at `SWIPE_INTENT`, and
+   *   a gesture that turns out to be vertical is abandoned for good rather than
+   *   re-evaluated — otherwise a diagonal scroll flickers between the two and
+   *   the list stutters under your thumb.
+   *
+   *   **The browser keeps scrolling.** `touch-action: pan-y` hands vertical
+   *   panning back to the compositor, so the list scrolls at 60fps without this
+   *   code running at all. Reimplementing scroll here would be both slower and
+   *   worse.
+   *
+   *   **The left edge is not ours.** See `EDGE_GUARD`.
+   *
+   *   **The transform is cleared before anything renders.** `sendDecision`
+   *   calls `render()`, which rebuilds `#screens` wholesale — so a row left
+   *   mid-transform is not restored, it is destroyed, and the *next* row drawn
+   *   into that position inherits nothing. Resetting first keeps the two
+   *   independent.
+   *
+   *   **The click that follows is suppressed.** A completed drag still ends in
+   *   a `click`, which would open the sheet on top of the confirmation that
+   *   just happened.
+   */
+  function swipeToConfirm(button, record) {
+    var wrap = el('div', 'swipe');
+    var action = el('div', 'swipe-action', '\u{2713}');
+    action.setAttribute('aria-hidden', 'true');
+    add(wrap, action);
+    add(wrap, button);
+
+    var startX = 0, startY = 0, dx = 0;
+    var horizontal = null, tracking = false;
+
+    var settle = function (animate) {
+      wrap.className = 'swipe' + (animate ? ' springing' : '');
+      button.style.transform = '';
+      dx = 0;
+      horizontal = null;
+      tracking = false;
+    };
+
+    button.addEventListener('touchstart', function (event) {
+      // Two fingers is a pinch or a scroll, and neither is this.
+      if (event.touches.length !== 1) return settle(false);
+
+      var touch = event.touches[0];
+      if (touch.clientX < EDGE_GUARD) return;
+
+      startX = touch.clientX;
+      startY = touch.clientY;
+      dx = 0;
+      horizontal = null;
+      tracking = true;
+      wrap.className = 'swipe';
+    }, { passive: true });
+
+    button.addEventListener('touchmove', function (event) {
+      if (!tracking) return;
+
+      var touch = event.touches[0];
+      var moveX = touch.clientX - startX;
+      var moveY = touch.clientY - startY;
+
+      if (horizontal === null) {
+        if (Math.abs(moveX) < SWIPE_INTENT && Math.abs(moveY) < SWIPE_INTENT) return;
+        horizontal = Math.abs(moveX) > Math.abs(moveY);
+        // Decided once. A gesture that started vertical stays vertical.
+        if (!horizontal) {
+          tracking = false;
+          return;
+        }
+      }
+
+      // Claimed only now, once the direction is known — before this point the
+      // browser must stay free to scroll.
+      event.preventDefault();
+
+      // Rightwards only. Left is where a delete would go if there is ever one,
+      // and a row that slid both ways would promise an action that does not
+      // exist.
+      dx = Math.max(0, moveX);
+      button.style.transform = 'translateX(' + dx + 'px)';
+      wrap.className = 'swipe sliding' +
+        (dx >= swipeThreshold(button.offsetWidth) ? ' armed' : '');
+    }, { passive: false });
+
+    button.addEventListener('touchcancel', function () { settle(true); }, { passive: true });
+
+    button.addEventListener('touchend', function () {
+      if (!tracking || !horizontal) return settle(false);
+
+      var fired = dx >= swipeThreshold(button.offsetWidth);
+      // Any completed horizontal drag suppresses its click, not only one that
+      // crossed the line — a drag that fell short is still not a tap.
+      button.swiped = true;
+      settle(true);
+
+      if (!fired) return;
+      if (record.confirmed) return toast('Already confirmed.');
+      sendDecision(record, { uid: record.uid, confirmed: true });
+    }, { passive: true });
+
+    return wrap;
   }
 
   /**
@@ -999,7 +1327,47 @@
    * a screen reader announces as actionable and what a keyboard reaches with
    * Tab. The dot on the left is the unconfirmed marker — a shape rather than
    * only a colour, since colour alone is not a signal everyone receives.
+   *
+   * Returns the *wrapper*, not the button — see `swipeToConfirm`. Callers add
+   * whatever comes back and do not reach inside it.
    */
+  /**
+   * A hold the bank has placed and not yet settled.
+   *
+   * A `<div>` and not a `<button>`, which is the point rather than a shortcut.
+   * There is nothing here to act on: the `pending` tab holds A–O only, so the
+   * row has no category to change, no `confirmed` to tick and no `amount_base`
+   * to report on — and a control that opens a sheet where every field is blank
+   * is worse than no control. It is not focusable and carries no click or touch
+   * handler, so the swipe cannot reach it either.
+   *
+   * The amount takes no colour. A hold is not yet a fact about your money, and
+   * painting it the same red as a settled expense would put it in the same
+   * visual sentence as the totals it is deliberately excluded from.
+   */
+  function pendingRow(record) {
+    var row = el('div', 'pending-row');
+    row.setAttribute('aria-disabled', 'true');
+
+    var avatar = el('div', 'avatar');
+    avatar.style.background = 'var(--line)';
+    avatar.setAttribute('aria-hidden', 'true');
+    add(avatar, document.createTextNode('\u{1F551}'));
+    add(row, avatar);
+
+    var middle = el('div', 'grow');
+    add(middle, add(el('div', 'ellipsis'),
+      document.createTextNode(record.description || '(no description)')));
+    add(middle, el('div', 'rec-sub', record.account));
+    add(row, middle);
+
+    add(row, el('span', 'num', record.amount === null ? '\u{2014}' : money(record.amount)));
+
+    row.setAttribute('aria-label', 'Pending. ' + (record.description || '') + ', ' +
+      record.account + ', ' + money(record.amount));
+    return row;
+  }
+
   function recordRow(record) {
     var button = el('button', 'tap');
     button.type = 'button';
@@ -1029,15 +1397,48 @@
     }
     add(button, middle);
 
-    add(button, el('span', 'num ' + (record.amount < 0 ? 'out' : 'in'),
-      record.amount === null ? '—' : money(record.amount)));
+    /*
+      Red for out, green for in — and neither for a transfer.
+
+      `type` and `inReports` have been on every record `recordForPage_` sends
+      since it was written, and this row read neither: the colour came from the
+      sign of the amount alone. So moving €2,000 from one of your accounts to
+      another drew in exactly the red of spending €2,000, on the screen whose
+      whole job is telling you what you spent. The sheet has never been confused
+      about this — `in_reports` excludes `type = 'transfer'` from every total —
+      so the row was the only thing disagreeing.
+
+      A row excluded from reports for some *other* reason (the `excluded`
+      column) is muted too but gets no arrows: it is still an expense, it is
+      just one you asked not to count.
+    */
+    var moved = record.type === TRANSFER;
+    var counted = record.inReports !== false;
+    var tone = moved || !counted ? 'moved' : (record.amount < 0 ? 'out' : 'in');
+
+    var amount = el('span', 'num ' + tone);
+    if (moved) add(amount, document.createTextNode('\u{21C4} '));
+    add(amount, document.createTextNode(
+      record.amount === null ? '\u{2014}' : money(record.amount)));
+    add(button, amount);
 
     button.setAttribute('aria-label',
-      (record.confirmed ? 'Confirmed. ' : 'Needs review. ') + what + ', ' +
+      (record.confirmed ? 'Confirmed. ' : 'Needs review. ') +
+      (moved ? 'Transfer. ' : '') + what + ', ' +
       shortDate(record.date) + ', ' + record.account + ', ' + money(record.amount) +
       (record.description ? '. ' + record.description : ''));
-    button.addEventListener('click', function () { openSheet(record); });
-    return button;
+    button.addEventListener('click', function () {
+      // The tail of a swipe, not a tap. Cleared here rather than on a timer,
+      // so the very next genuine tap works.
+      if (button.swiped) {
+        button.swiped = false;
+        return;
+      }
+      openSheet(record);
+    });
+
+    longPressForRule(button, record);
+    return swipeToConfirm(button, record);
   }
 
   /**
@@ -1077,6 +1478,21 @@
   function renderRecords(root) {
     add(root, el('h1', null, 'Records'));
     add(root, filterBar('records', { search: true, unconfirmed: true }));
+
+    // Holds first, above the dated groups, because that is where they are in
+    // time — a pending authorisation is newer than anything settled — and
+    // because they are the rows you came to check on.
+    var pending = state.records.pending || [];
+    if (pending.length) {
+      var held = el('div', 'card');
+      var head = el('div', 'daygroup');
+      add(head, el('div', 'dayhead', 'Pending'));
+      pending.forEach(function (record) { add(head, pendingRow(record)); });
+      add(held, head);
+      add(held, el('p', 'pending-note',
+        'Not yet settled, so not counted anywhere'));
+      add(root, held);
+    }
 
     var list = el('div', 'card');
     if (!state.records.rows.length) {
@@ -1221,30 +1637,120 @@
    * The search box therefore fires on `change`, which on a phone is when the
    * keyboard is dismissed.
    */
+  /**
+   * A period spec back to the `id` the server gave it.
+   *
+   * The two have to agree or the dropdown opens on the wrong entry, so the rule
+   * is written once here rather than at each comparison: a named year is
+   * `year:2024`, everything else is its kind. `appPeriods_` builds the same
+   * string from the other direction.
+   */
+  function periodId(spec) {
+    if (!spec) return 'mtd';
+    return spec.kind === 'year' && spec.year ? 'year:' + spec.year : spec.kind;
+  }
+
+  /**
+   * The account filter, as chips, several at a time.
+   *
+   * `<select multiple>` is the control this ought to be and is unusable on a
+   * phone: iOS draws it as a scroll box with no visible way to add to a
+   * selection, so tapping a second account silently replaces the first. Chips
+   * show what is on without being opened, which is the only job a filter has.
+   *
+   * `All` is a chip rather than an absence, because "nothing selected" and
+   * "everything selected" look identical otherwise and mean the same thing —
+   * `matchesAccount_` treats an empty list as All for exactly that reason.
+   * Turning the last account off therefore lands back on All rather than on a
+   * blank screen that reads as broken.
+   */
+  function accountChips(filters, onChange) {
+    var names = state.lists.accounts || [];
+    var chosen = Array.isArray(filters.account)
+      ? filters.account.slice()
+      : (filters.account && filters.account !== 'All' ? [filters.account] : []);
+
+    // Full width: a wrapping row of chips beside a dropdown at 45% would
+    // reflow every time you toggled one.
+    var box = el('div', 'fld wide');
+    add(box, el('span', 'flabel', 'Account'));
+
+    var chips = el('div', 'chips');
+    var draw = function () {
+      clear(chips);
+
+      var all = el('button', 'chip', 'All');
+      all.type = 'button';
+      all.setAttribute('aria-pressed', chosen.length ? 'false' : 'true');
+      all.addEventListener('click', function () {
+        if (!chosen.length) return;
+        chosen = [];
+        filters.account = 'All';
+        onChange();
+      });
+      add(chips, all);
+
+      names.forEach(function (name) {
+        var on = chosen.indexOf(name) !== -1;
+        var chip = el('button', 'chip', name);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        chip.addEventListener('click', function () {
+          if (on) chosen.splice(chosen.indexOf(name), 1);
+          else chosen.push(name);
+
+          // Sorted before it leaves, so picking A then B and B then A are one
+          // cached question rather than two — `signature` stringifies this.
+          filters.account = chosen.length ? chosen.slice().sort() : 'All';
+          onChange();
+        });
+        add(chips, chip);
+      });
+    };
+    draw();
+
+    add(box, chips);
+    return box;
+  }
+
   function filterBar(which, options) {
     var filters = state.filters[which];
     var bar = el('div', 'filters');
 
+    /*
+      Matched on `id`, not on `kind`.
+
+      The named years the server now offers are every one of them `kind:
+      'year'`, differing only in their `year`. Comparing on kind would mark all
+      of them selected at once and, worse, send back `{kind: 'year'}` with no
+      year in it — which `resolveWindow_` resolves to the current year, so
+      picking 2024 would silently show you 2026.
+
+      The whole entry is kept rather than rebuilt from the option's value, so
+      the spec that goes to the server is the one the server described. Only
+      `custom` is assembled here, because only its dates live on this side.
+    */
     var period = el('select');
     period.setAttribute('aria-label', 'Period');
     state.lists.periods.forEach(function (entry) {
       var option = el('option', null, entry.label);
-      option.value = entry.kind;
-      if (entry.kind === filters.period.kind) option.selected = true;
+      option.value = entry.id;
+      if (entry.id === periodId(filters.period)) option.selected = true;
       add(period, option);
     });
     period.addEventListener('change', function () {
-      filters.period = period.value === 'custom'
+      var chosen = state.lists.periods.filter(function (entry) {
+        return entry.id === period.value;
+      })[0] || { kind: 'mtd' };
+
+      filters.period = chosen.kind === 'custom'
         ? { kind: 'custom', from: filters.period.from, to: filters.period.to }
-        : { kind: period.value };
+        : { kind: chosen.kind, year: chosen.year };
       refreshCurrentScreen();
     });
     add(bar, labelled('Period', period));
 
-    add(bar, pickList('Account', state.lists.accounts, filters.account, function (value) {
-      filters.account = value;
-      refreshCurrentScreen();
-    }));
+    add(bar, accountChips(filters, function () { refreshCurrentScreen(); }));
 
     add(bar, pickList('Label', state.lists.labels, filters.label, function (value) {
       filters.label = value;
@@ -1321,6 +1827,352 @@
   // -------------------------------------------------------------------------
 
   /**
+   * The row's labels, as a set of chips you tick.
+   *
+   * **Chips over a text field, and the reason is a matching rule rather than a
+   * taste.** `matchesFilters_` tests a label against the *parts* of the column
+   * — `splitLabels_` on commas, then an exact comparison — so `travel` does not
+   * match `business-travel`, deliberately, because the alternative is a filter
+   * that quietly over-matches. A free text field invites exactly the near-miss
+   * that rule refuses to forgive, and it fails invisibly: the label looks right
+   * on the transaction and the transaction is missing from the report.
+   *
+   * The offered set is `labels`, the tab that is the known set. A label already
+   * on the row but no longer on that tab is offered too, and ticked — dropping
+   * it silently would mean opening a transaction and saving it was a way to
+   * lose data you never looked at.
+   */
+  function labelChips(record) {
+    // Deduplicated on the way in. `labelNames_` maps the `labels` tab row for
+    // row and nothing stops that tab holding the same word twice — which draws
+    // two chips that toggle independently and disagree about one label.
+    var current = (record.labels || []).map(String);
+    var offered = [];
+    (state.lists.labels || []).map(String).concat(current).forEach(function (name) {
+      if (name && offered.indexOf(name) === -1) offered.push(name);
+    });
+
+    var box = el('div');
+    add(box, el('label', null, 'Labels'));
+
+    if (!offered.length) {
+      add(box, el('p', 'muted', 'No labels yet. Add rows to the labels tab.'));
+      // Still answers, and answers with what is on the row — so a sheet with
+      // no chips on it cannot be the thing that clears a label.
+      return { node: box, chosen: function () { return current.slice(); } };
+    }
+
+    var picked = {};
+    current.forEach(function (name) { picked[name] = true; });
+
+    var chips = el('div', 'chips');
+    offered.forEach(function (name) {
+      var chip = el('button', 'chip', name);
+      chip.type = 'button';
+      chip.setAttribute('aria-pressed', picked[name] ? 'true' : 'false');
+      chip.addEventListener('click', function () {
+        picked[name] = !picked[name];
+        chip.setAttribute('aria-pressed', picked[name] ? 'true' : 'false');
+      });
+      add(chips, chip);
+    });
+    add(box, chips);
+
+    return {
+      node: box,
+      // Read in `offered` order rather than click order, so saving a row twice
+      // without touching anything writes the same string both times.
+      chosen: function () {
+        return offered.filter(function (name) { return picked[name]; });
+      }
+    };
+  }
+
+  /**
+   * Mark this as a transfer, or put it back.
+   *
+   * The control says "transfer" and never says "category", because from here
+   * that is what it is: money moved between two accounts you own, which is
+   * neither income nor spending and counts towards neither. What it *writes* is
+   * `category_override = Transfer`, because that is how the book stores the
+   * fact — `type` is a formula over the category and there is no separate flag.
+   * The mechanism is not the user's problem.
+   *
+   * Un-marking is the awkward half and cannot be a blank. `applyReviewDecisions_`
+   * reads a blank override as "I did not touch this" — a rule that exists to
+   * stop a serialised empty input erasing a categorisation months before anyone
+   * notices — so there is no message meaning "clear this". Instead it writes the
+   * cascade's own guess back over the top, which is a real category name and
+   * needs no new sentinel.
+   *
+   * **That only works when the guess is not itself a transfer, and often it
+   * is.** The commonest transfer on this book is one the cascade found on its
+   * own: `GIROCONTO` and `PRELIEVO` are tier-5 seed rules and MCC 6011 is tier
+   * 4, so `category_auto` reads `Transfer` and "put it back to Transfer" is an
+   * undo that undoes nothing while saying that it did. Offering nothing is
+   * better than offering that — the sentence below points at the pickers, which
+   * genuinely can move the row, and is also what a row with no guess at all
+   * gets. Checked through `kindOfCategory` rather than by comparing to the
+   * name, because `Transfer` is a row on a tab the user may rename.
+   */
+  function transferToggle(record, dialog) {
+    var isTransfer = record.type === TRANSFER;
+    var revertTo = record.categoryAuto;
+    var canRevert = revertTo && kindOfCategory(revertTo) !== TRANSFER;
+
+    if (isTransfer && !canRevert) {
+      return el('p', 'muted',
+        'To stop this being a transfer, pick a category above.');
+    }
+
+    if (isTransfer) {
+      var undo = el('button', 'link', 'Not a transfer — put it back to ' + revertTo);
+      undo.type = 'button';
+      undo.addEventListener('click', function () {
+        dialog.close();
+        sendDecision(record, { uid: record.uid, confirmed: true,
+          category_override: revertTo });
+      });
+      return undo;
+    }
+
+    return transferDestinationPicker(record, dialog);
+  }
+
+  /**
+   * Mark this a transfer, and say where the money actually went.
+   *
+   * **Naming the destination is what makes the arithmetic right**, and without
+   * it this book was quietly wrong about a common case. A cash withdrawal is
+   * one row: the bank debits €100 and nothing credits your wallet, because a
+   * wallet has no API. Marking it a transfer kept it out of spending —
+   * correctly — and left net worth €100 short of the money in your pocket.
+   * Picking the wallet writes the leg the bank never will.
+   *
+   * Only cash and asset accounts are offered. A bank destination reports its
+   * own credit on its next sync and `detectTransfers_` pairs the two without
+   * help; a leg written here would be a second copy of money that only moved
+   * once. The server refuses one too — this list is what stops you being able
+   * to ask.
+   *
+   * **"Somewhere else" is a real answer and not a cop-out.** Money to another
+   * bank, or to a person, has no account here to credit. It is still not
+   * spending, so it is still a transfer — and net worth does fall, correctly,
+   * because net worth is the sum of what you track and it has left.
+   */
+  function transferDestinationPicker(record, dialog) {
+    var box = el('div');
+    add(box, el('label', null, 'This is a transfer — where did it go?'));
+
+    var where = el('select');
+    where.className = 'field';
+
+    var elsewhere = el('option', null, 'Somewhere outside Spendsheet');
+    elsewhere.value = TRANSFER_OUTSIDE;
+    add(where, elsewhere);
+
+    (state.lists.cashAccounts || []).forEach(function (name) {
+      if (name === record.account) return;
+      var option = el('option', null, name);
+      option.value = name;
+      add(where, option);
+    });
+    (state.lists.assetAccounts || []).forEach(function (entry) {
+      if (entry.name === record.account) return;
+      var option = el('option', null, entry.name);
+      option.value = entry.name;
+      add(where, option);
+    });
+    add(box, where);
+
+    add(box, el('div', 'muted',
+      'A destination gets the other half of the transfer, so both balances move. ' +
+      'Only cash and asset accounts — a bank reports its own side.'));
+
+    var mark = el('button', 'link', 'Mark as a transfer');
+    mark.type = 'button';
+    mark.addEventListener('click', function () {
+      var destination = where.value;
+      dialog.close();
+
+      // Optimistic on the row itself, the way `sendDecision` is: the category
+      // is what makes it a transfer, and the row redraws neutral at once.
+      var was = { category: record.category, subcategory: record.subcategory,
+        type: record.type, inReports: record.inReports, confirmed: record.confirmed };
+      record.category = TRANSFER_CATEGORY;
+      record.type = TRANSFER;
+      record.inReports = false;
+      record.confirmed = true;
+      render();
+
+      call('appMarkTransfer', { uid: record.uid, destination: destination })
+        .then(function (result) {
+          toast(result.message);
+          reloadAfterWrite();
+        }).catch(function (error) {
+          record.category = was.category;
+          record.subcategory = was.subcategory;
+          record.type = was.type;
+          record.inReports = was.inReports;
+          record.confirmed = was.confirmed;
+          toast(error.message);
+          render();
+        });
+    });
+    add(box, mark);
+
+    return box;
+  }
+
+  /**
+   * How long a press has to be before it means "rule", not "open".
+   *
+   * 500ms is the platform convention for a long press on both iOS and Android,
+   * so it is the one people already have in their hands.
+   */
+  var LONG_PRESS_MS = 500;
+
+  /**
+   * Long-press a row to turn it into a categorisation rule.
+   *
+   * The gesture exists because the alternative is unusable in practice: you see
+   * the same merchant miscategorised for the fourth time, and the only way to
+   * fix it *permanently* is to open the spreadsheet on a laptop and type a row
+   * on the `rules` tab. Correcting the transaction in front of you does not do
+   * it — that is an override on one row, and `_memory` is rebuilt from confirmed
+   * rows rather than being a rule.
+   *
+   * Cancelled by any movement at all, not by a threshold: a press that has
+   * begun to travel is a scroll or a swipe, and firing a modal into the middle
+   * of either is the worst outcome available. `contextmenu` is suppressed for
+   * the same reason iOS shows one — a long press on a `<button>` is a text
+   * selection gesture there, and the callout would open behind the sheet.
+   */
+  function longPressForRule(button, record) {
+    var timer = null;
+
+    var cancel = function () {
+      if (timer === null) return;
+      clearTimeout(timer);
+      timer = null;
+    };
+
+    button.addEventListener('touchstart', function () {
+      cancel();
+      timer = setTimeout(function () {
+        timer = null;
+        // The press has been claimed, so the `click` that follows the release
+        // must not also open the detail sheet on top of the rule sheet.
+        button.swiped = true;
+        openRuleSheet(record);
+      }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    ['touchmove', 'touchend', 'touchcancel'].forEach(function (name) {
+      button.addEventListener(name, cancel, { passive: true });
+    });
+
+    // Without this, iOS opens its own selection callout mid-press.
+    button.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+  }
+
+  /**
+   * The rule sheet: prefilled from the row, and every field still editable.
+   *
+   * Prefilled because the whole value of the gesture is not having to think,
+   * and editable because the prefill is a guess about which part of a bank's
+   * description identifies the merchant. `merchantKey` is a good guess — it is
+   * `normalizeMerchant`, the same function the cascade keys on — but a bank
+   * that writes `PAYPAL *STEAM` defeats any general answer, and the fix is one
+   * field the person can widen or narrow rather than a cleverer normaliser.
+   */
+  function openRuleSheet(record) {
+    var dialog = document.getElementById('sheet') || el('dialog');
+    dialog.id = 'sheet';
+    clear(dialog);
+    if (!dialog.isConnected) document.body.appendChild(dialog);
+
+    var close = el('button', 'sheet-close', '\u{2715}');
+    close.type = 'button';
+    close.autofocus = true;
+    close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', function () { dialog.close(); });
+    add(dialog, close);
+
+    var body = el('div', 'sheet-body');
+    add(dialog, body);
+
+    add(body, el('h2', null, 'Always categorise this'));
+    add(body, el('p', 'muted', record.description || '(no description)'));
+
+    add(body, el('label', null, 'When the description contains'));
+    var pattern = el('input');
+    pattern.type = 'text';
+    pattern.className = 'field';
+    pattern.value = record.merchantKey || record.description || '';
+    add(body, pattern);
+
+    add(body, el('label', null, 'Match'));
+    var how = el('select');
+    how.className = 'field';
+    [['contains', 'contains it'], ['equals', 'is exactly it'],
+     ['starts_with', 'starts with it'], ['regex', 'matches it as a pattern']]
+      .forEach(function (pair) {
+        var option = el('option', null, pair[1]);
+        option.value = pair[0];
+        add(how, option);
+      });
+    add(body, how);
+
+    add(body, el('label', null, 'File it under'));
+    var child = el('select');
+    child.className = 'field';
+    state.lists.categories.children.forEach(function (entry) {
+      var option = el('option', null,
+        withIcon(entry.icon, entry.name) + '  —  ' + entry.parent);
+      option.value = entry.name;
+      option.dataset.parent = entry.parent;
+      if (entry.name === record.subcategory && entry.parent === record.category) {
+        option.selected = true;
+      }
+      add(child, option);
+    });
+    add(body, child);
+
+    var save = el('button', 'primary', 'Save rule');
+    save.type = 'button';
+    save.style.marginTop = '16px';
+    save.addEventListener('click', function () {
+      var chosen = child.options[child.selectedIndex];
+      save.disabled = true;
+      save.textContent = 'Saving\u{2026}';
+
+      call('appAddRule', {
+        field: 'description',
+        match_type: how.value,
+        pattern: pattern.value,
+        category: chosen ? chosen.dataset.parent : '',
+        subcategory: child.value
+      }).then(function (result) {
+        dialog.close();
+        toast(result.message);
+      }).catch(function (error) {
+        // Kept open on a refusal: every one of them names something on this
+        // sheet that can be corrected, and closing would lose what was typed.
+        save.disabled = false;
+        save.textContent = 'Save rule';
+        toast(error.message);
+      });
+    });
+    add(body, save);
+
+    dialog.onclick = function (event) {
+      if (event.target === dialog) dialog.close();
+    };
+    dialog.showModal();
+  }
+
+  /**
    * The confirm/categorise sheet, from the bottom.
    *
    * The same three columns the `review` tab offers and in the same order:
@@ -1339,81 +2191,238 @@
     clear(dialog);
     if (!dialog.isConnected) document.body.appendChild(dialog);
 
-    add(dialog, el('h2', null, record.description || '(no description)'));
-    add(dialog, el('p', 'muted', shortDate(record.date) + ' · ' + record.account + ' · ' +
+    // The close button, first, and both of those words are load-bearing.
+    //
+    // It replaces a "Cancel" link that was at the *bottom*, under two pickers
+    // and a Confirm — the furthest point in the sheet from a thumb, for the
+    // one action you take when you opened it by mistake.
+    //
+    // First in the markup because `showModal` focuses the first focusable
+    // descendant. That used to be the subcategory `<select>`, and iOS opens a
+    // select's wheel picker on focus — so tapping a transaction opened the
+    // sheet *and* the category picker on top of it, every time. Nothing here
+    // asked for focus; taking it deliberately is the only way to stop it
+    // landing somewhere that acts on being focused.
+    var close = el('button', 'sheet-close', '\u{2715}');
+    close.type = 'button';
+    close.autofocus = true;
+    close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', function () { dialog.close(); });
+    add(dialog, close);
+
+    // Everything else goes inside a wrapper, which is what makes the
+    // backdrop test below honest: with the content directly on the dialog,
+    // `event.target === dialog` also fires on the dialog's own 16px of
+    // padding, so a near-miss tap inside the sheet would close it.
+    var body = el('div', 'sheet-body');
+    add(dialog, body);
+
+    add(body, el('h2', null, record.description || '(no description)'));
+    add(body, el('p', 'muted', shortDate(record.date) + ' · ' + record.account + ' · ' +
       money(record.amount)));
-    add(dialog, el('p', 'muted', record.category
-      ? 'Currently ' + record.category + (record.subcategory ? ' › ' + record.subcategory : '') +
-        (record.source ? ' (' + record.source + ')' : '')
-      : 'Not categorised.'));
+    add(body, el('p', 'muted', record.type === TRANSFER
+      ? 'Transfer between your own accounts — not counted in spending.'
+      : (record.category
+        ? 'Currently ' + withIcon(categoryIcon(record.category), record.category) +
+          (record.subcategory
+            ? ' › ' + withIcon(subcategoryIcon(record.subcategory), record.subcategory)
+            : '') +
+          (record.source ? ' (' + record.source + ')' : '')
+        : 'Not categorised.')));
 
-    add(dialog, el('label', null, 'Change the subcategory'));
-    var child = el('select');
-    child.className = 'field';
-    add(child, el('option', null, 'Leave as it is'));
-    state.lists.categories.children.forEach(function (entry) {
-      var option = el('option', null,
-        (entry.icon ? entry.icon + '  ' : '') + entry.name + '  —  ' + entry.parent);
-      option.value = entry.name;
-      add(child, option);
-    });
-    add(dialog, child);
+    // Which half of the taxonomy this row can plausibly belong to.
+    //
+    // Money in is income and money out is spending, so offering `Groceries` on
+    // a salary is offering sixty wrong answers to hide the eight right ones.
+    // `transfer` is always in the list whichever way the amount points, because
+    // it is the one kind that occurs in both directions — an ATM withdrawal and
+    // the deposit it pairs with are the same transfer seen from two accounts.
+    //
+    // `showAll` is not a nicety. A refund arrives as a *positive* amount and
+    // belongs under the expense category it reverses, so a filter with no way
+    // out would make the commonest correction on this screen impossible.
+    var wanted = record.amount > 0 ? 'income' : 'expense';
+    var showAll = { on: false };
 
-    add(dialog, el('label', null, 'Or set only the category'));
-    var parent = el('select');
-    parent.className = 'field';
-    add(parent, el('option', null, 'Leave as it is'));
-    state.lists.categories.parents.forEach(function (entry) {
-      var option = el('option', null, (entry.icon ? entry.icon + '  ' : '') + entry.name);
-      option.value = entry.name;
-      add(parent, option);
-    });
-    add(dialog, parent);
+    var pickers = el('div');
+    add(body, pickers);
+
+    var drawPickers = function () {
+      clear(pickers);
+
+      var fits = function (entry) {
+        return showAll.on || !entry.kind || entry.kind === wanted || entry.kind === TRANSFER;
+      };
+
+      add(pickers, el('label', null, 'Change the subcategory'));
+      var child = el('select');
+      child.className = 'field';
+      add(child, el('option', null, 'Leave as it is'));
+      state.lists.categories.children.filter(fits).forEach(function (entry) {
+        var option = el('option', null,
+          withIcon(entry.icon, entry.name) + '  —  ' + entry.parent);
+        option.value = entry.name;
+        add(child, option);
+      });
+      add(pickers, child);
+
+      add(pickers, el('label', null, 'Or set only the category'));
+      var parent = el('select');
+      parent.className = 'field';
+      add(parent, el('option', null, 'Leave as it is'));
+      state.lists.categories.parents.filter(fits).forEach(function (entry) {
+        var option = el('option', null, withIcon(entry.icon, entry.name));
+        option.value = entry.name;
+        add(parent, option);
+      });
+      add(pickers, parent);
+
+      var toggle = el('button', 'link', showAll.on
+        ? 'Show only ' + wanted + ' categories'
+        : 'Show all categories');
+      toggle.type = 'button';
+      toggle.addEventListener('click', function () {
+        showAll.on = !showAll.on;
+        drawPickers();
+      });
+      add(pickers, toggle);
+
+      pickers.chosen = function () {
+        var decision = {};
+        if (child.value && child.selectedIndex > 0) decision.subcategory_override = child.value;
+        if (parent.value && parent.selectedIndex > 0) decision.category_override = parent.value;
+        return decision;
+      };
+    };
+    drawPickers();
+
+    var labels = labelChips(record);
+    add(body, labels.node);
 
     var confirm = el('button', 'primary', record.confirmed ? 'Save' : 'Confirm');
     confirm.style.marginTop = '16px';
+    confirm.type = 'button';
     confirm.addEventListener('click', function () {
-      var decision = { uid: record.uid, confirmed: true };
-      if (child.value && child.selectedIndex > 0) decision.subcategory_override = child.value;
-      if (parent.value && parent.selectedIndex > 0) decision.category_override = parent.value;
+      var decision = pickers.chosen();
+      decision.uid = record.uid;
+      decision.confirmed = true;
+      // Always sent, because the chips always show the row's current value —
+      // so "what is ticked" is the answer whether or not you touched them, and
+      // an untouched set writes back what was already there. See the note on
+      // `labels` in `applyReviewDecisions_` for why that is the safe direction.
+      decision.labels = labels.chosen();
 
       dialog.close();
       sendDecision(record, decision);
     });
-    add(dialog, confirm);
+    add(body, confirm);
 
-    var cancel = el('button', 'link', 'Cancel');
-    cancel.addEventListener('click', function () { dialog.close(); });
-    add(dialog, cancel);
+    add(body, transferToggle(record, dialog));
+
+    // Tap outside to dismiss. `<dialog>` does not do this for you — it gives
+    // you Escape, which a phone has no key for. The test is only sound because
+    // everything visible is inside `.sheet-body`; see the note there.
+    //
+    // Rebound on every open rather than once, because `clear()` empties the
+    // dialog but the element itself is reused, so a listener added here would
+    // otherwise accumulate one copy per transaction you ever tapped.
+    dialog.onclick = function (event) {
+      if (event.target === dialog) dialog.close();
+    };
 
     dialog.showModal();
+  }
+
+  /**
+   * A row that has just been confirmed no longer matches "needs review".
+   *
+   * Removed locally rather than by refetching, so the list does not jump back
+   * to its first page — see `reloadAfterWrite`. Returns where it was, because
+   * a refusal has to put it back exactly there: appending it would silently
+   * re-sort someone's list under them, and dropping it for good would hide a
+   * transaction that is still unconfirmed on the server.
+   */
+  function dropIfFiltered(record) {
+    if (!state.filters.records.unconfirmedOnly) return -1;
+
+    var at = state.records.rows.indexOf(record);
+    if (at === -1) return -1;
+
+    state.records.rows.splice(at, 1);
+    if (state.records.total > 0) state.records.total--;
+    return at;
+  }
+
+  function restoreDropped(record, at) {
+    if (at < 0) return;
+    state.records.rows.splice(at, 0, record);
+    state.records.total++;
+  }
+
+  /**
+   * A category's kind, from the list the bootstrap already sends.
+   *
+   * Only used to predict what the sheet is about to derive, so the row can be
+   * redrawn before the server answers. `typeFormula()` is the authority and
+   * this is a guess at what it will say — which is why `reloadAfterWrite`
+   * follows every write and replaces the guess with the answer.
+   */
+  function kindOfCategory(name) {
+    var found = (state.lists.categories.parents || []).filter(function (entry) {
+      return entry.name === name;
+    })[0];
+    return found ? found.kind : '';
   }
 
   function sendDecision(record, decision) {
     // Optimistic, and the local copies are what get redrawn — the server's own
     // view is refetched afterwards rather than assumed.
+    var was = { confirmed: record.confirmed, category: record.category,
+      subcategory: record.subcategory, labels: record.labels, type: record.type,
+      inReports: record.inReports };
+
     record.confirmed = true;
     if (decision.subcategory_override) record.subcategory = decision.subcategory_override;
-    if (decision.category_override) record.category = decision.category_override;
+    if (decision.category_override) {
+      record.category = decision.category_override;
+      // `type` is derived from the category on the sheet, so predicting it here
+      // is what makes marking a transfer redraw as one immediately rather than
+      // a round trip later. `in_reports` follows it, which is what stops a row
+      // you just excluded from still colouring itself as spending.
+      var kind = kindOfCategory(decision.category_override);
+      if (kind) {
+        record.type = kind;
+        record.inReports = kind !== TRANSFER;
+      }
+    }
+    if (decision.labels !== undefined) record.labels = decision.labels.slice();
+    var droppedAt = dropIfFiltered(record);
     render();
+
+    // Both failure paths put the row back the way it was, and the soft one
+    // used to forget to redraw — so a refusal left the optimistic row on
+    // screen looking saved until something else happened to call `render`.
+    var refuse = function (message) {
+      toast(message);
+      record.confirmed = was.confirmed;
+      record.category = was.category;
+      record.subcategory = was.subcategory;
+      record.labels = was.labels;
+      record.type = was.type;
+      record.inReports = was.inReports;
+      restoreDropped(record, droppedAt);
+      render();
+    };
 
     call('appConfirm', [decision]).then(function (result) {
       var outcome = (result.results || [])[0];
-      if (outcome && !outcome.ok) {
-        toast('Not saved: ' + outcome.reason);
-        record.confirmed = false;
-      } else {
-        toast('Saved.');
-      }
+      if (outcome && !outcome.ok) return refuse('Not saved: ' + outcome.reason);
+
+      toast('Saved.');
       // The derived columns are formulas, so what a confirmation *means* is
       // only knowable by asking the sheet again.
-      invalidate();
-      loadDashboard();
-    }).catch(function (error) {
-      record.confirmed = false;
-      toast(error.message);
-      render();
-    });
+      reloadAfterWrite();
+    }).catch(function (error) { refuse(error.message); });
   }
 
   // -------------------------------------------------------------------------
@@ -1520,8 +2529,10 @@
         note.value = '';
         submit.disabled = false;
         submit.textContent = 'Add';
-        invalidate();
-        loadDashboard();
+        // A brand-new transaction, so Records genuinely does not have it —
+        // unlike a confirmation, which only changes a row already on screen.
+        // `invalidate` marks it and `go()` fetches it when you next open it.
+        reloadAfterWrite();
       }).catch(function (error) {
         toast(error.message);
         submit.disabled = false;
@@ -1532,12 +2543,327 @@
     add(root, form);
   }
 
+  /**
+   * Set an asset account's value, by stating the total rather than the change.
+   *
+   * You read 14,500 off a broker's app; you did not compute the €1,500 it moved
+   * by, and being asked for that number is being asked to do arithmetic the
+   * screen already has both operands for. So this asks for the new total and
+   * writes the **difference** as one transaction.
+   *
+   * Writing a difference rather than overwriting a cell is the whole point.
+   * `balanceSeries_` reconstructs the net-worth curve by walking transactions
+   * backwards from today, so a value that only ever changed by being overwritten
+   * was invisible to it — the curve was flat and then, on the day you retyped
+   * the number, the *whole* line moved. A dated transaction puts the change
+   * where it happened.
+   *
+   * It goes in as `Transfer › Valuation change`, so `in_reports` keeps it out of
+   * every spending and income total while `accountBalanceFormula`'s SUMIF and
+   * the balance curve both still see it. A market gain is not income.
+   *
+   * The sign needs no special case, which is worth checking against
+   * `cashEntryAmount` rather than trusting: a positive delta with a `transfer`
+   * category stays positive, and a negative one wins as typed. The raw signed
+   * difference is exactly the right thing to send.
+   */
+  function renderSetValue(root) {
+    var back = el('button', 'link', '\u{2190} Home');
+    back.type = 'button';
+    back.addEventListener('click', function () { go('dashboard'); });
+    add(root, back);
+
+    add(root, el('h1', null, 'Set value'));
+
+    var accounts = state.lists.assetAccounts || [];
+    if (!accounts.length) {
+      return add(root, add(el('div', 'card'),
+        el('p', 'muted', 'No asset accounts yet. Add a row to the accounts tab ' +
+          'with kind set to asset, then reload.')));
+    }
+
+    var form = el('div', 'card');
+
+    add(form, el('label', null, 'Account'));
+    var account = el('select');
+    account.className = 'field';
+    accounts.forEach(function (entry) {
+      var option = el('option', null, entry.name);
+      option.value = entry.name;
+      if (entry.name === state.addAccount) option.selected = true;
+      add(account, option);
+    });
+    add(form, account);
+
+    var current = el('div', 'muted');
+    add(form, current);
+
+    add(form, el('label', null, 'New value'));
+    var value = el('input');
+    value.type = 'text';
+    // `inputmode` rather than `type=number`, for the reason `renderAdd` gives:
+    // a decimal-comma keyboard produces `14500,50`, which a number input
+    // discards silently rather than rejecting.
+    value.inputMode = 'decimal';
+    value.className = 'field';
+    add(form, value);
+
+    var preview = el('div', 'muted');
+    add(form, preview);
+
+    add(form, el('label', null, 'Note'));
+    var note = el('input');
+    note.type = 'text';
+    note.className = 'field';
+    note.placeholder = 'Optional';
+    add(form, note);
+
+    var submit = el('button', 'primary', 'Record the change');
+    submit.type = 'button';
+    submit.style.marginTop = '16px';
+
+    /** What is on the account now, and what pressing the button would write. */
+    var chosen = function () {
+      return assetAccount(account.value) || { balance: null };
+    };
+
+    var describe = function () {
+      var was = chosen().balance;
+      current.textContent = was === null
+        ? 'No value recorded yet.'
+        : 'Currently ' + money(was);
+
+      var typed = Number(String(value.value).replace(',', '.'));
+      if (!value.value || !isFinite(typed)) {
+        preview.textContent = '';
+        submit.disabled = false;
+        return;
+      }
+
+      var delta = typed - (was || 0);
+      // `toFixed(2)` before the comparison, because the subtraction is floating
+      // point: 14500 - 12700.1 leaves a value that is not zero and not worth a
+      // transaction either.
+      var rounded = Number(delta.toFixed(2));
+
+      if (rounded === 0) {
+        preview.textContent = 'That is what it already says — nothing to record.';
+        submit.disabled = true;
+        return;
+      }
+
+      submit.disabled = false;
+      preview.textContent = (rounded > 0 ? 'Up ' : 'Down ') + money(Math.abs(rounded)) +
+        ' — recorded as one transaction dated today.';
+    };
+
+    account.addEventListener('change', describe);
+    value.addEventListener('input', describe);
+    describe();
+
+    submit.addEventListener('click', function () {
+      var was = chosen().balance;
+      var typed = Number(String(value.value).replace(',', '.'));
+      if (!value.value || !isFinite(typed)) return toast('Type the new value.');
+
+      var delta = Number((typed - (was || 0)).toFixed(2));
+      if (delta === 0) return toast('That is what it already says.');
+
+      submit.disabled = true;
+      submit.textContent = 'Recording\u{2026}';
+
+      call('appAddCash', {
+        amount: delta,
+        account: account.value,
+        category: TRANSFER_CATEGORY,
+        subcategory: VALUATION_SUBCATEGORY,
+        date: state.data.generatedAt || '',
+        note: note.value || (account.value + ' revalued to ' + money(typed))
+      }).then(function (result) {
+        toast(result.message);
+        value.value = '';
+        note.value = '';
+        submit.disabled = false;
+        submit.textContent = 'Record the change';
+        reloadAfterWrite();
+        // The tile's balance came with `appOpen` and has just moved, so the
+        // screen would otherwise keep offering the old number as "currently".
+        // `loadDashboard` refetches it; this redraws once it lands.
+        go('dashboard');
+      }).catch(function (error) {
+        toast(error.message);
+        submit.disabled = false;
+        submit.textContent = 'Record the change';
+      });
+    });
+
+    add(form, submit);
+    add(root, form);
+  }
+
+  // -------------------------------------------------------------------------
+  // Pull to refresh
+  // -------------------------------------------------------------------------
+
+  /** How far down you have to drag before releasing means anything. */
+  var PULL_THRESHOLD = 70;
+
+  /** Past this the indicator stops following your finger, so it cannot run away. */
+  var PULL_MAX = 110;
+
+  /**
+   * Drag down at the top of the page to re-read everything.
+   *
+   * `appDashboard` was written for this and had no gesture attached to it for
+   * three phases: it is the one entry point that calls `forgetLedgerCache_()`
+   * before reading, so it is the only way from a phone to say "I do not care
+   * what you have cached, go and look". Everything else the app does is happy
+   * with a six-hour-old ledger, because every *write* bumps the version.
+   *
+   * Two conditions, and both matter:
+   *
+   *   **Only from the very top.** `scrollY > 0` means you are scrolling a list
+   *   and a downward drag is how you get back up it. Claiming that gesture
+   *   would make the page feel like it was fighting you, for a refresh you
+   *   never asked for.
+   *
+   *   **Only downward, and abandoned the moment it turns horizontal.** The rows
+   *   below have their own horizontal gesture, and a pull-to-refresh that ate
+   *   the start of a swipe would make confirming a transaction unreliable in
+   *   exactly the place you do it most.
+   *
+   * `passive: true` throughout — this never calls `preventDefault`, because at
+   * `scrollY === 0` there is nothing above to scroll to and the browser's own
+   * overscroll is the visual feedback we are decorating rather than replacing.
+   */
+  function installPullToRefresh() {
+    var node = document.getElementById('pull');
+    var startY = 0;
+    var startX = 0;
+    var pulling = false;
+    var distance = 0;
+
+    var show = function (amount, text) {
+      node.hidden = false;
+      node.textContent = text;
+      node.style.transform = 'translateY(' + (amount - 56) + 'px)';
+      node.style.opacity = Math.min(1, amount / PULL_THRESHOLD);
+    };
+
+    var hide = function () {
+      node.hidden = true;
+      node.style.transform = '';
+      node.style.opacity = '';
+      pulling = false;
+      distance = 0;
+    };
+
+    document.addEventListener('touchstart', function (event) {
+      if (event.touches.length !== 1) return hide();
+      if (window.scrollY > 0) return;
+      if (state.refreshing) return;
+
+      startY = event.touches[0].clientY;
+      startX = event.touches[0].clientX;
+      pulling = true;
+      distance = 0;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (event) {
+      if (!pulling) return;
+
+      var moveY = event.touches[0].clientY - startY;
+      var moveX = event.touches[0].clientX - startX;
+
+      // Upward, sideways, or scrolled away from the top: not this gesture.
+      if (moveY <= 0 || Math.abs(moveX) > Math.abs(moveY) || window.scrollY > 0) {
+        return hide();
+      }
+
+      // Damped past the threshold rather than clamped, so it keeps responding
+      // to your finger without the indicator sliding down the whole screen.
+      distance = moveY < PULL_THRESHOLD
+        ? moveY
+        : PULL_THRESHOLD + Math.min(PULL_MAX - PULL_THRESHOLD, (moveY - PULL_THRESHOLD) * 0.4);
+
+      show(distance, distance >= PULL_THRESHOLD ? 'Release to refresh' : 'Pull to refresh');
+    }, { passive: true });
+
+    document.addEventListener('touchend', function () {
+      if (!pulling) return;
+
+      var fired = distance >= PULL_THRESHOLD;
+      if (!fired) return hide();
+
+      show(PULL_THRESHOLD, 'Refreshing\u{2026}');
+      state.refreshing = true;
+
+      // Everything, not just the dashboard: a pull is the gesture for "this is
+      // stale", and refreshing only the screen behind the indicator would leave
+      // the other two exactly as wrong as they were.
+      invalidate();
+      loadDashboard();
+      refreshCurrentScreen();
+
+      // Nothing here returns a promise the gesture can wait on — `loadDashboard`
+      // renders when it lands — so the indicator is dismissed on a timer rather
+      // than pretending to know. Long enough to be legible, short enough not to
+      // sit there after the screen has already redrawn beneath it.
+      setTimeout(function () {
+        state.refreshing = false;
+        hide();
+      }, 900);
+    }, { passive: true });
+
+    document.addEventListener('touchcancel', hide, { passive: true });
+  }
+
   // -------------------------------------------------------------------------
   // Loading and drawing
   // -------------------------------------------------------------------------
 
+  /**
+   * Everything the client holds is now a claim about the past.
+   *
+   * Clearing `state.cache` alone was the bug, and it looked like it worked.
+   * That object holds analytics payloads and nothing else, keyed by filter
+   * signature — but `go()` only re-enters a loader when `state.data.analytics`
+   * is null or `state.records.loaded` is false, and neither was touched. So
+   * the cleared entry was never consulted, because the code that would have
+   * read it was never reached. A confirmation moved the number on the server,
+   * the server was right, and the phone went on drawing the number it already
+   * had until the tab was killed and reloaded.
+   *
+   * This *marks* rather than fetches. The screen you are looking at is the
+   * caller's problem — see `reloadAfterWrite` — and the other two are picked
+   * up by `go()` the next time you visit them, which costs nothing until then.
+   */
   function invalidate() {
     state.cache = {};
+    state.data.analytics = null;
+    state.records.loaded = false;
+  }
+
+  /**
+   * What to re-read after the app has written something.
+   *
+   * The dashboard always, because every write moves a number on it and it is
+   * the screen you land back on. Beyond that this deliberately **does not**
+   * refetch Records, even though Records is now marked stale: `loadRecords`
+   * starts again from offset zero, so someone who had paged four hundred rows
+   * deep to find one transaction would be thrown back to the first hundred by
+   * the act of confirming it. The local row was already patched optimistically
+   * and that patch is correct; the stale mark is what makes the next filter
+   * change or tab switch fetch the truth.
+   *
+   * `refreshCurrentScreen` covers the one case where the screen in front of
+   * you is genuinely wrong rather than merely old — Charts, whose totals just
+   * changed and which holds no per-row state to lose.
+   */
+  function reloadAfterWrite() {
+    invalidate();
+    loadDashboard();
+    if (state.screen === 'analytics') loadAnalytics();
   }
 
   function currentFilters(which) {
@@ -1581,12 +2907,13 @@
     // spinner only shows on an empty list, so leaving them there meant a filter
     // change repainted the old answer with no sign anything was happening.
     // `loadMoreRecords` is the one that must keep them: it appends.
-    state.records = { rows: [], offset: 0, hasMore: false, total: 0,
+    state.records = { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
       loading: true, loaded: false };
     render();
 
     call('appRecords', currentFilters('records'), 0).then(function (result) {
-      state.records = { rows: result.rows, offset: result.rows.length,
+      state.records = { rows: result.rows, pending: result.pending || [],
+        offset: result.rows.length,
         hasMore: result.hasMore, total: result.total, loading: false, loaded: true };
       render();
     }).catch(fail);
@@ -1725,14 +3052,13 @@
       'Switch accounts and reload.'));
   };
 
-  function applyOpen(result, inlined) {
+  function applyOpen(result) {
     state.currency = result.currency;
     state.lists.accounts = result.lists.accounts;
     state.lists.cashAccounts = result.lists.cashAccounts;
+    state.lists.assetAccounts = result.lists.assetAccounts || [];
     state.data.open = result;
     state.data.generatedAt = result.generatedAt;
-    state.timing.open = inlined ? 0 : Date.now() - state.timing.startedAt;
-    state.timing.inlined = !!inlined;
     render();
   }
 
@@ -1764,12 +3090,12 @@
 
   var inline = inlinedBoot();
   if (inline) {
-    applyOpen(inline.open, true);
+    applyOpen(inline.open);
   } else {
-    call('appOpen').then(function (result) { applyOpen(result, false); }).catch(fatal);
+    call('appOpen').then(applyOpen).catch(fatal);
   }
 
-  function applyOverview(result, inlined) {
+  function applyOverview(result) {
     state.lists.labels = result.lists.labels;
     state.lists.categories = result.lists.categories;
     state.lists.periods = result.lists.periods;
@@ -1787,20 +3113,23 @@
       state.filters.records = result.screens.filters.records;
 
       state.records.rows = result.screens.records.rows;
+      state.records.pending = result.screens.records.pending || [];
       state.records.offset = result.screens.records.rows.length;
       state.records.hasMore = result.screens.records.hasMore;
       state.records.total = result.screens.records.total;
       state.records.loaded = true;
     }
 
-    state.timing.overview = inlined ? 0 : Date.now() - state.timing.startedAt;
-    state.timing.overviewInlined = !!inlined;
     render();
   }
 
   // The lower half is always fetched. It was briefly inlined too — see
   // `appInlineBoot_`, which has the measurement that took it back out.
-  call('appOverview').then(function (r) { applyOverview(r, false); }).catch(fatal);
+  call('appOverview').then(applyOverview).catch(fatal);
+
+  // Bound once to the document, so it survives every `render()` — which wipes
+  // `#screens` wholesale and would take any listener attached inside it.
+  installPullToRefresh();
 
 })();
 </script>

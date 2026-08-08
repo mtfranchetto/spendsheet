@@ -170,6 +170,77 @@ describe('resolving a window', () => {
     expect(key(ctx.resolveWindow_({ kind: 'month', year: 2026, month: 13 }, at(2026, 8, 6))))
       .toEqual(['2026-08-01', '2026-08-31']);
   });
+
+  /*
+    The week runs Monday to today, which is the ISO week and the one this book
+    is kept in. `getDay()` counts from Sunday, so every off-by-one here lands on
+    a different day of the week — which is why all seven are checked rather than
+    a representative one. Sunday is the case a naive subtraction gets wrong, and
+    it gets it wrong by six days.
+  */
+  it('starts the week on Monday, every day of the week', () => {
+    // 2026-08-03 is a Monday; the 9th is the Sunday that ends that week.
+    [[3, '2026-08-03'], [4, '2026-08-03'], [5, '2026-08-03'], [6, '2026-08-03'],
+     [7, '2026-08-03'], [8, '2026-08-03'], [9, '2026-08-03']].forEach(([d, monday]) => {
+      const w = ctx.resolveWindow_({ kind: 'week' }, at(2026, 8, d));
+      expect(key(w), 'day ' + d).toEqual([monday, '2026-08-0' + d]);
+    });
+  });
+
+  it('runs a week back into the previous month, and the previous year', () => {
+    // 2026-01-01 is a Thursday, so its week starts in December.
+    expect(key(ctx.resolveWindow_({ kind: 'week' }, at(2026, 1, 1))))
+      .toEqual(['2025-12-29', '2026-01-01']);
+  });
+
+  it('ends year-to-date today, where a named year runs to December', () => {
+    // The distinction the two kinds exist for: `year` includes months that have
+    // not happened, which is harmless in a sum and a lie in a label.
+    expect(key(ctx.resolveWindow_({ kind: 'ytd' }, at(2026, 8, 6))))
+      .toEqual(['2026-01-01', '2026-08-06']);
+    expect(key(ctx.resolveWindow_({ kind: 'year', year: 2026 }, at(2026, 8, 6))))
+      .toEqual(['2026-01-01', '2026-12-31']);
+  });
+
+  it('makes year-to-date a single day on 1 January', () => {
+    expect(key(ctx.resolveWindow_({ kind: 'ytd' }, at(2026, 1, 1))))
+      .toEqual(['2026-01-01', '2026-01-01']);
+  });
+});
+
+describe('filtering by account', () => {
+  const row = (name) => ({ account_name: name });
+
+  it('takes a single name, which is what the sheet-side callers pass', () => {
+    // `netWorthNow_` and `balanceSeries_` pass filter objects straight through.
+    // A signature that quietly stopped accepting a string would surface a long
+    // way from here, as an empty net worth chart.
+    expect(ctx.matchesAccount_(row('Revolut'), { account: 'Revolut' })).toBe(true);
+    expect(ctx.matchesAccount_(row('Wallet'), { account: 'Revolut' })).toBe(false);
+  });
+
+  it('takes a list, which is what the chips send', () => {
+    expect(ctx.matchesAccount_(row('Wallet'), { account: ['Revolut', 'Wallet'] })).toBe(true);
+    expect(ctx.matchesAccount_(row('Degiro'), { account: ['Revolut', 'Wallet'] })).toBe(false);
+  });
+
+  it('treats an empty list as everything, not as nothing', () => {
+    // Turning the last chip off. The honest reading is "stop filtering"; the
+    // alternative is a screen that goes blank and reads as broken.
+    expect(ctx.matchesAccount_(row('Revolut'), { account: [] })).toBe(true);
+  });
+
+  it('passes everything for All, in either shape, or for no filter at all', () => {
+    expect(ctx.matchesAccount_(row('Revolut'), { account: 'All' })).toBe(true);
+    expect(ctx.matchesAccount_(row('Revolut'), { account: ['All'] })).toBe(true);
+    expect(ctx.matchesAccount_(row('Revolut'), {})).toBe(true);
+    expect(ctx.matchesAccount_(row('Revolut'), null)).toBe(true);
+  });
+
+  it('matches a row with no account name only when nothing is being asked', () => {
+    expect(ctx.matchesAccount_(row(''), { account: ['Revolut'] })).toBe(false);
+    expect(ctx.matchesAccount_(row(''), {})).toBe(true);
+  });
 });
 
 describe('filtering', () => {
@@ -534,6 +605,82 @@ describe('a query against a real book', () => {
     const second = c.webAppRecords_(july, ctx.QUERY_PAGE_SIZE);
     expect(second.rows).toHaveLength(20);
     expect(second.hasMore).toBe(false);
+  });
+
+  /*
+    Pending holds. The tab has always existed and nothing outside the sync ever
+    read it, so these are the first assertions about what it means to the app.
+
+    The shape is the load-bearing part: a separate list, never merged into
+    `rows`. `total`, `offset` and `hasMore` are arithmetic over the ledger, and
+    a row that is not in the ledger appearing among them makes the count
+    disagree with the list and the second page skip whatever the first
+    displaced.
+  */
+  const hold = (over = {}) => Object.assign({
+    uid: 'p-1', account_id: 'acc-1', account_name: 'Revolut',
+    booking_date: new Date(2026, 6, 22), amount: -18.4, currency: 'EUR',
+    description: 'HOTEL BOOKING', source: 'enablebanking'
+  }, over);
+
+  const withHolds = (rows, holds) => {
+    const c = bookWith(rows);
+    const sheet = c.__spreadsheet.getSheetByName('pending');
+    c.appendRows_(sheet, 1, holds.map((h) => c.toRow_(c.PENDING_COLUMNS, h)));
+    return c;
+  };
+
+  it('sends holds beside the rows, never among them', () => {
+    const c = withHolds([tx({ booking_date: new Date(2026, 6, 10) })],
+      [hold(), hold({ uid: 'p-2', description: 'PETROL STATION' })]);
+
+    const page = c.webAppRecords_(july, 0);
+    expect(page.rows).toHaveLength(1);
+    expect(page.total).toBe(1);
+    expect(page.pending.map((p) => p.description))
+      .toEqual(['HOTEL BOOKING', 'PETROL STATION']);
+    expect(page.pending.every((p) => p.pending === true)).toBe(true);
+  });
+
+  it('sends holds only with the first page', () => {
+    // They are drawn once at the top; "load more" appending them again is the
+    // obvious bug and the cheapest one to prevent.
+    const rows = [];
+    for (let i = 0; i < 120; i++) rows.push(tx({ booking_date: new Date(2026, 6, 1 + (i % 28)) }));
+    const c = withHolds(rows, [hold()]);
+
+    expect(c.webAppRecords_(july, 0).pending).toHaveLength(1);
+    expect(c.webAppRecords_(july, ctx.QUERY_PAGE_SIZE).pending).toEqual([]);
+  });
+
+  it('filters holds by account, along with everything else', () => {
+    const c = withHolds([tx()], [
+      hold({ account_name: 'Revolut' }),
+      hold({ uid: 'p-2', account_name: 'Wallet', description: 'CASH HOLD' })
+    ]);
+
+    expect(c.webAppRecords_({ ...july, account: ['Wallet'] }, 0)
+      .pending.map((p) => p.description)).toEqual(['CASH HOLD']);
+  });
+
+  it('does not window holds out on a date the bank has not finalised', () => {
+    // A pending authorisation's date moves on the way to being booked. Filtering
+    // it against the chosen window would hide exactly the rows this shows.
+    const c = withHolds([tx()], [hold({ booking_date: new Date(2026, 0, 4) })]);
+
+    expect(c.webAppRecords_(july, 0).pending).toHaveLength(1);
+  });
+
+  it('searches holds on the two text fields the tab actually has', () => {
+    // No category and no labels on `pending` — it carries A–O only.
+    const c = withHolds([tx()], [hold()]);
+
+    expect(c.webAppRecords_({ ...july, search: 'hotel' }, 0).pending).toHaveLength(1);
+    expect(c.webAppRecords_({ ...july, search: 'groceries' }, 0).pending).toHaveLength(0);
+  });
+
+  it('answers with no holds when the tab has none', () => {
+    expect(bookWith([tx()]).webAppRecords_(july, 0).pending).toEqual([]);
   });
 
   it('lists a transfer, because the ledger is not a spending report', () => {

@@ -180,6 +180,27 @@ describe('accountBalanceFormula', () => {
     expect(f).toContain(`transactions!$${eur}$2:$${eur}`);
     expect(f).not.toContain('transactions!$G$2:$G');
   });
+
+  it('derives an asset balance from its transactions too, not from the typed cell alone', () => {
+    // What gives an asset a *history*. `balanceSeries_` walks transactions
+    // backwards from today, so a value that only ever changed by being
+    // overwritten was invisible to it: the curve was flat, and then the whole
+    // line moved on the day the number was retyped.
+    const manual = ctx.colOf(ctx.ACCOUNT_COLUMNS, 'balance_manual');
+    const asset = f.slice(f.indexOf('"asset"'));
+
+    expect(asset).toContain(`$${manual}$2:$${manual}`);
+    expect(asset.slice(0, asset.indexOf('"cash"'))).toContain('SUMIF(transactions!');
+  });
+
+  it('guards both derived kinds against a blank starting cell', () => {
+    // `N(x)` does not vectorise reliably inside ARRAYFORMULA, so a blank
+    // opening cell would poison the addition with #VALUE! down the column.
+    ['opening_balance', 'balance_manual'].forEach((name) => {
+      const col = ctx.colOf(ctx.ACCOUNT_COLUMNS, name);
+      expect(f, name).toContain(`IF($${col}$2:$${col}="",0,$${col}$2:$${col})`);
+    });
+  });
 });
 
 describe('seed data', () => {

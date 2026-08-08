@@ -51,6 +51,9 @@ var WEBAPP_OWNER_KEY = 'owner_email';
 /** `_config` key holding the Viewer deployment's URL, for the menu to open. */
 var WEBAPP_URL_KEY = 'viewer_url';
 
+/** `_config` key holding a public HTTPS image for the browser tab. See `webAppHtml_`. */
+var WEBAPP_FAVICON_KEY = 'favicon_url';
+
 /**
  * Only an Apps Script `/exec` URL, and nothing else.
  *
@@ -161,12 +164,39 @@ function webAppPage_(params) {
  * `'undefined'`, and two of those compare equal.
  */
 function webAppAccessDecision_(owner, active) {
-  if (!isEmailish_(owner)) return { ok: false, reason: 'no owner address configured' };
+  var allowed = allowedEmails_(owner);
+  if (!allowed.length) return { ok: false, reason: 'no owner address configured' };
   if (!isEmailish_(active)) return { ok: false, reason: 'no active user' };
-  if (normalizeEmail_(owner) !== normalizeEmail_(active)) {
+  if (allowed.indexOf(normalizeEmail_(active)) === -1) {
     return { ok: false, reason: 'not the owner' };
   }
   return { ok: true, reason: null };
+}
+
+/**
+ * `owner_email` as the set of addresses allowed through Door 2.
+ *
+ * One cell, comma-separated, because two people share a household ledger and
+ * the alternative — giving a second person the first person's Google password —
+ * is worse in every direction. `setup()` still seeds exactly one address; a
+ * second is something you add deliberately.
+ *
+ * **Every entry must survive `isEmailish_`, and anything that does not is
+ * dropped rather than tolerated.** That matters more here than it looks: a
+ * trailing comma yields an empty entry, and an empty entry that reached the
+ * comparison would match the empty string `activeUserEmail_` returns when
+ * Google declines to tell us who is calling — which is precisely the case the
+ * gate exists to refuse. Dropping it keeps "we do not know who this is" and
+ * "this cell has a typo in it" from resolving to *open the door*.
+ *
+ * Normalised on the way in so the comparison is a set membership test rather
+ * than a loop with a case rule inside it.
+ */
+function allowedEmails_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .split(',')
+    .map(normalizeEmail_)
+    .filter(isEmailish_);
 }
 
 /**
@@ -289,8 +319,36 @@ function webAppHtml_() {
   var template = HtmlService.createTemplateFromFile('page');
   template.boot = functionExists_('appInlineBoot_') ? appInlineBoot_() : 'null';
 
-  return template.evaluate()
+  var page = template.evaluate()
     .setTitle('Spendsheet')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+
+  /*
+    The tab icon, and the three things that make it not a one-liner.
+
+    **A `<link rel="icon">` in `page.html` would do nothing.** The page renders
+    inside Apps Script's sandboxed `userCodeAppPanel` iframe, so a link element
+    there names an icon for the iframe's document, which no browser puts on a
+    tab. `setFaviconUrl` is the only route that reaches the wrapper.
+
+    **The URL has to be publicly fetchable over HTTPS.** Google fetches it
+    server-side; a `data:` URI is rejected outright, and a Drive file left
+    private answers with a sign-in *page* rather than an image — which fails by
+    simply never appearing, with nothing logged anywhere. `docs/SHARING.md`'s
+    sibling note in `docs/MOBILE.md` has the sharing step.
+
+    **It does not fix the home-screen icon**, only the browser tab. iOS reads
+    `apple-touch-icon` from the *top-level* document, and for an `/exec` URL
+    that document is Google's, not ours.
+
+    Read from `_config` rather than frozen here so the icon is yours to change
+    without a deploy, and skipped entirely when blank — an empty cell is a
+    question nobody has answered, and passing '' would be asking Google to
+    fetch the current page as an image.
+  */
+  var favicon = String(readConfig_()[WEBAPP_FAVICON_KEY] || '').trim();
+  if (favicon.indexOf('https://') === 0) page.setFaviconUrl(favicon);
+
+  return page;
 }

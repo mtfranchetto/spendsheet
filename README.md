@@ -115,8 +115,8 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 | [`docs/IMPORT.md`](docs/IMPORT.md) | Importing history from BudgetBakers or any CSV |
 | [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, labels and transfers |
 | [`docs/REPORTS.md`](docs/REPORTS.md) | The reports tab and the review queue |
-| [`docs/MOBILE.md`](docs/MOBILE.md) | The mobile web app: the two deployments, the owner gate, the ledger cache |
-| [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: the two deployments, the owner gate, home-screen setup |
+| [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: the two deployments, the owner gate, the ledger cache, home-screen setup |
+| [`docs/SHARING.md`](docs/SHARING.md) | Giving a second person the sheet and the app, and what each one exposes |
 | [`docs/SHEET-SCHEMA.md`](docs/SHEET-SCHEMA.md) | Every tab and column, and whether you or the code owns it |
 | [`docs/MONITORING.md`](docs/MONITORING.md) | What breaks, how you find out, how you fix it |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Per-bank findings — which fields each bank actually populates |
