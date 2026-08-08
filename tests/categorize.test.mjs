@@ -645,8 +645,56 @@ describe('the label report', () => {
 
   it('anchors at row 2 and spills, so a label added later is covered', () => {
     [count, total].forEach((formula) => {
-      expect(formula.startsWith('=ARRAYFORMULA(')).toBe(true);
+      expect(formula.startsWith('=MAP(')).toBe(true);
       expect(formula).toContain('$A$2:$A');
+    });
+  });
+
+  /*
+    The bug this pair shipped with, and the only half of it a string test can
+    reach.
+
+    **`SUMIFS` does not vectorise over its criteria; `COUNTIFS` does.** Written
+    as twins inside one `ARRAYFORMULA`, the counts came out per label and every
+    total showed the first label's figure repeated down the column — a label
+    with 0 transactions reporting -€7,480.20 beside a correct 0.
+
+    A test cannot evaluate either formula, so it cannot catch the wrong answer.
+    What it can hold is the construct: one label at a time, so there is nothing
+    to broadcast and nothing for a function to decide about. Same lesson as
+    `INDEX` inside an `ARRAYFORMULA`, one function along.
+  */
+  it('hands each formula one label at a time, rather than the column', () => {
+    [count, total].forEach((formula) => {
+      expect(formula).toContain('LAMBDA(label,');
+      expect(formula).toContain('"*"&label&"*"');
+      // The column reference appears once, as what MAP walks — never as a
+      // criterion, which is where the broadcast decision used to be made.
+      expect(formula.match(/\$A\$2:\$A/g)).toHaveLength(1);
+    });
+  });
+
+  it('builds both from one scaffold, so neither can rely on the other working', () => {
+    // The bodies differ — `SUMIFS` takes a sum range and `COUNTIFS` does not —
+    // and everything around them is shared by construction. That is the part
+    // worth pinning: the first version had two hand-written wrappers that
+    // looked identical and behaved differently, which is a thing you cannot see
+    // by reading them side by side.
+    const scaffold = ctx.labelStatFormula_('AGG(x)');
+    const [head, tail] = scaffold.split('AGG(x)');
+
+    [count, total].forEach((formula) => {
+      expect(formula.startsWith(head)).toBe(true);
+      expect(formula.endsWith(tail)).toBe(true);
+    });
+  });
+
+  it('short-circuits on a blank, which is what keeps MAP cheap', () => {
+    // MAP runs the lambda for every row of an open column. The blank test has
+    // to come first or a thousand empty rows each cost a scan of the ledger.
+    [count, total].forEach((formula) => {
+      expect(formula.indexOf('IF(LEN(label)=0'))
+        .toBeLessThan(formula.search(/COUNTIFS|SUMIFS/));
     });
   });
 

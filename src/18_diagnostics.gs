@@ -124,20 +124,17 @@ function smokeTest_(suite, name, fn) {
  * hand one to a spreadsheet. This is the only check in the project that can.
  */
 function formulaAnchors_() {
-  var anchors = [
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'amount_base') + '2'],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'category') + '2'],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'subcategory') + '2'],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'type') + '2'],
-    [TABS.TRANSACTIONS, colOf(TX_COLUMNS, 'in_reports') + '2'],
-    [TABS.ACCOUNTS, colOf(ACCOUNT_COLUMNS, 'balance') + '2'],
-    [TABS.STATUS, colOf(STATUS_COLUMNS, 'days_left') + '2'],
-    [TABS.STATUS, colOf(STATUS_COLUMNS, 'state') + '2'],
-    [TABS.LABELS, colOf(LABEL_COLUMNS, 'transactions') + '2'],
-    [TABS.LABELS, colOf(LABEL_COLUMNS, 'total_eur') + '2'],
-    // Every category dropdown in the book points at this one column.
-    [TABS.CATEGORIES, colOf(CATEGORY_COLUMNS, 'parent_list') + '2']
-  ];
+  // Derived from the list `applyFormulas_` writes, not kept beside it.
+  //
+  // This was a hand-maintained copy and it was wrong in the way a hand-
+  // maintained copy is always eventually wrong: it named
+  // `categories.parent_list` and none of the three columns next to it, so a
+  // book where all four had stopped spilling was reported as having one broken
+  // anchor — and the other three went on being blank while a check called
+  // "every formula anchor evaluates" passed on them by never looking.
+  var anchors = schemaFormulas_().map(function (entry) {
+    return [entry.tab, colOf(entry.columns, entry.column) + '2'];
+  });
 
   if (typeof REPORT !== 'undefined') {
     ['E' + REPORT.WINDOW_ROW, 'E' + (REPORT.WINDOW_ROW + 1),

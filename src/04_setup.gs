@@ -455,35 +455,79 @@ function buildImportStaged_(ss, sep, report) {
 // Formulas
 // ---------------------------------------------------------------------------
 
+/**
+ * Every schema `ARRAYFORMULA` in the book, as data rather than as code.
+ *
+ * It was a list of `setFormula_` calls, which is the natural way to write it
+ * and reads perfectly — and it meant the *diagnostic* that checks these
+ * anchors kept a second list, by hand, in another file. Those two lists
+ * disagreed, quietly, in the direction that matters: `formulaAnchors_` knew
+ * about `categories.parent_list` and not about the three columns beside it, so
+ * a book where all four had stopped spilling reported one.
+ *
+ * **A check that knows about some of the things it claims to check is worse
+ * than no check**, because a pass from it is read as an all-clear. So there is
+ * one list, here, and both readers derive from it: `applyFormulas_` writes
+ * them and `formulaAnchors_` checks them. Adding a formula adds its anchor.
+ *
+ * The formula is a function rather than a string because two of them take an
+ * argument, and because building thirty formulas to write one is waste on a
+ * run that only wants the addresses.
+ *
+ * Not here: `category_auto`, `subcategory_auto` and `category_source`, which
+ * the cascade in `14_categorize.gs` writes as values — tier 3 needs
+ * `normalizeMerchant()` and tier 5 needs priority-ordered substring matching,
+ * neither expressible in an ARRAYFORMULA. Nor `_import_staged`, which is
+ * scratch and is rebuilt whole on every run.
+ */
+function schemaFormulas_() {
+  return [
+    { tab: TABS.TRANSACTIONS, columns: TX_COLUMNS, column: 'amount_base',
+      formula: function () { return amountEurFormula(); } },
+    { tab: TABS.TRANSACTIONS, columns: TX_COLUMNS, column: 'category',
+      formula: function () { return categoryFormula(); } },
+    { tab: TABS.TRANSACTIONS, columns: TX_COLUMNS, column: 'subcategory',
+      formula: function () { return subcategoryFormula(); } },
+    { tab: TABS.TRANSACTIONS, columns: TX_COLUMNS, column: 'type',
+      formula: function () { return typeFormula(); } },
+    { tab: TABS.TRANSACTIONS, columns: TX_COLUMNS, column: 'in_reports',
+      formula: function () { return inReportsFormula(); } },
+
+    { tab: TABS.LABELS, columns: LABEL_COLUMNS, column: 'transactions',
+      formula: function () { return labelCountFormula(); } },
+    { tab: TABS.LABELS, columns: LABEL_COLUMNS, column: 'total_eur',
+      formula: function () { return labelTotalFormula(); } },
+
+    { tab: TABS.ACCOUNTS, columns: ACCOUNT_COLUMNS, column: 'balance',
+      formula: function () { return accountBalanceFormula(); } },
+
+    { tab: TABS.STATUS, columns: STATUS_COLUMNS, column: 'days_left',
+      formula: function () { return consentDaysLeftFormula(); } },
+    { tab: TABS.STATUS, columns: STATUS_COLUMNS, column: 'state',
+      formula: function () { return consentStateFormula(); } },
+
+    // All four, and the reason this list exists. `parent_list` is the range
+    // every category dropdown points at, `child_list` is every subcategory
+    // dropdown, and `child_key`/`child_parent` are the pair `categoryFormula`
+    // crosses to turn a subcategory override into its parent — so a blocked
+    // anchor here is silent everywhere and load-bearing in three places.
+    { tab: TABS.CATEGORIES, columns: CATEGORY_COLUMNS, column: 'parent_list',
+      formula: function () { return categoryParentsFormula(); } },
+    { tab: TABS.CATEGORIES, columns: CATEGORY_COLUMNS, column: 'child_list',
+      formula: function () { return categoryChildrenFormula(); } },
+    { tab: TABS.CATEGORIES, columns: CATEGORY_COLUMNS, column: 'child_key',
+      formula: function () { return categoryColumnCopyFormula_('subcategory'); } },
+    { tab: TABS.CATEGORIES, columns: CATEGORY_COLUMNS, column: 'child_parent',
+      formula: function () { return categoryColumnCopyFormula_('category'); } }
+  ];
+}
+
 function applyFormulas_(ss, sep) {
-  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
-  setFormula_(tx, colOf(TX_COLUMNS, 'amount_base'), amountEurFormula(), sep);
-  setFormula_(tx, colOf(TX_COLUMNS, 'category'), categoryFormula(), sep);
-  setFormula_(tx, colOf(TX_COLUMNS, 'subcategory'), subcategoryFormula(), sep);
-  setFormula_(tx, colOf(TX_COLUMNS, 'type'), typeFormula(), sep);
-  setFormula_(tx, colOf(TX_COLUMNS, 'in_reports'), inReportsFormula(), sep);
-
-  // category_auto / subcategory_auto / category_source are written by the
-  // categorisation cascade in 14_categorize.gs, not by a formula: tier 3 needs
-  // normalizeMerchant() and tier 5 needs priority-ordered substring matching,
-  // neither of which is expressible in ARRAYFORMULA.
-
-  var labels = ss.getSheetByName(TABS.LABELS);
-  setFormula_(labels, colOf(LABEL_COLUMNS, 'transactions'), labelCountFormula(), sep);
-  setFormula_(labels, colOf(LABEL_COLUMNS, 'total_eur'), labelTotalFormula(), sep);
-
-  var acc = ss.getSheetByName(TABS.ACCOUNTS);
-  setFormula_(acc, colOf(ACCOUNT_COLUMNS, 'balance'), accountBalanceFormula(), sep);
-
-  var status = ss.getSheetByName(TABS.STATUS);
-  setFormula_(status, colOf(STATUS_COLUMNS, 'days_left'), consentDaysLeftFormula(), sep);
-  setFormula_(status, colOf(STATUS_COLUMNS, 'state'), consentStateFormula(), sep);
-
-  var cats = ss.getSheetByName(TABS.CATEGORIES);
-  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'parent_list'), categoryParentsFormula(), sep);
-  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_list'), categoryChildrenFormula(), sep);
-  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_key'), categoryColumnCopyFormula_('subcategory'), sep);
-  setFormula_(cats, colOf(CATEGORY_COLUMNS, 'child_parent'), categoryColumnCopyFormula_('category'), sep);
+  schemaFormulas_().forEach(function (entry) {
+    var sheet = ss.getSheetByName(entry.tab);
+    if (!sheet) return;
+    setFormula_(sheet, colOf(entry.columns, entry.column), entry.formula(), sep);
+  });
 }
 
 /**
@@ -822,19 +866,50 @@ function inReportsFormula() {
  * point of the column: one place decides what spending is, and everything that
  * reports on money asks it.
  */
+/**
+ * `MAP` and not `ARRAYFORMULA`, and that is a bug fix rather than a style.
+ *
+ * **`SUMIFS` does not vectorise over its criteria and `COUNTIFS` does.** Both
+ * were written the same way, as twins, inside one `ARRAYFORMULA` — and the
+ * counts came out right while every total on the tab showed the *same number*:
+ * the first label's, repeated down the column. `home-renovation` reported 0
+ * transactions and -€7,480.20, which is the shape of this bug stated outright
+ * and still took a person noticing to find, because a plausible number next to
+ * a correct count reads as working.
+ *
+ * Exactly the `INDEX`/`VLOOKUP` lesson one function along, and the same reason:
+ * a spreadsheet function decides for itself whether an array argument means
+ * "do this many times" or "take the first". You cannot tell by looking, the
+ * harness cannot tell at all — it hands a formula to nothing — and being wrong
+ * is silent.
+ *
+ * `MAP` removes the question instead of answering it. Each call gets one label
+ * as a scalar, which is the only arrangement where `SUMIFS` has nothing to
+ * broadcast, and both formulas are built the same way so neither can drift into
+ * relying on the other's luck.
+ *
+ * **The blank test stays first, and now it is also what makes this cheap.**
+ * `MAP` over an open column runs the lambda for every row on the sheet; `IF`
+ * short-circuits, so a thousand empty rows cost a `LEN` each and only the
+ * handful of real labels reach a `SUMIFS`.
+ */
+function labelStatFormula_(body) {
+  var column = colOf(LABEL_COLUMNS, 'label');
+  return '=MAP($' + column + '$2:$' + column + ',LAMBDA(label,' +
+    'IF(LEN(label)=0,"",' + body + ')))';
+}
+
 function labelCountFormula() {
-  var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
-  return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
-    'COUNTIFS(' + txLabelsRange_() + ',"*"&' + label + '&"*",' +
-    txColumnRange_('in_reports') + ',TRUE)))';
+  return labelStatFormula_(
+    'COUNTIFS(' + txLabelsRange_() + ',"*"&label&"*",' +
+    txColumnRange_('in_reports') + ',TRUE)');
 }
 
 function labelTotalFormula() {
-  var label = '$' + colOf(LABEL_COLUMNS, 'label') + '$2:$' + colOf(LABEL_COLUMNS, 'label');
-  return '=ARRAYFORMULA(IF(LEN(' + label + ')=0,"",' +
+  return labelStatFormula_(
     'SUMIFS(' + txColumnRange_('amount_base') + ',' +
-    txLabelsRange_() + ',"*"&' + label + '&"*",' +
-    txColumnRange_('in_reports') + ',TRUE)))';
+    txLabelsRange_() + ',"*"&label&"*",' +
+    txColumnRange_('in_reports') + ',TRUE)');
 }
 
 /**

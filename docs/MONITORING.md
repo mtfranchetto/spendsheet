@@ -92,7 +92,9 @@ and 11 of the 998 cells below E2 are not empty (0 of them formulas).
 
 If the column is *yours* — a note column you added — the answer is the opposite: move it to the right of the schema. The two never share a column, and appending on the right is always safe.
 
-`categories` column E is the one that costs the most when it goes: `parent_list` is the range every category dropdown on the book points at, so a `#REF!` there empties the pickers on `categories`, `transactions` and `cash_entry` at once. The phone app is unaffected, because it reads the stored columns rather than the derived list — which is a good way to be sure this is what you are looking at.
+**`categories` E–H are the expensive ones and they fail together**, because whatever wrote one column's spill back as values wrote all four. `parent_list` (E) is the range every category dropdown points at; `child_list` (F) is every subcategory dropdown; `child_key` and `child_parent` (G, H) are the pair the `category` formula crosses to turn a subcategory override into its parent. Clear **E3:H** in one selection rather than one column at a time.
+
+The phone app keeps working throughout, because it reads the stored columns A–D rather than the derived list — which is a good way to be sure this is what you are looking at rather than something worse.
 
 ## The honest limit
 

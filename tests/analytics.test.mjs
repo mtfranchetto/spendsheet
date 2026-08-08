@@ -320,13 +320,62 @@ describe('what the sheet tells you to do', () => {
 });
 
 describe('the smoke tests for this phase', () => {
-  it('lists an anchor on every tab it wrote a formula to', () => {
+  /*
+    This used to check **tabs** and that is exactly how it missed.
+
+    `categories` was in the anchor list, so the assertion passed — while three
+    of that tab's four anchors were unwatched. A book where all four had
+    stopped spilling reported one broken formula and an otherwise clean bill of
+    health, and `child_list`, `child_key` and `child_parent` went on being
+    blank: every subcategory dropdown in the book, and the pair
+    `categoryFormula` crosses to turn a subcategory override into its parent.
+
+    So the invariant is now per **cell**, and stated from the sheet rather than
+    from either list: after a real `setup()`, any formula sitting in row 2 is
+    one this project put there, and every one of them must be watched. That
+    holds whoever adds the next formula and wherever they add it.
+  */
+  it('watches every row-2 formula setup wrote, not merely every tab', () => {
     const c = load();
     c.setup();
-    const tabs = new Set(c.formulaAnchors_().map(([tab]) => tab));
 
-    ['transactions', 'accounts', '_status', 'labels', 'reports']
-      .forEach((tab) => expect([...tabs]).toContain(tab));
+    const watched = new Set(c.formulaAnchors_().map(([tab, a1]) => tab + '!' + a1));
+
+    // Three tabs where a row-2 formula is not a schema anchor:
+    //
+    //   `_import_staged` is scratch, rebuilt whole on every run, so nothing can
+    //   sit under one of its formulas long enough to matter.
+    //   `reports` is a layout rather than a schema and lists its own by address.
+    //   `cash_entry` A2 is a lone `=TODAY()` on the row you type into — a
+    //   convenience default, not an array, and overwriting it is the point.
+    const SKIP = new Set(['_import_staged', 'reports', 'cash_entry']);
+
+    const found = [];
+    c.__spreadsheet.getSheets().forEach((sheet) => {
+      const name = sheet.getName();
+      if (SKIP.has(name)) return;
+
+      const width = sheet.getLastColumn();
+      if (width < 1) return;
+
+      sheet.getRange(2, 1, 1, width).getFormulas()[0].forEach((formula, i) => {
+        if (formula) found.push(name + '!' + c.columnLetter(i + 1) + '2');
+      });
+    });
+
+    expect(found.length).toBeGreaterThan(10);
+    found.forEach((cell) => expect(watched, cell + ' has no anchor').toContain(cell));
+  });
+
+  it('watches all four of the categories anchors, which is the one that bit', () => {
+    const c = load();
+    const anchors = c.formulaAnchors_()
+      .filter(([tab]) => tab === 'categories')
+      .map(([, a1]) => a1);
+
+    ['parent_list', 'child_list', 'child_key', 'child_parent'].forEach((column) => {
+      expect(anchors, column).toContain(c.colOf(c.CATEGORY_COLUMNS, column) + '2');
+    });
   });
 
   it('reports an anchor whose formula was deleted, not just one that errored', () => {

@@ -1047,49 +1047,6 @@
       return;
     }
 
-    // Holds go directly under the balances they qualify, and above the month
-    // they are not in.
-    //
-    // Position is the whole argument. A hold is the reason a balance is not the
-    // number you expected, so it belongs where you are still looking at the
-    // balance — put it lower and you have already read the tiles, believed
-    // them, and moved on. It stops short of saying the tiles are wrong by that
-    // amount, because that depends on which balance your bank reports:
-    // `BALANCE_PREFERENCE` prefers `CLBD`, which is booked and excludes holds,
-    // but falls through to `ITAV`, which is available and already nets them.
-    // The claim that is true whatever the bank sent is the one made below —
-    // these rows are not in `transactions`, so nothing computed from the ledger
-    // counts them.
-    var held = data.pending || [];
-    if (held.length) {
-      add(root, el('h2', null, 'Pending'));
-      var holds = el('div', 'card');
-      var group = el('div', 'daygroup');
-      held.slice(0, 5).forEach(function (record) { add(group, pendingRow(record)); });
-      add(holds, group);
-
-      if (held.length > 5) {
-        var allHolds = el('button', 'link', 'See all ' + held.length + ' in Records');
-        allHolds.type = 'button';
-        allHolds.addEventListener('click', function () {
-          // Clearing the account filter is what makes the label true. Records
-          // scopes its own holds to whatever it is filtered to — correctly, and
-          // it is why the dashboard carries its own copy — so landing there
-          // still filtered to one account would show fewer than the number the
-          // button just promised.
-          state.filters.records.account = 'All';
-          state.filters.records.unconfirmedOnly = false;
-          go('records');
-          loadRecords();
-        });
-        add(holds, allHolds);
-      }
-
-      add(holds, el('p', 'pending-note',
-        'Not settled yet, so no total below counts them'));
-      add(root, holds);
-    }
-
     // The one block on this screen that had no heading, which made it read as
     // a caption on the accounts above rather than as the month. It pairs with
     // "This month, by category" below it — same window, one as three numbers
@@ -1140,6 +1097,53 @@
       add(review, more);
     }
     add(root, review);
+
+    // Holds last, under the queue, and this is the second position they have
+    // had.
+    //
+    // They were directly under the balances, on the argument that a hold is the
+    // reason a balance is not the number you expected. True, and it put five
+    // rows you cannot act on between the tiles and the month — the owner asked
+    // for them lower, and the ordering that argument produces is better anyway:
+    // everything above is a number or something to do, and this is neither.
+    // It is the footnote it reads as.
+    //
+    // What it deliberately does not claim is that the tiles are wrong by this
+    // amount, because that depends on which balance your bank reports:
+    // `BALANCE_PREFERENCE` prefers `CLBD`, which is booked and excludes holds,
+    // but falls through to `ITAV`, which is available and already nets them.
+    // The claim that holds whatever the bank sent is the one made below — these
+    // rows are not in `transactions`, so nothing computed from the ledger
+    // counts them.
+    var held = data.pending || [];
+    if (held.length) {
+      add(root, el('h2', null, 'Pending'));
+      var holds = el('div', 'card');
+      var group = el('div', 'daygroup');
+      held.slice(0, 5).forEach(function (record) { add(group, pendingRow(record)); });
+      add(holds, group);
+
+      if (held.length > 5) {
+        var allHolds = el('button', 'link', 'See all ' + held.length + ' in Records');
+        allHolds.type = 'button';
+        allHolds.addEventListener('click', function () {
+          // Clearing the account filter is what makes the label true. Records
+          // scopes its own holds to whatever it is filtered to — correctly, and
+          // it is why the dashboard carries its own copy — so landing there
+          // still filtered to one account would show fewer than the number the
+          // button just promised.
+          state.filters.records.account = 'All';
+          state.filters.records.unconfirmedOnly = false;
+          go('records');
+          loadRecords();
+        });
+        add(holds, allHolds);
+      }
+
+      add(holds, el('p', 'pending-note',
+        'Not settled yet, so no total on this screen counts them'));
+      add(root, holds);
+    }
 
     // The two round-trip timings that used to print here are gone. They were
     // instrumentation for the sessions that took the open from ~7s to ~6s, and
