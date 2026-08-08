@@ -25,11 +25,11 @@ So the rules here are:
 
 - **Automatic daily sync** from your banks — transactions, balances, pending
 - **Automatic categorisation** that learns from your own corrections, no ML and no API key
-- **Transfer detection** so moving €500 between your own accounts doesn't count as both income and expense
+- **Transfer detection** so moving €500 between your own accounts doesn't count as both income and expense — including the withdrawal only your bank reports, where naming the wallet writes the leg it never will
 - **Labels** — `kids`, `travel`, `home-renovation` — the cross-cutting axis a category can't express, since a holiday is flights *and* restaurants *and* a pharmacy
 - **A `confirmed` flag**, so a category you agreed with and a category the machine guessed are never rendered as the same fact
-- **Net worth** including things PSD2 can't see — cash, brokerage, property
-- **A mobile web app** — net worth, account tiles, this month against the same point last month, spending by category with a drill-down, and a review queue you can clear with your thumb. Served from the same script, gated to your account alone
+- **Net worth** including things PSD2 can't see — cash, brokerage, property — and a truthful curve for them, because updating an asset's value records the change rather than overwriting the number
+- **A mobile web app** — net worth, account tiles, pending holds, this month against the same point last month, spending by category, and a review queue you clear by swiping. Categorise, label, mark a transfer or make a rule from a long-press; served from the same script, gated to your account alone
 - **A reports tab you can slice** — period, account, category, label, type and group-by as dropdowns driving one `QUERY`, with the generated query in a cell you can read
 - **A review queue you can clear from your phone** — tick or recategorise a row and it writes straight back, because custom menus don't exist in the Sheets mobile app and checkboxes do
 - **Monitoring that actually tells you when it breaks**, including the silent failure where a sync runs fine and returns nothing
@@ -114,7 +114,7 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 | [`docs/IMPORT.md`](docs/IMPORT.md) | Importing history from BudgetBakers or any CSV |
 | [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, labels and transfers |
 | [`docs/REPORTS.md`](docs/REPORTS.md) | The reports tab and the review queue |
-| [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: the two deployments, the owner gate, the ledger cache, home-screen setup |
+| [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: what every screen and gesture does, the two deployments, the owner gate, the ledger cache |
 | [`docs/SHARING.md`](docs/SHARING.md) | Giving a second person the sheet and the app, and what each one exposes |
 | [`docs/SHEET-SCHEMA.md`](docs/SHEET-SCHEMA.md) | Every tab and column, and whether you or the code owns it |
 | [`docs/MONITORING.md`](docs/MONITORING.md) | What breaks, how you find out, how you fix it |

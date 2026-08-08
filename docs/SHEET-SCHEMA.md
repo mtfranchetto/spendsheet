@@ -177,9 +177,11 @@ Three balance columns rather than one is what lets you **add a manual account by
 
 ```
 kind = bank  → balance_api
-kind = cash  → opening_balance + SUMIF(transactions, this account, amount_base)
-kind = asset → balance_manual
+kind = cash  → opening_balance  + SUMIF(transactions, this account, amount_base)
+kind = asset → balance_manual   + SUMIF(transactions, this account, amount_base)
 ```
+
+**The asset row used to be `balance_manual` alone, and the `SUMIF` is what gave an asset a history.** Overwriting one cell tells you what a brokerage account is worth now and nothing about what it was worth in March — and net worth over time is reconstructed by walking transactions backwards from today, so an account that only ever changed by having its cell rewritten was a flat line that jumped the whole curve on the day you retyped it. The phone's **Update balance** screen therefore records the *difference* as one `Transfer › Valuation change` row instead. The number already in `balance_manual` becomes the opening value and adjustments accumulate on top, so nothing changed value the day this shipped and no migration was needed.
 
 ### An account you no longer use
 
@@ -206,8 +208,8 @@ Conflating these is why manual accounts usually feel awkward in a spreadsheet.
 |---|---|---|
 | Example | wallet, house cash | brokerage, car, property |
 | You log | every transaction | nothing |
-| You update | nothing | one value, occasionally |
-| `balance` is | derived from its transactions | typed by you |
+| You update | nothing | the total, occasionally — the app records the change |
+| `balance` is | derived from its transactions | your opening figure, plus its revaluations |
 | In spending reports | yes | no |
 | In net worth | yes | yes |
 

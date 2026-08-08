@@ -75,6 +75,20 @@ A row you have already categorised as something that isn't a transfer is skipped
 
 > **When you pivot, filter `type ≠ transfer`.** Otherwise the transfer net appears in your grand total and looks like a discrepancy against whatever you're reconciling with.
 
+### The leg that has no bank to report it
+
+Pairing needs two rows, and one common move only ever produces one. A cash withdrawal is a single debit: the bank takes €100 and nothing credits your wallet, because a wallet has no API. The row is correctly a transfer and correctly out of your spending — and net worth is €100 short of the money in your pocket.
+
+Marking a transfer **from the phone** asks where it went, and writes the missing leg. Only `cash` and `asset` destinations are offered: a bank reports its own credit on its next sync and tier 2 pairs the two without help, so a leg written by hand would be a second copy of money that moved once, with no provider id for dedup to match it on. *"Somewhere outside Spendsheet"* is the honest answer for another bank or a person — still not spending, so still a transfer, and net worth does fall because it has left.
+
+The leg carries `source = transfer-leg` and its uid is derived from the row it came from, so recording the same move twice writes nothing the second time.
+
+### Three subcategories under Transfer, and one of them is not a transfer at all
+
+`Between accounts` and `Cash withdrawal` are what they say. **`Valuation change`** is the odd one: it is how an asset account's value moves, written by the phone's **Update balance** screen as the difference between what the account said and what you tell it it says now.
+
+It sits under `Transfer` because of `kind`. A €1,500 market gain must not appear in *income this month* — it is not money you received — while still moving net worth, and `kind: transfer` is exactly the switch that does both. See [`docs/MOBILE.md`](MOBILE.md#asset-accounts-without-a-balance-history-tab).
+
 ---
 
 ## Labels

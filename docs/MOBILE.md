@@ -4,16 +4,66 @@ The Google Sheets mobile app is where this book actually gets used, and it is ba
 
 So the Sheet stays the datastore and gains a second front door: a web app served from the same Apps Script project. Same data, same tabs, same everything — it is a different way in, not a different system. Nothing is duplicated and nothing new is stored.
 
-It gives you four screens:
+It gives you three screens and two forms:
 
 | | |
 |---|---|
-| **Home** | net worth, this month against the same point last month, spending by category, every account with the one sentence that says whether it is working, and the review backlog |
+| **Home** | net worth, the account tiles, holds the bank has not settled, this month against the same point last month, spending by category, and the review backlog |
 | **Records** | the whole ledger, filtered, searched and paged |
 | **Charts** | a date range plus account and label filters, over cashflow, net worth and category breakdowns |
-| **Add** | a cash transaction, landing straight away |
+| **Add cash** | a cash transaction, landing straight away. Reached from a cash tile |
+| **Update balance** | an asset account's new total. Reached from an asset tile |
 
-Confirming a guess and correcting a category both write straight back to `transactions`, into the same three columns the `review` tab writes to and no others.
+Everything it writes goes to `transactions` and `cash_entry`, into the same columns the `review` tab and the cash form already write to and no others. There is no storage of its own anywhere in it.
+
+---
+
+## Using it
+
+### Tapping a transaction
+
+The sheet that opens asks **what the row is** before it asks what to file it under, because those are different questions and only the first changes the second.
+
+**Expense · Income · Transfer** across the top is `type` — the column every total in this book turns on. The body follows it: two of the three want a category, the third wants a destination.
+
+- **Category** is one dropdown, parents as group headings and subcategories under them. Picking a subcategory is enough; its parent comes with it. Each group also offers *"Anything in Shopping"* for when you know the parent and not the child.
+- **The list is filtered to the tab you are on.** A salary should not be offered sixty expense categories. Switching tab is how you reach the other half — which is also the answer for a refund, which arrives positive and belongs under the expense it reverses.
+- **Labels** are chips, pre-ticked to what the row already has. They are chips and not a text box on purpose: filtering matches whole labels, so a typed `business-travel` would silently never match `travel`.
+- **Long-press** a row instead, and you get a rule built from it — pattern, match type, category, priority, all editable before saving. The pattern comes from the server's own merchant normaliser, not a second copy of it in the page.
+- **Swipe right** to confirm without opening anything.
+- **Tap outside** the sheet to close it, or the ✕ in its corner.
+
+### Transfers, and the money that used to go missing
+
+Marking a row a transfer asks **where the money went**, and that question is not a nicety.
+
+A cash withdrawal is one row: the bank debits €100, and nothing credits your wallet, because a wallet has no API. Marking it a transfer correctly keeps it out of spending — and left net worth €100 short of the money in your pocket. Naming the destination writes the leg the bank never will.
+
+**Only cash and asset accounts are offered**, and *"Somewhere outside Spendsheet"*. A bank destination reports its own credit on its next sync and transfer detection pairs the two on its own; a leg written here would be a second copy of money that moved once. Money to another bank or to a person has nothing here to credit — it is still not spending, so it is still a transfer, and net worth does fall, correctly, because it has left.
+
+### Asset accounts, without a balance-history tab
+
+An asset — a brokerage account, a car, a property — is a wallet you top up by stating the total rather than the change. You read 14,500 off a broker's app; you did not compute the €1,500 it moved by.
+
+**Update balance** on an asset tile asks for the new total, pre-filled with the current one, and records the **difference** as one `Transfer › Valuation change` transaction dated today. That is what gives an asset a history: net worth over time is reconstructed by walking transactions backwards, so a value that only ever changed by being overwritten was invisible to it — the curve was flat, and then on the day you retyped the number the whole line moved.
+
+`kind: transfer` on that category is what keeps a €1,500 market gain out of *income this month* while still moving net worth. A gain is not income.
+
+### Filters
+
+**Period** — this week, this month, last month, year to date, last 12 months, one entry per year that has data, or a custom range. The year list is built from your ledger, so it holds no year you have nothing in.
+
+**Account** — chips, and more than one at a time. **Label** and **search** on Records.
+
+### Pending
+
+Holds the bank has authorised and not settled appear at the top of Records and on Home, dashed and not tappable. They carry no category, no `amount_base` and no confirmed state, because a pending authorisation has no stable identity — the amount, the date and the description all move on the way to being booked.
+
+They are **in no total anywhere**, which is why they say so on screen. Whether the balances above them already account for them is your bank's choice: the preferred balance type is closing-booked, which excludes holds, but not every bank reports one.
+
+### Pull to refresh
+
+Drag down on Home. This is the one gesture that drops the ledger cache explicitly, which makes it the answer for an edit nothing else saw — typing straight into the `transactions` tab from a laptop, say.
 
 ## Two deployments, and getting them the wrong way round is the mistake that matters
 
@@ -114,3 +164,15 @@ Between them, and with the health check no longer scanning 4,615 rows to count t
 **It cannot refill the `review` tab or rebuild charts.** Both need a run. The app does not need the `review` tab — it reads the backlog live off `transactions`, so confirming a row on the phone removes it from the list immediately rather than at the next sync.
 
 **It has no settings.** `_config` is the settings, and it is a tab.
+
+**A new rule does not recategorise what is already there.** The cascade runs on sync, and a confirmed row keeps whatever it was confirmed with. The toast says so, because otherwise the feature reads as broken: you make a rule for a merchant you have seen ten times, go back, and all ten are exactly as they were.
+
+**It cannot remove the Google banner** — *"This application was created by another user, not by Google"*. That bar is drawn by Google's own wrapper document at `script.google.com`; the page runs in a sandboxed iframe on a different origin, so no code in this project can reach it and `HtmlService` exposes no option to suppress it. Two dead ends worth naming so nobody rediscovers them: a proxy that strips it also breaks `google.script.run`, which talks to its parent by `postMessage` and needs the Google origin, and *Add to Home Screen* removes Safari's chrome, not Google's.
+
+## Why the page holds so little
+
+`src/page.html` is the one file the test harness cannot load: the tests run the `.gs` files through `node:vm`, and nothing inside an HTML file reaches that.
+
+That is not a gap being worked around — it is the reason the aggregation lives on the server at all. Every number the app shows is computed in `21_query.gs`, which is covered; what is left in the page is drawing. The two things a *file* test can still prove about it are that no string is ever assigned as markup, and that every server function the page calls by name exists.
+
+The seam is enforced rather than remembered. Everything in `21_query.gs` (reads) and `22_actions.gs` (writes) ends in `_`, which Apps Script treats as private to `google.script.run`; `23_api.gs` is the entire surface a browser can reach, and every entry point in it checks the owner. A test reads that file and derives the list, so an entry point added later without the guard fails CI rather than shipping.

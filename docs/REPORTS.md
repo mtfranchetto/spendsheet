@@ -99,7 +99,9 @@ There is no balance history tab, and there deliberately never will be:
 balance_at(d) = balance_now − Σ amount_base booked after d
 ```
 
-A snapshot tab would have been a tab, a sync change and a backfill job, to produce something strictly worse — it would start accumulating from the day it shipped, where this reaches back as far as the transactions do. It would not have helped where derivation is weakest either: an `asset` balance only moves when you type a new number into `balance_manual`, so a daily snapshot of one flat-lines exactly as this does.
+A snapshot tab would have been a tab, a sync change and a backfill job, to produce something strictly worse — it would start accumulating from the day it shipped, where this reaches back as far as the transactions do.
+
+**The one case where derivation used to be weak has been closed at the source.** An `asset` balance moved only when you typed a new number into `balance_manual`, so its line was flat and then jumped the whole curve on the day you retyped it — and a daily snapshot of one would have flat-lined in exactly the same way, so it was never the fix. The phone's **Update balance** screen now records the *difference* as one `Transfer › Valuation change` transaction, which is a dated row like any other and which this formula therefore sees. A brokerage account revalued four times a year has four steps in the right places instead of one at the end.
 
 Three things it costs, worth knowing before the line looks wrong:
 
