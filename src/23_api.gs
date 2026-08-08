@@ -322,6 +322,20 @@ function appDashboardData_() {
     // card payment has not shown up yet. A dashboard that redrew every number
     // except the one you pulled for would be the worst version of this.
     pending: overview.pending,
+
+    // The lists that are made *from* `accounts`, because one of them carries a
+    // balance and that balance has just moved.
+    //
+    // `appOpenData_` has always computed these and this call has always thrown
+    // them away, on the reasoning that names change monthly and a refresh is
+    // about numbers. True of `accounts` and `cashAccounts`, which are names.
+    // False of `assetAccounts`, which carries the balance the "Update balance"
+    // screen shows as *currently* and now pre-fills the input with — so after
+    // recording 3,000 → 4,500 the tile said 4,500 and the screen you had just
+    // come from went on offering 3,000, which reads as the write having done
+    // nothing. A list of names and a list of values are different things and
+    // only one of them was safe to hold on to.
+    lists: open.lists,
     currency: open.currency
   };
 }

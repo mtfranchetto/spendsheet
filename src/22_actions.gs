@@ -279,6 +279,19 @@ function webAppLinkTransfer_(request) {
     transferSubcategoryFor_(target, source));
   writeCell_(tx, row, TX_COLUMNS, 'confirmed', true);
 
+  // Labels, when the page sent them — which it does whenever the sheet was
+  // open, because the chips always show the row's current set.
+  //
+  // The alternative was two round trips, `appConfirm` for the labels and then
+  // this. At ~2,700ms of fixed overhead each that is a five-second wait to save
+  // the word `travel`, and the sheet closes between them so a failure on the
+  // second has nothing left to report against. The same rule as
+  // `applyReviewDecisions_`: present-and-empty is a deliberate clear, absent is
+  // untouched — which is why this tests the key rather than the value.
+  if (want.labels !== undefined && want.labels !== null) {
+    writeCell_(tx, row, TX_COLUMNS, 'labels', normalizeLabels_(want.labels));
+  }
+
   if (!target) {
     return { linked: false, outside: true,
       message: 'Marked as a transfer out of your tracked accounts.' };
@@ -540,7 +553,7 @@ function webAppAddCash_(entry) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CASH_ENTRY);
   if (!sheet) throw new Error('No "' + TABS.CASH_ENTRY + '" tab. Run Spendsheet → Setup sheet first.');
 
-  var problem = cashEntryProblem_(request);
+  var problem = cashEntryProblem_(request) || unknownCategoryProblem_(request);
   if (problem) throw new Error(problem);
 
   // Placed by `lastFilledRow_` rather than through `appendRows_`, because that
@@ -610,6 +623,50 @@ function cashEntryProblem_(entry) {
 
   if (request.date !== undefined && request.date !== '' && !toDate_(request.date)) {
     return 'That date cannot be read.';
+  }
+  return null;
+}
+
+/**
+ * A category this book does not have, named in words rather than accepted.
+ *
+ * Separate from `cashEntryProblem_` so that one can stay pure — it is the test
+ * the drain applies and it reads no tab. This one has to read `categories`,
+ * which is exactly why it is worth having: an entry naming a category that is
+ * not there does not fail. It is stored, `category_override` holds a name the
+ * `type` VLOOKUP cannot resolve, `type` comes back blank, and the row lands in
+ * the ledger belonging to nothing.
+ *
+ * **The case this was written for is a book that has not had `setup()` run
+ * since the category was added.** Every category the page offers comes from
+ * `categoryChoices_` and is real by construction — except the two the "Update
+ * balance" screen names as literals, because it is *stating* what an asset
+ * revaluation is rather than asking. A book missing `Transfer › Valuation
+ * change` therefore took the write, reported success, and moved no balance:
+ * the transaction was there, and nothing that adds up an account counted it.
+ * Silent, plausible, and indistinguishable from the app being broken.
+ *
+ * A blank category is not unknown. `renderAdd` offers "Uncategorised" and the
+ * cascade is what fills those in — refusing them would be refusing the default.
+ */
+function unknownCategoryProblem_(entry) {
+  var request = entry || {};
+  var category = String(request.category || '').trim();
+  var subcategory = String(request.subcategory || '').trim();
+  if (!category && !subcategory) return null;
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
+  if (!sheet) return null;
+
+  var rows = readRecords_(sheet, CATEGORY_COLUMNS);
+  var missing = function (want, column) {
+    if (!want) return false;
+    return !rows.some(function (row) { return String(row[column] || '').trim() === want; });
+  };
+
+  if (missing(category, 'category') || missing(subcategory, 'subcategory')) {
+    return 'This book has no "' + (missing(category, 'category') ? category : subcategory) +
+      '" category. Run Spendsheet → Setup sheet to add the ones that ship with it.';
   }
   return null;
 }

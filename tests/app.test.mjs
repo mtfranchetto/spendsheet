@@ -662,6 +662,48 @@ describe('asset accounts, which behave like wallets', () => {
     expect(written.subcategory_override).toBe('Valuation change');
   });
 
+  /*
+    A category the book does not have is a refusal, not a stored row.
+
+    This is the one write in the app that names a category as a *literal* rather
+    than picking it off a list the server sent — it is stating what a
+    revaluation is rather than asking. So it is also the only one that can name
+    something absent, and the way to be absent is ordinary: `setup()` adds seed
+    rows and a book set up before `Valuation change` existed does not have it
+    until setup runs again.
+
+    Without this check the entry stored fine and did nothing. `category_override`
+    held a name `typeFormula`'s VLOOKUP could not resolve, `type` came back
+    blank, and the transaction sat in the ledger belonging to nothing — so the
+    balance did not move, and the app reported success. That is the report the
+    owner sent: "I changed the value and the dashboard did not update."
+  */
+  it('refuses a category this book does not have, by name', () => {
+    const c = withAsset();
+
+    expect(() => c.appAddCash({ amount: 1500, account: 'Degiro',
+      category: 'Transfer', subcategory: 'Revaluation' }))
+      .toThrow(/Revaluation/);
+    expect(() => c.appAddCash({ amount: 1500, account: 'Degiro',
+      category: 'Reconciliation' })).toThrow(/Reconciliation/);
+  });
+
+  it('names Setup in the refusal, because that is the fix', () => {
+    // The realistic way to reach it is a book set up before the category was
+    // seeded. "Unknown category" would be true and would not tell you that
+    // running Setup adds it.
+    const c = withAsset();
+    expect(() => c.appAddCash({ amount: 1, account: 'Degiro', category: 'Nope' }))
+      .toThrow(/Setup sheet/);
+  });
+
+  it('still takes an entry with no category at all', () => {
+    // "Uncategorised" is what `renderAdd` offers and what the cascade exists to
+    // fill in. Refusing a blank would be refusing the default.
+    const c = withAsset();
+    expect(() => c.appAddCash({ amount: 3.5, account: 'Degiro' })).not.toThrow();
+  });
+
   it('keeps a gain positive and a loss negative', () => {
     // The sign rule this leans on rather than reimplementing: a positive delta
     // with a `transfer` category stays positive, and a typed minus always wins.
@@ -1388,15 +1430,41 @@ describe('the page and the server agree', () => {
   */
   it('splits the dashboard between the two calls without overlap or a gap', () => {
     const c = book([tx()]);
-    const open = Object.keys(c.appOpen()).filter((k) => k !== 'lists');
-    const overview = Object.keys(c.appOverview()).filter((k) => k !== 'lists');
+
+    // `lists` is the one key all three legitimately carry, which is why it is
+    // exempt from the overlap rule rather than an exception to it: the two
+    // halves each send the lists they are the cheap place to build, and the
+    // merge sends both because the page distributes it into one `state.lists`.
+    const shared = (result) => Object.keys(result).filter((k) => k !== 'lists');
+
+    const open = shared(c.appOpen());
+    const overview = shared(c.appOverview());
 
     open.forEach((key) => expect(overview, key).not.toContain(key));
 
-    const merged = Object.keys(c.appDashboard());
-    merged.forEach((key) => {
+    shared(c.appDashboard()).forEach((key) => {
       expect(open.concat(overview), key).toContain(key);
     });
+  });
+
+  /*
+    The refresh has to carry the lists that hold *values*, not only the ones
+    that hold names.
+
+    It used to carry none, and kept whatever `appOpen` had said at boot. That
+    was right about `accounts` and `cashAccounts`, which are names and change
+    monthly, and wrong about `assetAccounts`, which carries the balance the
+    "Update balance" screen reads. Recording 3,000 → 4,500 moved the tile and
+    left that screen offering 3,000 as *currently* — and since the field is now
+    pre-filled from it, offering it as the new value too. Indistinguishable
+    from the write having done nothing.
+  */
+  it('sends the balance-carrying lists back with a refresh', () => {
+    const merged = book([tx()]).appDashboard();
+
+    expect(merged.lists).toBeDefined();
+    expect(Object.keys(merged.lists).sort())
+      .toEqual(['accounts', 'assetAccounts', 'cashAccounts']);
   });
 
   /*
