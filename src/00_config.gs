@@ -490,8 +490,19 @@ var DEFAULT_CONFIG = [
   // deployment — neither of the two real doors. Paste the Viewer's /exec URL
   // here once and "Open the app" knows where to send you.
   ['viewer_url', '', 'The mobile app deployment URL (Deploy → Manage deployments → Viewer).'],
-  // Blank is a question, not a default — nothing is fetched until you answer it.
-  ['favicon_url', '', 'Public HTTPS image for the app’s browser tab. Must be reachable without signing in.']
+  // This project's own icon, served by GitHub off this repo — which is why it
+  // is a default rather than the question it started as. Google fetches this
+  // URL server-side and anonymously, so **it only works once the repo is
+  // public**: a private repo answers a raw URL with 404, and a favicon that
+  // fails to load reports nothing anywhere. That is the whole failure mode, and
+  // it looks identical to the setting having no effect.
+  //
+  // Point it at your own fork, or anywhere else, by editing the cell. `main` is
+  // in the path deliberately — a tag would freeze the icon, and this is
+  // decoration, so following the branch is the cheaper mistake.
+  ['favicon_url',
+    'https://raw.githubusercontent.com/mtfranchetto/spendsheet/main/docs/assets/spendsheet-icon.png',
+    'Public HTTPS image for the app’s browser tab. Must be reachable without signing in.']
 ];
 
 /**

@@ -55,6 +55,20 @@ It is a normal URL, so:
 
 It then opens without browser chrome and looks like an app. There is no service worker and no offline mode: every screen is a server round trip, because every number on it comes out of the Sheet. Typing a cash entry underground will fail and say so — the Sheets `cash_entry` tab is still the thing that works offline.
 
+### The icon
+
+`_config` has a **`favicon_url`** row, and it ships pointing at this project's icon on GitHub. It should need nothing from you.
+
+Three things about it are worth knowing, because all three fail silently:
+
+- **Google fetches that URL from its own servers, anonymously.** So it has to be publicly reachable over HTTPS, with no sign-in. A private GitHub repo answers a raw URL with a 404; a Drive file left un-shared answers with an HTML sign-in page. Neither is an image, neither reports an error anywhere, and both look exactly like the setting having no effect.
+- **It is the browser tab, not necessarily the home screen.** iOS reads `apple-touch-icon` from the *top-level* document, and for an `/exec` URL that document is Google's wrapper, not ours.
+- **A `<link rel="icon">` in `page.html` would do nothing.** The page renders inside Apps Script's sandboxed iframe, so it would be setting the icon of a document nobody sees. `HtmlOutput.setFaviconUrl` is the only lever, and `20_webapp.gs` pulls it.
+
+To use your own: put it anywhere public over HTTPS and paste the URL into the cell. Anything that is not `https://` is refused rather than passed through — a `data:` URI is rejected by Google anyway, and a cell that ends up in a served document is checked by whitelist here rather than by escaping. **Clearing the cell turns the icon off**; it does not fall back to the default.
+
+A book set up before this shipped has the row but blank, because `setup()` only ever *adds* seed rows and never rewrites one you already have. **Spendsheet → Update mappings to defaults** is what fills it — it will list the row and ask before changing anything.
+
 ## The owner gate
 
 Because both doors run the same code, the app branch checks who is asking:

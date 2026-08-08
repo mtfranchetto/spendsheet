@@ -147,10 +147,22 @@ describe('the browser tab icon', () => {
     expect(c.webAppHtml_().faviconUrl).toBe('https://example.com/icon.png');
   });
 
-  it('asks for nothing when the cell is blank', () => {
-    // A blank is a question nobody has answered, not a default. Passing '' asks
-    // Google to fetch the current page as an image.
-    expect(withFavicon().webAppHtml_().faviconUrl).toBeNull();
+  it('ships this project’s own icon as the default', () => {
+    // It stopped being a question the moment there was an answer that works for
+    // everybody, and a default is what carries it to a book already set up:
+    // `setup()` only ever *adds* seed rows, so a blank cell on an existing book
+    // is reached by "Update mappings to defaults" and nothing else.
+    const seeded = ctx.DEFAULT_CONFIG.filter((row) => row[0] === 'favicon_url');
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0][1]).toMatch(/^https:\/\/raw\.githubusercontent\.com\/.+\.png$/);
+    expect(withFavicon().webAppHtml_().faviconUrl).toBe(seeded[0][1]);
+  });
+
+  it('asks for nothing when the cell is cleared', () => {
+    // Clearing it is how you turn the icon off, so it has to mean that rather
+    // than falling back to the default. Passing '' would ask Google to fetch
+    // the current page as an image.
+    expect(withFavicon('').webAppHtml_().faviconUrl).toBeNull();
     expect(withFavicon('   ').webAppHtml_().faviconUrl).toBeNull();
   });
 
