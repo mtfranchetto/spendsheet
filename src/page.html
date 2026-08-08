@@ -1090,6 +1090,12 @@
       add(root, holds);
     }
 
+    // The one block on this screen that had no heading, which made it read as
+    // a caption on the accounts above rather than as the month. It pairs with
+    // "This month, by category" below it — same window, one as three numbers
+    // and one as a breakdown — and saying so is most of what the heading buys.
+    add(root, el('h2', null, 'This month'));
+
     var month = el('div', 'card');
     add(month, add(el('div', 'row'),
       el('span', null, 'Spent since ' + shortDate(data.month.from)),
