@@ -542,7 +542,11 @@ describe('marking a transfer, with somewhere for the money to go', () => {
       c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'a-1', name: 'Degiro', kind: 'asset',
         currency: 'EUR', balance_manual: 5000, active: true, include_in_net_worth: true }),
       c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'b-2', name: 'Fineco', kind: 'bank',
-        currency: 'EUR', balance_api: 900, active: true, include_in_net_worth: true })
+        currency: 'EUR', balance_api: 900, active: true, include_in_net_worth: true }),
+      // The account `tx()` puts its rows on. It had no `accounts` row, which
+      // was invisible while a bank could never be a destination and is not now.
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'acc-1', name: 'Revolut', kind: 'bank',
+        currency: 'EUR', balance_api: 2400, active: true, include_in_net_worth: true })
     ]);
     return c;
   };
@@ -607,13 +611,91 @@ describe('marking a transfer, with somewhere for the money to go', () => {
     expect(ledger(c)).toHaveLength(after);
   });
 
-  it('refuses a bank destination, because the bank reports its own side', () => {
-    // The failure this prevents is doubled money: our leg plus the bank's, with
-    // no `entry_reference` on ours for dedup to match on.
+  /*
+    A bank destination is paired, never written, and that is the whole of the
+    difference between the two halves of this feature.
+
+    The original rule was to refuse a bank outright — right about the leg, and
+    wrong about the list, because it left no way to say "this €500 went to my
+    other current account", which is the commonest internal move there is. What
+    must not change is the reason it was refused: our leg plus the bank's own
+    is doubled money, and `08_dedup.gs` cannot catch it, because ours has no
+    `entry_reference` and a uid unlike the bank's by construction.
+
+    So the row count is the assertion in all three of these.
+  */
+  const between = () => withAccounts([
+    tx({ uid: 'out-1', amount: -500, amount_base: -500, description: 'BONIFICO A FINECO',
+      booking_date: new Date(2026, 6, 15) }),
+    tx({ uid: 'in-1', account_id: 'b-2', account_name: 'Fineco',
+      amount: 500, amount_base: 500, description: 'BONIFICO DA REVOLUT',
+      booking_date: new Date(2026, 6, 16), category: 'Income', subcategory: 'Salary',
+      type: 'income', in_reports: true })
+  ]);
+
+  it('pairs a bank destination with the row it already reported', () => {
+    const c = between();
+    const before = ledger(c).length;
+
+    const result = c.appMarkTransfer({ uid: 'out-1', destination: 'Fineco' });
+
+    expect(result.paired).toBe(true);
+    expect(ledger(c)).toHaveLength(before);          // nothing was written
+
+    const rows = ledger(c);
+    const out = rows.find((r) => String(r.uid) === 'out-1');
+    const inn = rows.find((r) => String(r.uid) === 'in-1');
+
+    expect(out.transfer_group).toBe('tr:out-1');
+    expect(inn.transfer_group).toBe('tr:out-1');
+    expect(inn.category_override).toBe('Transfer');
+  });
+
+  it('takes the group id detectTransfers_ would have derived', () => {
+    // Both must agree or the nightly run renames the pair, and `transfer_group`
+    // stops being something anything can remember. It is keyed on the *debit*.
+    const c = between();
+    c.appMarkTransfer({ uid: 'in-1', destination: 'Revolut' });
+
+    expect(ledger(c).find((r) => String(r.uid) === 'in-1').transfer_group)
+      .toBe('tr:out-1');
+  });
+
+  it('marks the row anyway when the other side has not synced yet', () => {
+    // The ordinary case on the day you move the money. `transferEligible_`
+    // leaves a transfer-categorised row pairable, so the nightly run finishes.
     const c = withdrawal();
-    expect(() => c.appMarkTransfer({ uid: 'w-tx', destination: 'Fineco' }))
-      .toThrow(/not an account this can move money into/);
+    const result = c.appMarkTransfer({ uid: 'w-tx', destination: 'Fineco' });
+
+    expect(result.paired).toBeUndefined();
+    expect(result.message).toMatch(/syncs/);
     expect(ledger(c)).toHaveLength(1);
+    expect(ledger(c)[0].category_override).toBe('Transfer');
+  });
+
+  it('does not steal a row that is already half of another pair', () => {
+    // `transfer_group` is the only record that the other pairing happened, so
+    // taking its counter-leg would unmake it silently.
+    const c = between();
+    const tx2 = c.__spreadsheet.getSheetByName('transactions');
+    c.writeCell_(tx2, c.uidIndex_(tx2)['in-1'], c.TX_COLUMNS, 'transfer_group', 'tr:other');
+
+    expect(c.appMarkTransfer({ uid: 'out-1', destination: 'Fineco' }).paired)
+      .toBeUndefined();
+    expect(ledger(c).find((r) => String(r.uid) === 'in-1').transfer_group)
+      .toBe('tr:other');
+  });
+
+  it('will not pair across a gap wider than transfer_window_days', () => {
+    const c = withAccounts([
+      tx({ uid: 'out-1', amount: -500, amount_base: -500,
+        booking_date: new Date(2026, 6, 1) }),
+      tx({ uid: 'in-1', account_id: 'b-2', account_name: 'Fineco',
+        amount: 500, amount_base: 500, booking_date: new Date(2026, 6, 20) })
+    ]);
+
+    expect(c.appMarkTransfer({ uid: 'out-1', destination: 'Fineco' }).paired)
+      .toBeUndefined();
   });
 
   it('refuses the account the transaction is already on', () => {

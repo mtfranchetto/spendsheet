@@ -2145,16 +2145,29 @@
    * correctly — and left net worth €100 short of the money in your pocket.
    * Picking the wallet writes the leg the bank never will.
    *
-   * Only cash and asset accounts are offered. A bank destination reports its
-   * own credit on its next sync and `detectTransfers_` pairs the two without
-   * help; a leg written here would be a second copy of money that only moved
-   * once. The server refuses one too — this list is what stops you being able
-   * to ask.
+   * **Every account is offered, and the server does two different things with
+   * them.** The list started as cash and asset only, on the reasoning below
+   * about not inventing a leg a bank will report itself — which is right about
+   * the leg and was wrong about the list, because it left no way to say "this
+   * €500 went to my other current account". That is the commonest internal
+   * move there is.
+   *
+   *   **Cash or asset** — the leg is *written*, because nothing will ever
+   *   report it. A wallet has no API.
+   *
+   *   **A bank** — the leg is *found*. The credit is already in the book, or
+   *   arrives with the next sync, so the two rows are paired and both marked.
+   *   Writing one would be a second copy of money that moved once, which is
+   *   the original argument and is still true.
+   *
+   * The page does not need to know which is which, and deliberately does not
+   * ask: `appMarkTransfer` decides from the account's `kind` and says in the
+   * toast what it did.
    *
    * **"Somewhere else" is a real answer and not a cop-out.** Money to another
-   * bank, or to a person, has no account here to credit. It is still not
-   * spending, so it is still a transfer — and net worth does fall, correctly,
-   * because net worth is the sum of what you track and it has left.
+   * bank you do not sync, or to a person, has no account here to credit. It is
+   * still not spending, so it is still a transfer — and net worth does fall,
+   * correctly, because net worth is the sum of what you track and it has left.
    */
   function destinationPicker(record) {
     var box = el('div');
@@ -2167,23 +2180,21 @@
     elsewhere.value = TRANSFER_OUTSIDE;
     add(where, elsewhere);
 
-    (state.lists.cashAccounts || []).forEach(function (name) {
+    // `lists.accounts` is every active account, which is what the server now
+    // accepts. Its own is left out for the obvious reason, and because the
+    // server refuses it anyway.
+    (state.lists.accounts || []).forEach(function (name) {
       if (name === record.account) return;
       var option = el('option', null, name);
       option.value = name;
       add(where, option);
     });
-    (state.lists.assetAccounts || []).forEach(function (entry) {
-      if (entry.name === record.account) return;
-      var option = el('option', null, entry.name);
-      option.value = entry.name;
-      add(where, option);
-    });
     add(box, where);
 
     add(box, el('div', 'muted',
-      'A destination gets the other half of the transfer, so both balances ' +
-      'move. Only cash and asset accounts — a bank reports its own side.'));
+      'Both balances move. A cash or asset account gets the other half ' +
+      'written for it; a bank is matched against the row it already reported, ' +
+      'or as soon as it does.'));
 
     return { node: box, value: function () { return where.value; } };
   }

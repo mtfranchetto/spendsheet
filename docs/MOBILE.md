@@ -40,7 +40,17 @@ Marking a row a transfer asks **where the money went**, and that question is not
 
 A cash withdrawal is one row: the bank debits €100, and nothing credits your wallet, because a wallet has no API. Marking it a transfer correctly keeps it out of spending — and left net worth €100 short of the money in your pocket. Naming the destination writes the leg the bank never will.
 
-**Only cash and asset accounts are offered**, and *"Somewhere outside Spendsheet"*. A bank destination reports its own credit on its next sync and transfer detection pairs the two on its own; a leg written here would be a second copy of money that moved once. Money to another bank or to a person has nothing here to credit — it is still not spending, so it is still a transfer, and net worth does fall, correctly, because it has left.
+**Every account is offered**, plus *"Somewhere outside Spendsheet"* — and the destination's kind decides what actually happens, which you do not have to think about because the toast says which it did:
+
+| Destination | What it does |
+|---|---|
+| **Cash or asset** | **Writes** the other half. Nothing will ever report it — a wallet has no API |
+| **A bank you sync** | **Finds** the other half and pairs the two, marking both. Writing one would be a second copy of money that moved once, and dedup could not catch it: ours would have no bank reference and an id unlike the bank's by construction |
+| **Outside Spendsheet** | Marks this row only. Another bank you don't sync, or a person — there is nothing here to credit |
+
+If the matching row hasn't arrived yet, which is the ordinary case on the day you move the money, it marks this side and says so. The pair is made on its own once the other bank syncs — transfer detection treats an already-marked transfer as still pairable, and the app writes the same group id that detection would derive, so the two agree rather than renaming each other.
+
+Net worth falls on an *outside* transfer, correctly: it is the sum of what you track, and the money has left.
 
 ### Asset accounts, without a balance-history tab
 

@@ -302,8 +302,7 @@ function webAppLinkTransfer_(request) {
   var target = outside ? null : transferDestination_(destination);
 
   if (!outside && !target) {
-    throw new Error('"' + destination + '" is not an account this can move money into. ' +
-      'Only cash and asset accounts, because a bank reports its own side.');
+    throw new Error('"' + destination + '" is not an active account on this book.');
   }
   if (target && String(target.account_id) === String(source.account_id)) {
     throw new Error('That is the same account the transaction is already on.');
@@ -346,6 +345,54 @@ function webAppLinkTransfer_(request) {
   if (!target) {
     return { linked: false, outside: true,
       message: 'Marked as a transfer out of your tracked accounts.' };
+  }
+
+  /*
+    A bank destination is **paired, not written**, and that is the whole of the
+    difference between the two halves of this.
+
+    Moving money to your wallet, nothing will ever report the credit — a wallet
+    has no API — so the leg has to be invented. Moving it to another bank you
+    sync, the credit is already in the book or arrives with the next sync.
+    Writing one here would be a second copy of money that moved once, and
+    `08_dedup.gs` could not catch it: ours has no `entry_reference` and a uid
+    by construction unlike the bank's.
+
+    So the row is marked, and if the other side is already here both get the
+    group id. If it is not — the other bank has not synced yet, which is the
+    ordinary case on the day you move the money — this stops at marking, and
+    says so. `transferEligible_` treats a row whose override resolves to
+    `kind: transfer` as still pairable, so the nightly `detectTransfers_` will
+    finish the job on its own, and the group id below is the one it would
+    derive: `'tr:' + the debit's uid`, whichever side that is. The two agree by
+    construction rather than by luck.
+  */
+  if (String(target.kind) === ACCOUNT_KIND.BANK) {
+    // Through `configNumber_` and not off the raw cell: a cleared
+    // `transfer_window_days` reads as 0 through `Number()`, which is a window
+    // of "same day only" that looks like a setting rather than a blank.
+    var counter = findCounterLeg_(source, target,
+      configNumber_(readConfig_(), 'transfer_window_days'));
+    if (!counter) {
+      return { linked: false, pending: true, account: target.name,
+        message: 'Marked as a transfer to ' + target.name + '. Nothing on that ' +
+          'account matches it yet — the pair is made automatically once it syncs.' };
+    }
+
+    var pairId = 'tr:' + (Number(source.amount) < 0 ? uid : String(counter.uid));
+    writeCell_(tx, row, TX_COLUMNS, 'transfer_group', pairId);
+    writeCell_(tx, index[String(counter.uid)], TX_COLUMNS, 'transfer_group', pairId);
+
+    // The other side is a transfer too, or it stays in your reports as income.
+    writeCell_(tx, index[String(counter.uid)], TX_COLUMNS,
+      'category_override', TRANSFER_CATEGORY_NAME);
+    writeCell_(tx, index[String(counter.uid)], TX_COLUMNS,
+      'subcategory_override', 'Between accounts');
+    writeCell_(tx, index[String(counter.uid)], TX_COLUMNS, 'confirmed', true);
+
+    return { linked: true, paired: true, account: target.name,
+      message: 'Paired with the matching row on ' + target.name + '. Neither ' +
+        'counts as spending now.' };
   }
 
   var legUid = transferLegUid_(uid, target.account_id);
@@ -415,10 +462,64 @@ function transferDestination_(name) {
   return readRecords_(sheet, ACCOUNT_COLUMNS).filter(function (account) {
     return account.account_id &&
       isTruthyCell_(account.active) &&
-      String(account.name || '') === String(name) &&
-      (String(account.kind) === ACCOUNT_KIND.CASH ||
-       String(account.kind) === ACCOUNT_KIND.ASSET);
+      String(account.name || '') === String(name);
   })[0] || null;
+}
+
+/**
+ * The row on the other account that is the same money, or null.
+ *
+ * **A bank destination needs finding, not writing**, and that is the whole
+ * difference between the two halves of this feature. Move €500 to your wallet
+ * and nothing will ever report the credit, because a wallet has no API — so
+ * the leg has to be invented. Move €500 to another bank you sync and the
+ * credit *is already in the book*, or will be after the next sync. Inventing
+ * one there would be a second copy of money that moved once, with no provider
+ * id for `08_dedup.gs` to catch it by.
+ *
+ * So the same three tests `detectTransfers_` uses, asked about one row rather
+ * than about all of them: equal to the cent, opposite in sign, a different
+ * account, inside `transfer_window_days`. Nearest date wins, exactly as
+ * `nearestCounterLeg_` decides it — two identical transfers a week apart must
+ * not cross-pair.
+ *
+ * Not reusing `detectTransfers_` itself: that one runs over the whole ledger
+ * and decides *every* pairing, where this has already been told the answer to
+ * the hard half — which account — by a person who knows. What it must not do
+ * is disagree with it, which is why the group id below is the one a later
+ * automatic run would derive.
+ */
+function findCounterLeg_(source, target, windowDays) {
+  var tx = sheetOrThrow_(TABS.TRANSACTIONS);
+  var wanted = Math.abs(Number(source.amount)).toFixed(2);
+  var window = windowDays >= 0 ? windowDays : 4;
+
+  var best = null;
+  var bestDistance = null;
+
+  readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid')).forEach(function (row) {
+    if (String(row.uid) === String(source.uid)) return;
+    if (String(row.account_id) !== String(target.account_id)) return;
+
+    var amount = Number(row.amount);
+    if (!isFinite(amount) || amount === 0) return;
+    if (Math.abs(amount).toFixed(2) !== wanted) return;
+    if ((amount < 0) === (Number(source.amount) < 0)) return;
+
+    // Already half of some other pair. Stealing it would silently unmake that
+    // one, and `transfer_group` is the only record that it existed.
+    if (!isBlankCell_(row.transfer_group)) return;
+
+    var distance = dayDistance_(source.booking_date, row.booking_date);
+    if (distance === null || distance > window) return;
+
+    if (bestDistance === null || distance < bestDistance) {
+      best = row;
+      bestDistance = distance;
+    }
+  });
+
+  return best;
 }
 
 /**

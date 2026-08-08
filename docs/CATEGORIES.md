@@ -79,7 +79,17 @@ A row you have already categorised as something that isn't a transfer is skipped
 
 Pairing needs two rows, and one common move only ever produces one. A cash withdrawal is a single debit: the bank takes €100 and nothing credits your wallet, because a wallet has no API. The row is correctly a transfer and correctly out of your spending — and net worth is €100 short of the money in your pocket.
 
-Marking a transfer **from the phone** asks where it went, and writes the missing leg. Only `cash` and `asset` destinations are offered: a bank reports its own credit on its next sync and tier 2 pairs the two without help, so a leg written by hand would be a second copy of money that moved once, with no provider id for dedup to match it on. *"Somewhere outside Spendsheet"* is the honest answer for another bank or a person — still not spending, so still a transfer, and net worth does fall because it has left.
+Marking a transfer **from the phone** asks where it went, and what it does with the answer depends on the account's kind — which is the same distinction tier 2 makes, arrived at from the other side.
+
+**A `cash` or `asset` destination gets the leg written.** Nothing will ever report it, so there is nothing for tier 2 to pair.
+
+**A `bank` destination gets the leg *found*.** The credit is already in the book, or arrives with the next sync, so the two rows are paired and both marked — tier 2's own three tests, asked about one row rather than about all of them: equal to the cent, opposite in sign, a different account, inside `transfer_window_days`, nearest date winning. Writing a leg here would be a second copy of money that moved once, with no provider id for dedup to match it on.
+
+If nothing matches yet — the ordinary case on the day you move the money — it marks this side and says so. `transferEligible_` treats a row whose override resolves to `kind: transfer` as still pairable, so tier 2 finishes the job on the next sync, and the group id the app writes is the one tier 2 would derive (`tr:` plus the **debit's** uid, whichever side that is). The two agree by construction rather than by luck.
+
+*"Somewhere outside Spendsheet"* is the honest answer for a bank you do not sync, or a person — still not spending, so still a transfer, and net worth does fall because it has left.
+
+One row is never taken from an existing pair: a counter-leg that already carries a `transfer_group` is skipped, because that column is the only record the earlier pairing happened.
 
 The leg carries `source = transfer-leg` and its uid is derived from the row it came from, so recording the same move twice writes nothing the second time.
 
