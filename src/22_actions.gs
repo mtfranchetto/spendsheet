@@ -147,6 +147,43 @@ function applyReviewDecisions_(decisions) {
       wrote.push('labels');
     }
 
+    /*
+      The description, and **the only write here that can be refused.**
+
+      It is also the only one that touches A–O, the half of `transactions` the
+      code owns — every other cell above is an override column, which exists
+      precisely so that your opinion and the bank's can both be on the row. A
+      description has no override column, so changing it means changing the
+      stored value.
+
+      That is fine for a row nothing will ever fetch again and not fine for one
+      a bank might: without an `entry_reference`, `computeUid` hashes the
+      description, so a rewritten one can stop a future sync recognising a
+      transaction it already holds. `descriptionIsEditable_` is that rule, and
+      it is re-asked *here* rather than trusted from the page — the page decides
+      what to show, and this decides what is true. A blank is refused too: a
+      row has to say something, and "" would leave the list showing
+      `(no description)` with no way back.
+    */
+    if (decision.description !== undefined && decision.description !== null) {
+      var wanted = String(decision.description).trim();
+
+      if (!descriptionIsEditable_(readCell_(tx, row, TX_COLUMNS, 'source'))) {
+        result.skipped++;
+        result.results.push({ uid: uid, ok: false,
+          reason: 'that description came from your bank and is what identifies the row' });
+        return;
+      }
+      if (!wanted) {
+        result.skipped++;
+        result.results.push({ uid: uid, ok: false, reason: 'a description cannot be empty' });
+        return;
+      }
+
+      writeCell_(tx, row, TX_COLUMNS, 'description', wanted);
+      wrote.push('description');
+    }
+
     if (!wrote.length) {
       result.skipped++;
       result.results.push({ uid: uid, ok: false, reason: 'nothing to write' });
@@ -290,6 +327,20 @@ function webAppLinkTransfer_(request) {
   // untouched — which is why this tests the key rather than the value.
   if (want.labels !== undefined && want.labels !== null) {
     writeCell_(tx, row, TX_COLUMNS, 'labels', normalizeLabels_(want.labels));
+  }
+
+  // Same rule as `applyReviewDecisions_`, asked here rather than shared through
+  // it, because these are two entry points and only one of them can be reached
+  // per press. A synced row is refused outright: this one has no per-field
+  // result to report a partial failure through, so it fails the whole call
+  // rather than marking the transfer and silently dropping the rename.
+  if (want.description !== undefined && want.description !== null) {
+    var renamed = String(want.description).trim();
+    if (!renamed) throw new Error('A description cannot be empty.');
+    if (!descriptionIsEditable_(source.source)) {
+      throw new Error('That description came from your bank and is what identifies the row.');
+    }
+    writeCell_(tx, row, TX_COLUMNS, 'description', renamed);
   }
 
   if (!target) {

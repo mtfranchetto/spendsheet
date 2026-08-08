@@ -2390,6 +2390,43 @@
     add(body, el('p', 'muted', shortDate(record.date) + ' \u{00b7} ' + record.account +
       ' \u{00b7} ' + money(record.amount)));
 
+    /**
+     * The description, when it is yours to change.
+     *
+     * Above the tabs because it is a fact about the row rather than about which
+     * of the three kinds it is — a cash entry you mistyped and a transfer leg
+     * this project named for you both want renaming, and they open on different
+     * tabs. Both buttons send it for the same reason.
+     *
+     * **Offered only when the server says so.** A synced row's description is
+     * part of what identifies it — `computeUid` hashes it when the bank sends
+     * no `entry_reference` — so rewriting one can stop a later sync recognising
+     * a transaction already in the book. The page does not work that out; it
+     * reads `editableDescription`, and the server asks the same question again
+     * before writing, because a page can send anything.
+     *
+     * The heading above still shows the original. That is deliberate: it is
+     * what the row is called *now*, and having it beside the field is what
+     * makes an edit look like an edit rather than like a form you must fill in.
+     */
+    var rename = null;
+    if (record.editableDescription) {
+      add(body, el('label', null, 'Description'));
+      rename = el('input');
+      rename.type = 'text';
+      rename.className = 'field';
+      rename.value = record.description || '';
+      add(body, rename);
+    }
+
+    /** What to send, or nothing at all when it was not touched. */
+    var renamedTo = function () {
+      if (!rename) return null;
+      var typed = rename.value.trim();
+      if (!typed || typed === (record.description || '')) return null;
+      return typed;
+    };
+
     // What the row is now, and what you are proposing it should be. They start
     // equal and the tabs move the second one only.
     var was = kindOfRecord(record);
@@ -2459,6 +2496,11 @@
         // and an untouched set writes back what was already there. See the note
         // on `labels` in `applyReviewDecisions_` for why that is safe.
         decision.labels = labels.chosen();
+        // Absent unless it actually changed — `applyReviewDecisions_` writes
+        // whatever it is given, and re-sending the same string would report a
+        // rename on every confirm.
+        var renamed = renamedTo();
+        if (renamed) decision.description = renamed;
 
         dialog.close();
         sendDecision(record, decision);
@@ -2493,6 +2535,7 @@
       mark.addEventListener('click', function () {
         var destination = where.value();
         var chosenLabels = labels.chosen();
+        var renamed = renamedTo();
         dialog.close();
 
         // Optimistic on the row itself, the way `sendDecision` is: the category
@@ -2508,8 +2551,11 @@
         record.labels = chosenLabels.slice();
         render();
 
-        call('appMarkTransfer', { uid: record.uid, destination: destination,
-          labels: chosenLabels })
+        var request = { uid: record.uid, destination: destination,
+          labels: chosenLabels };
+        if (renamed) request.description = renamed;
+
+        call('appMarkTransfer', request)
           .then(function (result) {
             toast(result.message);
             reloadAfterWrite();

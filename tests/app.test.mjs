@@ -324,6 +324,76 @@ describe('confirming from the app', () => {
     expect(uidRow(c, 'u-1').labels).toBe('');
   });
 
+  /*
+    Renaming a transaction, and the one rule that decides whether you may.
+
+    This is the only write in the app that touches A–O — the half of
+    `transactions` the code owns. Every other one goes to an override column,
+    which exists so that your opinion and the bank's can both be on the row; a
+    description has none, so changing it changes the stored value.
+
+    Whether that is safe turns entirely on `computeUid`. With an
+    `entry_reference` the identity is the bank's own id. Without one — and
+    plenty of banks send none — the uid is a hash that includes the description,
+    so rewriting it can stop a *future* sync recognising a transaction the book
+    already holds, and append a duplicate days later with nothing pointing back
+    at the edit. Hence: a bank's row is the bank's, everything else is yours.
+
+    The refusal is tested from the server rather than through the page, because
+    the page deciding not to show a field is a courtesy and this is the rule.
+  */
+  const withSource = (source) => book([tx({ uid: 'u-1', source })]);
+
+  it('renames a cash row, a transfer leg and an imported one', () => {
+    [['manual', 'Coffee with Ana'], ['transfer-leg', 'Cash for the weekend'],
+      ['csv:budgetbakers', 'IKEA — kitchen']].forEach(([source, name]) => {
+      const c = withSource(source);
+
+      c.appConfirm([{ uid: 'u-1', confirmed: true, description: name }]);
+      expect(uidRow(c, 'u-1').description, source).toBe(name);
+    });
+  });
+
+  it('refuses to rename a synced row, and says why', () => {
+    const c = withSource('enablebanking');
+    const before = uidRow(c, 'u-1').description;
+
+    const [outcome] = c.appConfirm([{ uid: 'u-1', description: 'Not this' }]).results;
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toMatch(/bank/);
+    expect(uidRow(c, 'u-1').description).toBe(before);
+  });
+
+  it('refuses a blank, so a row always says something', () => {
+    const c = withSource('manual');
+    const before = uidRow(c, 'u-1').description;
+
+    const [outcome] = c.appConfirm([{ uid: 'u-1', description: '   ' }]).results;
+    expect(outcome.ok).toBe(false);
+    expect(uidRow(c, 'u-1').description).toBe(before);
+  });
+
+  it('leaves the description alone when the key is absent', () => {
+    // The page omits it unless it changed. Present-and-blank is a refusal and
+    // absent is "I did not touch this" — the two must not converge.
+    const c = withSource('manual');
+    const before = uidRow(c, 'u-1').description;
+
+    c.appConfirm([{ uid: 'u-1', confirmed: true }]);
+    expect(uidRow(c, 'u-1').description).toBe(before);
+  });
+
+  it('tells the page which rows it may offer the field for', () => {
+    // One rule, two readers. The page reads this to decide what to draw and the
+    // writer re-asks it to decide what to honour; if they ever disagree, the
+    // field appears on a row that will refuse it.
+    const c = book();
+    expect(c.descriptionIsEditable_('enablebanking')).toBe(false);
+    ['manual', 'transfer-leg', 'csv:budgetbakers', ''].forEach((source) => {
+      expect(c.descriptionIsEditable_(source), source).toBe(true);
+    });
+  });
+
   it('does not offer one as a chip from the labels tab', () => {
     const c = book([tx()]);
     const labels = c.__spreadsheet.getSheetByName('labels');

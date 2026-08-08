@@ -1097,8 +1097,41 @@ function recordForPage_(row) {
     type: String(row.type || ''),
     source: String(row.category_source || ''),
     confirmed: isConfirmedRow_(row),
-    inReports: isTruthyCell_(row.in_reports)
+    inReports: isTruthyCell_(row.in_reports),
+    // Whether the description is yours to change. See `descriptionIsEditable_`.
+    editableDescription: descriptionIsEditable_(row.source)
   };
+}
+
+/**
+ * Whether a row's description may be rewritten, which turns entirely on
+ * whether a bank will ever fetch it again.
+ *
+ * `computeUid` has two branches. With an `entry_reference` the identity is the
+ * bank's own immutable id and the description is decoration. Without one — and
+ * plenty of banks send none — the uid is a hash of account, date, amount and
+ * **`normalizeDescription(description)`**, which makes the description part of
+ * what identifies the row.
+ *
+ * That is only dangerous in one direction. The uid already stored is never
+ * recomputed; the risk is a *future* sync fetching the same transaction,
+ * hashing the bank's description, and not recognising the row it is looking at
+ * — which appends a duplicate of something already in the book, silently, and
+ * days after the edit that caused it. So a synced row's description belongs to
+ * the bank, and everything else is yours: cash you typed, a leg this project
+ * wrote, a row you imported. Nothing will ever fetch any of those again.
+ *
+ * Not `crossSourceKey`, which pairs imported rows with synced ones during
+ * "Remove synced duplicates" — that one is account, date and amount, and reads
+ * no description at all. Checked, because it would have been the other reason
+ * to say no.
+ *
+ * One function because two places ask: the page, to decide whether to offer the
+ * field, and `applyReviewDecisions_`, to decide whether to honour it. The
+ * second is the one that matters — a page can send anything.
+ */
+function descriptionIsEditable_(source) {
+  return String(source === null || source === undefined ? '' : source) !== TX_SOURCE_API;
 }
 
 // ---------------------------------------------------------------------------
