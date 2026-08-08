@@ -112,7 +112,7 @@ Rules sit *below* memory, so the way to override a merchant memory has learned i
 
 Removing it isn't enough on its own, either. A `_category_map` row, a `rules` row or a `category_override` still naming a retired category doesn't break — it goes **invisible**. The row is categorised as something no report groups by, so its money quietly leaves every total while the sheet looks fine.
 
-**Spendsheet → Tidy retired categories** does both, in that order: repoints everything that pointed at a retired category, then removes it. It names every change before making any of them.
+**Spendsheet → Set up and maintain → Tidy retired categories** does both, in that order: repoints everything that pointed at a retired category, then removes it. It names every change before making any of them.
 
 The known retirements are the taxonomy shrink from fifteen parents to twelve:
 

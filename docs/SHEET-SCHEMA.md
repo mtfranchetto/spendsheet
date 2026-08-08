@@ -44,7 +44,7 @@ with the full list in `_anomalies`, since a toast lasts ten seconds.
 
 That was a dead end on its own. When the taxonomy shrank from fifteen top-level categories to twelve, eleven mappings still pointed at parents that no longer existed, and retyping them was the only remedy on offer.
 
-**Spendsheet → Update mappings to defaults** is the other half. It shows every divergence side by side — yours, then the default — and replaces them only if you say yes. Keys are never touched, so nothing is added or removed; only the answer part of a row you already have changes, and any key not in the defaults is left alone entirely.
+**Spendsheet → Set up and maintain → Update mappings to defaults** is the other half. It shows every divergence side by side — yours, then the default — and replaces them only if you say yes. Keys are never touched, so nothing is added or removed; only the answer part of a row you already have changes, and any key not in the defaults is left alone entirely.
 
 It also names **orphans**: mappings pointing at a category that isn't in `categories` at all. Those it leaves for you, because they may be yours. They're worth knowing about because the failure is silent — the override gets written, and every report that groups by category simply never shows it.
 
@@ -196,7 +196,7 @@ Deleting the history costs more than it looks. It understates the years the acco
 
 The asymmetry is the argument: you can hide a dormant account at any point, but you cannot un-delete its history without redoing the import.
 
-If you do decide to delete rows from `transactions`, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Run **Accept row count** from the menu immediately afterwards.
+If you do decide to delete rows from `transactions`, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Run **Spendsheet → Set up and maintain → Accept row count** immediately afterwards.
 
 ### The two kinds of non-bank account
 

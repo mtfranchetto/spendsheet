@@ -30,7 +30,7 @@ There's no bulk import in the editor, and drag-and-drop does nothing. If you'd r
 
 Reload the spreadsheet — `onOpen()` is a simple trigger, so the menu only appears on a fresh load, not when you save the script.
 
-**Spendsheet → Setup sheet.** It builds 19 tabs, seeded and formatted.
+**Spendsheet → Set up and maintain → Setup sheet.** It builds 20 tabs, seeded and formatted.
 
 The first run asks you to authorize it, and **Google shows you two warning screens on the way**. Both are expected. They are documented here rather than left as a surprise, because the second one is designed to look like the interstitial you get on a site with a broken certificate, and hitting it in the first five minutes of a finance tool reads as "something is wrong".
 
@@ -73,7 +73,7 @@ Copy the `/exec` URL. This is what makes the whole thing serverless: your bank n
 >
 > So the move that satisfies both is **Manage deployments → edit (pencil) → Version: New version → Deploy**. Same URL, current code. Reach for *New deployment* only the first time.
 >
-> If you're ever unsure which URL is live, open **Spendsheet → Install credentials** — it shows the current one, ready to copy.
+> If you're ever unsure which URL is live, open **Spendsheet → Set up and maintain → Install credentials**. It shows a **Redirect URL** field, pre-filled with what the runtime reports — and that is a starting guess rather than an answer. `ScriptApp.getService().getUrl()` answers for the context it is *called from*, so run from a menu it returns the HEAD deployment, which is neither of the two real doors. Check it against **Deploy → Manage deployments** before you paste it into Enable Banking; what you save in that field is what `startAuth()` sends, so it is also the fix if the two ever disagree.
 
 ### 5. Register a sandbox application
 
@@ -85,7 +85,7 @@ Let the browser generate the key pair. The private key is never transmitted and 
 
 ### 6. Install the credentials
 
-Run `installCredentials()` from the Apps Script editor — pick it in the function dropdown and press **Run**. A dialog asks for the environment, the application ID and the private key.
+**Spendsheet → Set up and maintain → Install credentials**, or run `installCredentials()` from the Apps Script editor — pick it in the function dropdown and press **Run**. Either opens the same dialog, which asks for four things: the environment, the redirect URL, the application ID and the private key.
 
 Paste the **entire** `.pem`, including the `-----BEGIN` and `-----END` lines. It's stored in Script Properties, which is private to the script: never written to the spreadsheet, never in git.
 
@@ -93,9 +93,11 @@ A dialog rather than a simple prompt because a PEM is multi-line and a prompt bo
 
 ### 7. Check it works
 
-**Spendsheet → Run smoke tests**, then unhide the `_tests` tab. Four checks: credentials present, JWT signs and decodes, `GET /application` accepted, `GET /aspsps` returns banks.
+**Spendsheet → Diagnostics → Run smoke tests**, then unhide the `_tests` tab. Nine checks, in two groups.
 
-If all four pass, your key and application ID are right and the API accepts your token.
+**The four that matter at this point** are the connection: credentials installed, the JWT signs and decodes, `GET /application` accepted, `GET /aspsps` returns banks. If those pass, your key and application ID are right and the API accepts your token.
+
+**The other five are about the book** and check things no unit test can, because the harness has no spreadsheet behind it and hands a formula to nothing: that every `ARRAYFORMULA` anchor evaluates rather than sitting there as `#ERROR!`, that `in_reports` is a real boolean column and not text, that no subcategory name appears under two parents, that `owner_email` names the account running it, and that every chart is pointed at a range with data in it. **Re-run this after pulling new code and running Setup**, not only during first setup — a formula that a decimal-comma locale rejects passes every test in `tests/` and fails here.
 
 ---
 
@@ -121,3 +123,25 @@ Three more things worth knowing in advance:
 **Production registration asks for a little more than sandbox did:** a description and a data-protection contact email. It does *not* ask for a privacy policy or terms of service. This repo carried a `PRIVACY.md` and a `TERMS.md` written on the assumption that it would; the real registration form never asked, so both were removed rather than left as documents nobody had a use for.
 
 **Why two applications at all?** The environment is fixed at registration and there's no environment parameter at call time — sandbox and production share `api.enablebanking.com`. The `kid` in the JWT is the application ID, so *which key signs the request* is what decides which world you reach. Hence two registrations, two key pairs, and an `EB_ENV` switch. Both can be installed at once; flipping between them is re-running `installCredentials()` and choosing the other environment.
+
+---
+
+## Part 3 — the rest of it
+
+Everything above gets transactions arriving. These are the three things worth doing next, each owned by its own document rather than repeated here.
+
+**Bring your history.** **File → Import** your old export into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import → Import staged rows**. Do this *before* letting the cascade loose: imported rows arrive confirmed, so **Learn from corrections** turns five years of your own categorisations into the lookup table everything else uses. PSD2 only gives you a rolling ~90 days, so this is the difference between categorisation working on day one and working in six months. ([`docs/IMPORT.md`](IMPORT.md))
+
+**Put it on your phone.** A *second* deployment, with access **Only myself** — a different URL from the one in step 4, and the one place in this whole setup where getting a dropdown wrong exposes your balances to anyone with the link. ([`docs/MOBILE.md`](MOBILE.md), which is also where the owner gate and `owner_email` are explained. To share it with someone, [`docs/SHARING.md`](SHARING.md).)
+
+**Turn on the schedule.** **Spendsheet → Set up and maintain → Install triggers** — a daily sync and a daily self-check, running on Google's infrastructure whether or not the Sheet is open. It is idempotent, so re-running it is always safe. ([`docs/MONITORING.md`](MONITORING.md))
+
+---
+
+## Keeping it up to date
+
+`setup()` is idempotent and is the thing to re-run after pulling new code: it adds tabs and columns that did not exist before, rewrites the formulas, and leaves your data and your customisations alone. It only ever *adds* seed rows, so a category or a config key added upstream after your book was built arrives this way and no other.
+
+The one thing it does not do is change an answer you have already given. If a default moved, **Spendsheet → Set up and maintain → Update mappings to defaults** lists every row where your book and the seed disagree and asks before touching any of them. A row you deliberately filled in — `alert_email`, `owner_email` — is not a disagreement and is never listed.
+
+After both, **Run smoke tests**. The unit tests cover logic and the harness has no spreadsheet behind it; a formula this locale rejects is green in CI and `#ERROR!` in the book.

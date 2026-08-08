@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { load } from './harness.mjs';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { load, sourceFiles } from './harness.mjs';
+
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
 const ctx = load();
 
@@ -242,43 +247,133 @@ describe('seed data', () => {
 });
 
 describe('the menu', () => {
-  it('shows only implemented items, so nothing in it throws', () => {
-    const fresh = load();
-    fresh.onOpen();
-    const menu = fresh.__ui.find((c) => c.title === 'Spendsheet');
+  /** Every declared entry, top level and submenus, as one flat list. */
+  const declared = (ctx) => ctx.MENU_ITEMS
+    .concat(...ctx.MENU_GROUPS.map((g) => g.items))
+    .filter((i) => !i.separator);
 
-    const names = menu.items.map((i) => i.name);
-    expect(names).toContain('Setup sheet');
-    expect(names).toContain('Install credentials');   // phase 2
-    expect(names).toContain('Connect a bank');        // phase 3
-    expect(names).toContain('Sync now');              // phase 4
-    expect(names).toContain('Import staged rows');     // phase 6
-    expect(names).toContain('Re-categorise all');      // phase 7
-    expect(names).toContain('Refresh review queue');    // phase 10
-
-    // The real invariant, now that every declared entry has landed: the menu
-    // shows an item only when the function behind it exists. It used to be
-    // checked by naming the phases that had not shipped, which stops proving
+  it('names only functions that exist, so nothing in it throws', () => {
+    // The real invariant, now that every declared entry has landed. It used to
+    // be checked by naming the phases that had not shipped, which stops proving
     // anything the moment the last one does — and would have gone on passing
     // for a menu that offered nothing at all.
-    const shown = menu.items.filter((i) => !i.separator);
-    shown.forEach(({ name, fn }) => {
+    const fresh = load();
+    fresh.onOpen();
+
+    declared(fresh).forEach(({ name, fn }) => {
       expect(typeof fresh[fn], `${name} → ${fn}() is not defined`).toBe('function');
     });
-    expect(shown.length).toBe(fresh.MENU_ITEMS.filter((i) => !i.separator).length);
   });
 
-  it('files the diagnostics away in a submenu', () => {
-    // They are for the days something is wrong. Putting them on the first
-    // screen makes the whole thing read as a system that expects to break.
+  it('shows every one of them somewhere', () => {
+    const fresh = load();
+    fresh.onOpen();
+
+    const shown = fresh.__ui
+      .reduce((all, m) => all.concat(m.items.filter((i) => !i.separator && i.fn)), [])
+      .map((i) => i.name);
+
+    declared(fresh).forEach(({ name }) => expect(shown, name).toContain(name));
+  });
+
+  /*
+    The top level is what you do weekly; everything you do once is behind a
+    submenu. It reached twenty entries, of which about six were the ones anyone
+    opens in a normal week — and a menu that long is one you read rather than
+    use.
+
+    Checked by naming the two ends rather than by counting, because a count
+    passes for any twenty items and says nothing about which twenty.
+  */
+  it('keeps setup, repair and diagnostics off the first screen', () => {
     const fresh = load();
     fresh.onOpen();
 
     const top = fresh.__ui.find((c) => c.title === 'Spendsheet').items.map((i) => i.name);
-    expect(top).not.toContain('Run smoke tests');
-    expect(top).not.toContain('Diagnose accounts tab');
 
-    const diagnostics = fresh.__ui.find((c) => c.title === 'Diagnostics');
-    expect(diagnostics.items.map((i) => i.name)).toContain('Run smoke tests');
+    expect(top).toContain('Sync now');
+    expect(top).toContain('Open the app');
+    expect(top).toContain('Confirm visible rows');
+
+    ['Run smoke tests', 'Setup sheet', 'Install credentials', 'Accept row count',
+      'Import staged rows', 'Rebuild charts'].forEach((name) => {
+      expect(top, name).not.toContain(name);
+    });
+  });
+
+  it('puts each of those in the submenu that says when you would want it', () => {
+    const fresh = load();
+    fresh.onOpen();
+    const named = (title) =>
+      fresh.__ui.find((c) => c.title === title).items.map((i) => i.name);
+
+    expect(named('Diagnostics')).toContain('Run smoke tests');
+    expect(named('Import')).toContain('Import staged rows');
+    expect(named('Set up and maintain')).toContain('Setup sheet');
+  });
+
+  it('hangs all three off the menu, rather than building them and dropping them', () => {
+    // `createMenu` records on creation, so a submenu shows up in `__ui` whether
+    // or not anything attached it. Without this the test above would pass for a
+    // build that composed three perfectly good submenus and never called
+    // `addSubMenu` — which is a menu with six items in it and no way to reach
+    // the other twenty.
+    const fresh = load();
+    fresh.onOpen();
+
+    const top = fresh.__ui.find((c) => c.title === 'Spendsheet');
+    expect(top.attached).toBe(true);
+    expect(top.subMenus).toEqual(['Import', 'Set up and maintain', 'Diagnostics']);
+  });
+
+  it('has dropped the probe that wrote to the accounts tab', () => {
+    // `diagnoseAccounts` was written for one incident — the code reporting
+    // success while the sheet disagreed — and it answered it. What it left
+    // behind was a menu item that writes a value into `accounts` and clears it
+    // again, which is a thing to have while chasing that specific ghost and not
+    // a thing to leave in a finance app's menu for ever.
+    const fresh = load();
+    expect(fresh.diagnoseAccounts).toBeUndefined();
+    expect(declared(fresh).map((i) => i.fn)).not.toContain('diagnoseAccounts');
+  });
+});
+
+/**
+ * A global-scope project has no dead-code warning, and that is the whole of it.
+ *
+ * Apps Script concatenates `src/*.gs` into one scope, so a function nobody calls
+ * is indistinguishable from one everybody calls — no import to go missing, no
+ * linter to notice, no test that fails. Two accumulated: `diagnoseAccounts`,
+ * a probe written for one incident that outlived it as a menu item writing to
+ * `accounts`, and `ebDeleteSession`, which existed because the endpoint does.
+ *
+ * A name ending in `_` is exempt: those are private by convention and are
+ * reached from anywhere in the concatenated scope, so "called once" says
+ * nothing. `app*` is exempt because `google.script.run` calls it by name from a
+ * file this test cannot see — `tests/app.test.mjs` holds that surface instead.
+ */
+describe('nothing public is left with no way to reach it', () => {
+  const ENTRY_POINTS = ['onOpen', 'onEdit', 'doGet', 'doPost', 'setup'];
+
+  it('names every public function in the menu, in the app, or in a caller', () => {
+    const ctx = load();
+    const src = sourceFiles()
+      .map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
+    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+
+    const reachable = new Set(ENTRY_POINTS.concat(
+      ctx.MENU_ITEMS.concat(...ctx.MENU_GROUPS.map((g) => g.items))
+        .filter((i) => !i.separator).map((i) => i.fn)));
+
+    const orphans = [...src.matchAll(/^function ([A-Za-z0-9_]+)\(/gm)]
+      .map((m) => m[1])
+      .filter((name) => !name.endsWith('_') && !name.startsWith('app'))
+      .filter((name) => !reachable.has(name))
+      .filter((name) => !page.includes(name))
+      // Defined once and named nowhere else in `src/` is the definition itself
+      // and nothing more.
+      .filter((name) => (src.match(new RegExp('\\b' + name + '\\b', 'g')) || []).length <= 1);
+
+    expect(orphans).toEqual([]);
   });
 });

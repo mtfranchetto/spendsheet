@@ -53,7 +53,7 @@ So the collision is prevented at the source instead. **Every block that can grow
 
 Three of the blocks existed only to be plotted: the category totals, the twelve-month pair, and the ninety-day net worth series. Reading those as rows was never the point, and ninety rows of dates is most of what "the dashboard is endless numbers" meant.
 
-They are still on the tab, because a chart reads a range and the range has to be somewhere — but they live in G:S and are **hidden on every run**, not once. That is deliberately not the contract the hidden `transactions` columns use: those are columns you might legitimately want to see, where this is chart plumbing. If you unhide it, the next **Setup sheet** puts it back.
+They are still on the tab, because a chart reads a range and the range has to be somewhere — but they live in G:S and are **hidden on every run**, not once. That is deliberately not the contract the hidden `transactions` columns use: those are columns you might legitimately want to see, where this is chart plumbing. If you unhide it, the next **Set up and maintain → Setup sheet** puts it back.
 
 `G` is the odd one: it holds a severity number, and it is what makes the colours work.
 
@@ -71,7 +71,7 @@ An account row goes red or amber as a whole, and the **Sync** column beside it s
 
 **Every conditional-format rule on the dashboard is `=$G<row>=2` or `=$G<row>=1`.** All of the thinking is in that hidden severity column, and that is forced rather than stylistic: a conditional-format rule does not pass through `localizeFormula`, so **it cannot contain a comma** — which rules out `AND`, `IF`, `OR` and `VLOOKUP`, i.e. everything you would reach for. It also means the thresholds can live in `_config` (`consent_warning_days`, `stale_balance_days`) instead of being frozen as literals inside a rule no test can evaluate.
 
-**A2 says what to do next**, and it is the whole of onboarding. A fresh copy of this project opens on twenty-two tabs and a dashboard reading `never`, with nothing saying what to do about it — and the person who most needs `docs/` is the one who has not opened it. So it answers in the order the answers stop mattering: no accounts → *Connect a bank*; accounts but no rows → *Sync now*; a consent expired → *reconnect*; nothing ever synced → *Install triggers*; rows waiting → *open the review tab*. Blank on the ordinary day, which is the same rule the net worth caveat follows: a line printed every day is a line nobody reads.
+**A2 says what to do next**, and it is the whole of onboarding. A fresh copy of this project opens on twenty tabs and a `reports` tab reading `never`, with nothing saying what to do about it — and the person who most needs `docs/` is the one who has not opened it. So it answers in the order the answers stop mattering: no accounts → *Connect a bank*; accounts but no rows → *Sync now*; a consent expired → *reconnect*; nothing ever synced → *Install triggers*; rows waiting → *open the review tab*. Blank on the ordinary day, which is the same rule the net worth caveat follows: a line printed every day is a line nobody reads.
 
 Health belongs where you already look; a status tab you have to remember to open is how you find out the sync died a fortnight ago. The **oldest unconfirmed date** is new and earns its place: thirty unconfirmed rows from this week is a normal Tuesday, thirty going back to March means the queue stopped being cleared and nothing said so.
 
@@ -107,7 +107,7 @@ Three things it costs, worth knowing before the line looks wrong:
 - **It counts transfers.** A move between your own accounts changes a balance, so it belongs — this is the one place in the project that reads every row, and it is correct precisely because net worth is not a spending question.
 - **Non-EUR rows contribute nothing**, since `amount_base` is blank for them, while their balance is in today's figure. Those accounts flat-line.
 
-Change the window with `trend_days` in `_config` and re-run **Setup sheet** — the chart's range is fixed when the chart is created, so a formula that resized itself would leave the plot reading a range that no longer matches.
+Change the window with `trend_days` in `_config` and re-run **Spendsheet → Set up and maintain → Setup sheet** — the chart's range is fixed when the chart is created, so a formula that resized itself would leave the plot reading a range that no longer matches.
 
 ---
 
@@ -229,11 +229,11 @@ Set `review_queue_size` in `_config` to change how many rows the queue holds (de
 
 Charts are built **on the run that creates the tab, and never again**. An `EmbeddedChart` has no id — only options — so there is no way to recognise one on a later run and update it in place: rebuilding every time would stack a fourth copy on every `setup()`, and matching on options would silently discard a chart you had dragged, resized or restyled.
 
-That means a book that already has a `dashboard` tab gets the new blocks from **Setup sheet** and no charts. **Spendsheet → Rebuild charts** is the explicit way to ask for them, and it says it will discard your layout before it does.
+That means a book that already has a `dashboard` tab gets the new blocks from **Setup sheet** and no charts. **Spendsheet → Set up and maintain → Rebuild charts** is the explicit way to ask for them, and it says it will discard your layout before it does.
 
 The blocks themselves do move between versions, so `setup()` **blanks columns A–S of the dashboard** before rewriting them — otherwise the previous arrangement sits there as orphaned headers and live `QUERY`s, two dashboards on one tab, both plausible and one months out of date. Anything you have put to the right of column S is untouched, which is the same boundary every other "yours" region uses. That boundary is derived from the rightmost generated column rather than written down — adding a block cannot leave a strip of the old layout behind.
 
-The layout moved a long way in this version: if your dashboard was built by an older one, **Setup sheet** then **Rebuild charts**, in that order. The charts read ranges that the rebuild has to have written first.
+The layout moved a long way in this version: if your dashboard was built by an older one, **Spendsheet → Set up and maintain → Setup sheet** then **Rebuild charts** from the same submenu, in that order. The charts read ranges that the rebuild has to have written first.
 
 `in_reports` also lands as a new column on `transactions`. It is hidden for you on the upgrade run — the only case where `setup()` changes a column's visibility after the first run, because a column that did not exist five seconds ago carries no decision to respect.
 

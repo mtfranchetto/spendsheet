@@ -59,7 +59,7 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 3. **Deploy → New deployment → Web app**, execute as *me*, access *Anyone*. Copy the `/exec` URL. This is what your bank redirects back to after login, and it's how this works without a server.
 4. Register a **sandbox** app at [enablebanking.com](https://enablebanking.com) — it asks only for a name and that redirect URL. Download the `.pem` private key.
 5. Run `installCredentials()` from the Apps Script editor and paste what it asks for.
-6. In the Sheet: **Spendsheet → Setup sheet**. The first run asks for authorization and Google warns you twice — *"Google hasn't verified this app"* (open **Advanced → Go to Spendsheet (unsafe)**), then the permission list. Both are expected: *unverified* only means nobody paid for Google's OAuth review of a script you pasted into your own Drive. [Why it can't be removed, and what the scopes actually grant.](docs/SETUP.md#3-build-the-tabs)
+6. In the Sheet: **Spendsheet → Set up and maintain → Setup sheet**. The first run asks for authorization and Google warns you twice — *"Google hasn't verified this app"* (open **Advanced → Go to Spendsheet (unsafe)**), then the permission list. Both are expected: *unverified* only means nobody paid for Google's OAuth review of a script you pasted into your own Drive. [Why it can't be removed, and what the scopes actually grant.](docs/SETUP.md#3-build-the-tabs)
 7. **Spendsheet → Connect a bank** → pick **Mock ASPSP** → complete the fake login → transactions land. ✅
 
 ### Part 2 — production (once you're convinced)
@@ -68,13 +68,13 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 9. Download its `.pem`, re-run `installCredentials()`, set the environment to production.
 10. **Spendsheet → Connect a bank** → your real bank → approve on your phone. This moves your app from *Inactive* to **Restricted**, which is the free tier and the last state you need. (*Active* requires a signed commercial contract — you will never need it.)
 11. Repeat for each bank.
-12. **Spendsheet → Install triggers** — daily sync, daily self-check.
+12. **Spendsheet → Set up and maintain → Install triggers** — daily sync, daily self-check.
 
 ### Part 3 — bring your history (optional, and worth it)
 
-13. Export your history from whatever you use now, **File → Import** it into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import staged rows**. ([`docs/IMPORT.md`](docs/IMPORT.md))
+13. Export your history from whatever you use now, **File → Import** it into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import → Import staged rows**. ([`docs/IMPORT.md`](docs/IMPORT.md))
 14. **Spendsheet → Learn from corrections** — imported rows arrive confirmed, so your own categorisations become the lookup table the cascade uses.
-15. **Spendsheet → Re-categorise all**, then **Rebuild charts**.
+15. **Spendsheet → Re-categorise all**, then **Spendsheet → Set up and maintain → Rebuild charts**.
 16. Deploy the app: **Deploy → New deployment → Web app**, access **Only myself**. Paste its `/exec` URL into `_config` → `viewer_url`, then **Spendsheet → Open the app**. ([`docs/MOBILE.md`](docs/MOBILE.md))
 
 This is the step that makes categorisation work on day one rather than in six months, and it's why the import lands before the cascade rather than after it. Cadence detection is the same story: an annual insurance premium is invisible in the rolling ~90 days PSD2 gives you.
@@ -83,17 +83,16 @@ Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Menu
 
+Split by how often you'd run it, not by what it's about. The top level is the week; the submenus are the things you do once.
+
 | | |
 |---|---|
-| **Banks** | Sync now · Connect a bank · Refresh accounts |
-| **History** | Import staged rows · Remove synced duplicates |
-| **The app** | Open the app |
-| **Reviewing** | Refresh review queue · Rebuild charts |
-| **Categorising** | Re-categorise all · Confirm visible rows · Learn from corrections |
-| **Housekeeping** | Setup sheet · Update mappings to defaults · Tidy retired categories · Install credentials · Install triggers · Show schedule · Health check · Accept row count · Snapshot to Drive |
-| **Diagnostics** | Run smoke tests · Check web app access · Time a web app query · Inspect session · Inspect account details · Inspect transactions · Diagnose accounts tab |
+| **Spendsheet** | Sync now · Connect a bank · Refresh accounts · Open the app · Confirm visible rows · Re-categorise all · Learn from corrections · Refresh review queue · Health check |
+| ↳ **Import** | Import staged rows · Remove synced duplicates |
+| ↳ **Set up and maintain** | Setup sheet · Install credentials · Install triggers · Show schedule · Update mappings to defaults · Tidy retired categories · Rebuild charts · Snapshot to Drive · Accept row count |
+| ↳ **Diagnostics** | Run smoke tests · Check web app access · Time a web app query · Time the app dashboard · Inspect session · Inspect account details · Inspect transactions |
 
-The menu only shows an item whose function actually exists, so a partial checkout offers exactly what works instead of throwing.
+The menu only shows an item whose function actually exists, so a partial checkout offers exactly what works instead of throwing — and a submenu that would be empty isn't added at all.
 
 ## On a phone
 

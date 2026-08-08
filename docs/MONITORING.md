@@ -4,9 +4,9 @@ Everything here is built. `12_monitor.gs` holds the detectors; **Spendsheet → 
 
 ## Running it automatically
 
-**Spendsheet → Install triggers.** That's it: a daily time-driven trigger that runs the sync whether or not the spreadsheet is open, whether or not you're logged in, on Google's infrastructure, for free. It's what makes "no server" true rather than aspirational.
+**Spendsheet → Set up and maintain → Install triggers.** That's it: a daily time-driven trigger that runs the sync whether or not the spreadsheet is open, whether or not you're logged in, on Google's infrastructure, for free. It's what makes "no server" true rather than aspirational.
 
-Change the hour with `sync_hour` in `_config` (default 4am, in the spreadsheet's timezone) and re-run Install triggers. Apps Script picks a random minute within the hour, which is deliberate on their side and harmless here.
+Change the hour with `sync_hour` in `_config` (default 4am, in the spreadsheet's timezone) and re-run **Spendsheet → Set up and maintain → Install triggers**. Apps Script picks a random minute within the hour, which is deliberate on their side and harmless here.
 
 ### Running more than once a day
 
@@ -24,7 +24,7 @@ That's still the right trade. Transactions are the thing that can't be recovered
 
 To buy a third useful run, set `fetch_pending` to `no` in `_config` — that frees one call per sync at the cost of the `pending` tab.
 
-**Spendsheet → Show schedule** reports what's currently installed, because the Apps Script triggers page is three clicks away inside a different app and "is this actually running?" is a question you ask from the spreadsheet.
+**Spendsheet → Set up and maintain → Show schedule** reports what's currently installed, because the Apps Script triggers page is three clicks away inside a different app and "is this actually running?" is a question you ask from the spreadsheet.
 
 Install triggers is **idempotent** — it removes the ones it owns before creating them, and leaves any trigger you added yourself alone. That matters more than it sounds: adding a second nightly sync by hand is two clicks, warns you about nothing, and doubles your API calls every night straight into the rate limit below. You'd see it as "the sync stopped working", days later, with nothing to connect it to.
 
@@ -58,7 +58,7 @@ Two of these are deliberately reluctant to fire, because an alarm you learn to i
 
 Failure 6 doesn't warn, it **aborts**. Appending to a tab that has silently lost rows writes new history on top of a hole, and every run afterwards makes the restore harder.
 
-The way out: File → Version history to restore what was lost. If the smaller sheet is actually what you meant — you deleted test rows on purpose — **Spendsheet → Accept row count** unblocks it. That step is manual by design; a detector that resets itself can't detect anything.
+The way out: File → Version history to restore what was lost. If the smaller sheet is actually what you meant — you deleted test rows on purpose — **Spendsheet → Set up and maintain → Accept row count** unblocks it. That step is manual by design; a detector that resets itself can't detect anything.
 
 ### Alert volume
 
@@ -84,7 +84,7 @@ That leaves exactly one spare, so a single impatient "Sync now" after the nightl
 
 ## Backups
 
-**A weekly CSV of `transactions` into Drive**, installed by Install triggers alongside the sync. Folder name is `snapshot_folder` in `_config`; run it on demand with Spendsheet → Snapshot to Drive.
+**A weekly CSV of `transactions` into Drive**, installed by Install triggers alongside the sync. Folder name is `snapshot_folder` in `_config`; run it on demand with Spendsheet → Set up and maintain → Snapshot to Drive.
 
 The folder is best-effort. `DriveApp.createFolder` requires the full `drive` scope, which this project refuses for the reasons in [SETUP.md](SETUP.md) — so if Google declines it the CSV is written to My Drive instead and the toast says which. The file is the backup; the folder is tidiness.
 

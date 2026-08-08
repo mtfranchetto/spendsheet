@@ -76,7 +76,7 @@ The reason you'll see is **"already covered by the API for this account"**. The 
 
 **3. Import it.**
 
-**Spendsheet → Import staged rows.** It counts what will land, breaks it down by account, names the date range, and says how many rows are excluded and why — then asks before writing anything. Nothing moves until you say yes.
+**Spendsheet → Import → Import staged rows.** It counts what will land, breaks it down by account, names the date range, and says how many rows are excluded and why — then asks before writing anything. Nothing moves until you say yes.
 
 It skips rows already in `transactions`, matching on uid, so running it twice imports nothing the second time. That is the one guarantee the manual paste it replaced could never offer.
 
@@ -115,7 +115,7 @@ Then the loop, per file:
 1. Clear `_import_raw`, import the year into it
 2. Set `import_batch` to that year
 3. Check `_import_staged` — particularly `include` and `why`
-4. **Spendsheet → Import staged rows**
+4. **Spendsheet → Import → Import staged rows**
 5. Tie out one month against BudgetBakers before doing the next file
 
 That fifth step only matters on the first file. Once one year ties out, the mapping is proven and the rest are mechanical.
@@ -134,7 +134,7 @@ Two rows per transaction, both counted, every total wrong by the overlap.
 
 **Going forward this is handled.** A sync now checks fetched rows against imported ones on **account, date and amount** — not description, which is the field that differs by source, and the reason this was thought impossible. An imported row shadows at most one fetched row, so two €3 coffees imported on one day suppress two and a third still lands. Runs that suppress anything say so: *"12 matched history you imported and were not written again."* If that number climbs when you haven't imported recently, the match is reaching too far and you want to know.
 
-**For copies already in the sheet:** **Spendsheet → Remove synced duplicates**. It pairs each synced row with an imported one, shows the count, the accounts and the date range, and asks before removing anything.
+**For copies already in the sheet:** **Spendsheet → Import → Remove synced duplicates**. It pairs each synced row with an imported one, shows the count, the accounts and the date range, and asks before removing anything.
 
 The synced copy is the one that goes. Neither is more true — they describe the same money — so the tie is broken by what's attached: the imported row carries the category you gave it in the tool it came from, the tick that says you meant it, and its labels. The synced row carries an `entry_reference` nothing downstream reads.
 

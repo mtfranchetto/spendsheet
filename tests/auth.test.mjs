@@ -225,10 +225,15 @@ describe('redirect URL', () => {
     expect(c.__properties.has('EB_REDIRECT_URL')).toBe(false);
   });
 
-  it('can be cleared back to detection', () => {
-    const c = load({ properties: { EB_REDIRECT_URL: 'https://script.google.com/macros/s/REAL/exec' } });
-    c.clearRedirectUrl();
-    expect(c.webAppUrl()).toBe('https://script.google.com/macros/s/FAKE/exec');
+  it('is overwritten by pinning a different one, which is how you correct it', () => {
+    // This replaced a test of `clearRedirectUrl`, which had no caller anywhere
+    // in `src/` and no button in the dialog — a function whose only caller is
+    // its own test is dead, and the test passing is what hid that. Correcting a
+    // wrong pin was always the same gesture as setting the first one.
+    const c = load({ properties: { EB_REDIRECT_URL: 'https://script.google.com/macros/s/OLD/exec' } });
+
+    c.saveRedirectUrl('https://script.google.com/macros/s/NEW/exec');
+    expect(c.webAppUrl()).toBe('https://script.google.com/macros/s/NEW/exec');
   });
 });
 

@@ -67,13 +67,13 @@ Three things about it are worth knowing, because all three fail silently:
 
 To use your own: put it anywhere public over HTTPS and paste the URL into the cell. Anything that is not `https://` is refused rather than passed through — a `data:` URI is rejected by Google anyway, and a cell that ends up in a served document is checked by whitelist here rather than by escaping. **Clearing the cell turns the icon off**; it does not fall back to the default.
 
-A book set up before this shipped has the row but blank, because `setup()` only ever *adds* seed rows and never rewrites one you already have. **Spendsheet → Update mappings to defaults** is what fills it — it will list the row and ask before changing anything.
+A book set up before this shipped has the row but blank, because `setup()` only ever *adds* seed rows and never rewrites one you already have. **Spendsheet → Set up and maintain → Update mappings to defaults** is what fills it — it will list the row and ask before changing anything.
 
 ## The owner gate
 
 Because both doors run the same code, the app branch checks who is asking:
 
-- `_config` has an **`owner_email`** row. **Spendsheet → Setup sheet** fills it in with whoever ran it, once, and never overwrites it afterwards.
+- `_config` has an **`owner_email`** row. **Spendsheet → Set up and maintain → Setup sheet** fills it in with whoever ran it, once, and never overwrites it afterwards.
 - Every request compares that against `Session.getActiveUser().getEmail()`.
 - **It fails closed.** No owner configured, no active user, a mismatch, or the runtime throwing while being asked — all four are a refusal.
 

@@ -480,9 +480,13 @@ function ebGetSession(sessionId) {
   return ebFetch_('get', '/sessions/' + encodeURIComponent(sessionId));
 }
 
-function ebDeleteSession(sessionId) {
-  return ebFetch_('delete', '/sessions/' + encodeURIComponent(sessionId));
-}
+/*
+  There was an `ebDeleteSession` here and nothing has ever called it. It was
+  written because `DELETE /sessions/{id}` exists, which is a reason to know
+  about an endpoint and not a reason to have a function for it: revoking a
+  consent is something you do from the bank, and if this book ever needs to do
+  it, the line to write is the one that was sitting here unread.
+*/
 
 /**
  * The descriptive fields for an account — name, product, currency, IBAN.

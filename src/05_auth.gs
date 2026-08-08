@@ -203,11 +203,14 @@ function validateRedirectUrl(url) {
   return null;
 }
 
-/** Clear the pin and fall back to detection. */
-function clearRedirectUrl() {
-  PropertiesService.getScriptProperties().deleteProperty(EB_PROP.REDIRECT_URL);
-  return 'Cleared. Falling back to ' + (detectedWebAppUrl() || 'no detected URL') + '.';
-}
+/*
+  There was a `clearRedirectUrl` here — unpin, and fall back to detection —
+  with no caller and no button in the dialog that would have needed one. It is
+  gone rather than wired up, because the dialog already has the control: the
+  field is pre-filled and `saveRedirectUrl` overwrites the pin. "Clear it and
+  let detection guess" and "type the right one" answer the same question, and
+  only one of them ends with the right URL in the property.
+*/
 
 // ---------------------------------------------------------------------------
 // The callback
