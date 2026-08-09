@@ -112,7 +112,7 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 |---|---|
 | [`docs/SETUP.md`](docs/SETUP.md) | Long-form setup, both Enable Banking registrations |
 | [`docs/IMPORT.md`](docs/IMPORT.md) | Importing history from BudgetBakers or any CSV |
-| [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, labels and transfers |
+| [`docs/CATEGORIES.md`](docs/CATEGORIES.md) | The categorisation cascade, confirming, transfers, and how to add your own categories, labels and rules |
 | [`docs/REPORTS.md`](docs/REPORTS.md) | The reports tab and the review queue |
 | [`docs/MOBILE.md`](docs/MOBILE.md) | The phone app: what every screen and gesture does, the two deployments, the owner gate, the ledger cache |
 | [`docs/SHARING.md`](docs/SHARING.md) | Giving a second person the sheet and the app, and what each one exposes |

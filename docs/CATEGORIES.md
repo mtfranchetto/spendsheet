@@ -101,6 +101,43 @@ It sits under `Transfer` because of `kind`. A €1,500 market gain must not appe
 
 ---
 
+## Adding a category
+
+Type it on the next empty row of the `categories` tab. Four columns are yours; the four beside them are not.
+
+| Column | |
+|---|---|
+| `category` | the parent. A new one lands at the **bottom** of every dropdown — `parent_list` is a `UNIQUE` in tab order, not sorted, because the seed order is Income first and `Other` last, which is how you think about them |
+| `subcategory` | the child. These *are* sorted, so a new one lands alphabetically among the eighty |
+| `kind` | `expense` · `income` · `transfer`. Describes the parent — see below |
+| `icon` | one emoji, shown beside the category on the phone. Decoration; blank is fine |
+
+**Never type into E–H.** Those are four `ARRAYFORMULA` anchors sitting in row 2, and a value typed underneath one is a value that stops it expanding.
+
+**Nothing needs re-running.** Every category dropdown in this book points at the *range* `categories!E2:E` and every subcategory dropdown at `F2:F`, rather than at a list built in code — which is the entire reason those two columns exist. A row you type is offered by `transactions`, `cash_entry`, `rules` and `review` the moment you finish typing it, and by the phone the next time it opens, since the app builds its pickers from the tab on each open. No `setup()`, no redeploy.
+
+**Adding a *child* to an existing parent: pick the parent from the dropdown, don't type it.** Column A carries a list of the parents that already exist, and it allows an invalid entry because creating a new parent is the other reason to type there. Typing is how you end up with `Food and Drink` beside `Food & Drink` — two categories, two dropdown entries, and every total split between them. `kind` has a dropdown of the three values for the same reason.
+
+Row order is the parent dropdown's order and nothing here reads a row number, so rearranging is safe. A blank row is harmless too — both list formulas filter empties out.
+
+### Three ways it goes quietly wrong
+
+**A parent needs at least one subcategory row.** A row with column B empty contributes nothing to `child_list`, and the phone's picker drops it outright — that one takes only rows carrying both halves. So a parent with no real divisions still needs a child row to be pickable at all.
+
+**`kind` describes the parent, not the row.** A transaction's `type` is a `VLOOKUP` of its category into `categories!A:C` taking the first match, and the phone reads the first row's kind for the same reason. A parent whose rows disagree resolves to whichever one happens to sit highest — silently, and consistently enough to look deliberate. Give every row of a parent the same kind.
+
+That column is load-bearing rather than descriptive: **`transfer` is what takes a row out of every report.** Give a spending category `transfer` by accident and its money leaves your totals while the transactions sit there looking correctly filed.
+
+**A subcategory name must identify exactly one parent.** `child_list` is a sorted `UNIQUE`, so two parents sharing a child name collapse into one indistinguishable dropdown entry — and the lookup that resolves a chosen child back to its parent takes the first match and says nothing about the second. The seed shipped with `Home` under both Shopping and Insurance and `Books` under both Shopping and Education; both were renamed rather than disambiguated, because *which Home did you mean* is not a question a dropdown can ask. A unit test holds the seed to this and `runSmokeTests()` holds your live tab to it, precisely because the tab is yours to extend and `Other` under everything is the natural way to extend it.
+
+### A new category categorises nothing
+
+The cascade only ever writes a category some tier *names*, so a new one is an empty bucket until a rule points at it, `_memory` learns it, or you type it as an override. **Re-categorise all** will not find it either.
+
+The way to fill one is the loop above: type it as a `category_override` on a few rows — which counts as confirming them — then **Learn from corrections**, and the merchant is automatic from then on.
+
+---
+
 ## Labels
 
 Categories answer *what did I buy*. Labels answer *what was this for* — `kids`, `travel`, `home-renovation` — and the two are genuinely independent: a holiday is flights **and** restaurants **and** a pharmacy, each of which means something else the rest of the year.
@@ -109,9 +146,23 @@ Type them comma-separated into `transactions.labels`. Many per row is normal and
 
 Labels never affect a category, a `type` or any total. And the cascade never guesses one: merchant → category is a stable relationship worth learning, merchant → label is not. The same supermarket is `kids` one week and nothing the next.
 
+### Adding a label
+
+Type the name in `labels!A` and, if you want one, a description beside it. The last two columns are formulas covering the whole column, so the new row starts reporting itself at once — zero transactions and €0.00 until you tag something.
+
+Then tag rows by typing into `transactions.labels`. There is deliberately **no dropdown** there: a list rule would flag every multi-label row with a warning triangle, which trains you to ignore warnings. The `labels` tab catches a typo instead — the misspelling appears there with zero transactions against it, next to the real one with all of them. `cash_entry.labels` does get a dropdown, reading this tab, and still accepts a typed pair.
+
+**On the phone the label chips *are* this tab**, which is the practical reason to add the row before you need it: a label that isn't here cannot be ticked there.
+
+**Keep the names distinct, and specifically don't make one a prefix of another.** The two report columns match by wildcard substring, so a `kids` row counts `kids-school` too. The phone's label *filter* splits on commas and matches whole names, so it doesn't — meaning the same two labels disagree between the tab and the app, with the tab over-counting. Matching whole items inside a comma-separated cell needs the range transformed before `SUMIFS` sees it, which `SUMIFS` does not allow; distinct names cost nothing and remove the question.
+
+`total_eur` reads `amount_base` and carries the `in_reports` condition, like every total in this book. It is signed, so a label covering both a purchase and its refund nets out — the honest figure for "what did this cost".
+
+The three seeded labels are examples; replace them. `labels` is **never re-seeded**, so one you delete stays deleted. Empty the tab completely and re-run `setup()` if you want the examples back.
+
 ---
 
-## Editing the rules
+## Rules
 
 `rules` is yours. It is seeded once and **never re-seeded**, so a rule you delete stays deleted.
 
@@ -127,6 +178,26 @@ Labels never affect a category, a `type` or any total. And the cascade never gue
 A typo in `field` matches **nothing**, deliberately — the alternative is `contains ""` matching every row and recategorising the whole sheet. A half-typed `regex` matches nothing too, rather than breaking the run that reads it.
 
 Rules sit *below* memory, so the way to override a merchant memory has learned is to correct a row and re-learn, not to add a rule.
+
+### Adding a rule
+
+**From the phone: long-press a transaction.** The pattern is prefilled from the server's own merchant normaliser rather than a second copy of it in the page, the category picker is the one every other sheet uses, and every field is still editable before saving. Priority is assigned for you — one step past the highest on the tab, in tens, so there is room to slot one in by hand between two of them later. It refuses a pattern under two characters, a field or match type it doesn't recognise, a regex that will not compile, and a category that isn't in `categories`. See [`MOBILE.md`](MOBILE.md#tapping-a-transaction).
+
+**On the tab: type a row**, on the first empty one. `field`, `match_type`, `category`, `subcategory` and `type` all have dropdowns; `enabled` is a checkbox and an unticked rule is ignored rather than deleted.
+
+Two things the tab does not check, both silent:
+
+**Give it a priority.** A blank one reads as zero, which is lower than every seeded rule, so the rule you added last fires *first* — and if that blank row happens to be the **last** on the tab it is not read at all, because a rule row is found by scanning down the `priority` column for the last non-empty cell. Fired first or invisible, and neither says anything.
+
+**Name a category that exists.** A rule naming one that doesn't still matches and still writes it; then `type`'s `VLOOKUP` finds nothing, `in_reports` comes back FALSE, and the row leaves every report with no error anywhere. This is the quietest failure available here, which is why the phone refuses such a rule outright.
+
+`type` on a rule is not read by the cascade at all — a row's type comes from its category's `kind` — but the column is there and a blank in it reads as an unfinished row. Fill it to match the category.
+
+### A new rule changes nothing already in the book
+
+The cascade runs on sync, so a rule takes effect on rows that arrive after it. **Spendsheet → Re-categorise all** applies it to what is already there — with one exception that matters more than it sounds: **a confirmed row keeps whatever it was confirmed with.** An imported history arrives confirmed, so no rule you add afterwards will touch it.
+
+To make a rule reach a row you have already confirmed, untick `confirmed` on that row and re-categorise. The phone's toast says the same thing in a line, because otherwise the feature reads as broken: you make a rule for a merchant you have seen ten times, go back, and all ten are exactly as they were.
 
 ---
 

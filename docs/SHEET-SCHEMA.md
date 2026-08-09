@@ -249,9 +249,9 @@ Cash entries have neither an `entry_reference` nor a batch to count against — 
 
 ## Categorisation tabs
 
-**`rules`** — `priority` · `field` (description/counterparty/mcc/bank_transaction_code) · `match_type` (contains/regex/equals) · `pattern` · `account_filter` · `category` · `subcategory` · `type` · `enabled`. First match by priority wins. Seeded with MCC mappings (10–99, language-independent) then Italian text patterns (100+).
+**`rules`** — `priority` · `field` (description/counterparty/mcc/bank_transaction_code) · `match_type` (contains/regex/equals) · `pattern` · `account_filter` · `category` · `subcategory` · `type` · `enabled`. First match by priority wins. Seeded with MCC mappings (10–99, language-independent) then Italian text patterns (100+). A row typed here with a blank `priority` either fires before everything or is not read at all — see [CATEGORIES.md](CATEGORIES.md#adding-a-rule).
 
-**`categories`** — `category` · `subcategory` · `kind` · `icon`. Drives the dropdowns, and `kind` is what `type` is derived from.
+**`categories`** — `category` · `subcategory` · `kind` · `icon`, plus four derived columns the dropdowns point at. Those four are what make a category you type live immediately, with no `setup()` and no redeploy, and `kind` is what `type` is derived from. Adding one has three quiet failure modes — see [CATEGORIES.md](CATEGORIES.md#adding-a-category).
 
 **`labels`** — `label` · `description` · `transactions` · `total_eur`. The cross-cutting axis a category cannot express: `category` answers *what did I buy*, a label answers *what was this for*. The last two columns are formulas over `transactions.labels`, so the tab is both the known set and the report on it.
 
@@ -259,7 +259,7 @@ Labels are comma-separated in one column, many per transaction, and **never affe
 
 There is deliberately **no dropdown** on `transactions.labels`. A list rule would flag every multi-label row with a warning triangle, which trains you to ignore warnings. The `labels` tab catches a typo instead: the misspelling shows up there with zero transactions against it, next to the real one with all of them.
 
-One caveat, because the report matches by wildcard: **a label that is a substring of another counts both.** `kids` would include `kids-school`. Keep label names distinct.
+One caveat, because the report matches by wildcard: **a label that is a substring of another counts both.** `kids` would include `kids-school`. Keep label names distinct — the phone's label filter matches whole names and so disagrees with this tab, with the tab over-counting. Adding a label is [CATEGORIES.md](CATEGORIES.md#adding-a-label).
 
 **`_memory`** — `merchant_key` · `category` · `subcategory` · `hits` · `last_seen`. The learned table, and the workhorse of the cascade. Built from your confirmed history by **Learn from corrections**.
 

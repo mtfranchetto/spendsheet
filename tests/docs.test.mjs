@@ -124,7 +124,48 @@ describe('the file headers that say how many of something there is', () => {
   });
 });
 
+/**
+ * A doc that tells you what to type into a cell is quoting an enum.
+ *
+ * `CATEGORIES.md` lists what `field` and `match_type` accept, and what the three
+ * `kind` values are, because a reader adding a rule or a category needs the list
+ * in front of them rather than a pointer to `00_config.gs`. Copying it out is
+ * the right call and it is also the thing that goes stale: adding a fifth match
+ * type would leave the page confidently naming four, and the failure — a rule
+ * that matches nothing, for ever — is exactly the one that page warns about.
+ *
+ * One direction only. That a member is named somewhere on the page is checkable;
+ * that the page names no *retired* member would need the prose parsed rather
+ * than searched, and a mention in a sentence about history is legitimate.
+ */
+describe('the enums the docs spell out', () => {
+  const categories = pages.find(([file]) => file === 'docs/CATEGORIES.md')[1];
+
+  it('names every rule field and match type a rule can use', () => {
+    ctx.RULE_FIELDS.concat(ctx.RULE_MATCH_TYPES).forEach((value) => {
+      expect(categories.includes('`' + value + '`'),
+        `CATEGORIES.md never mentions \`${value}\``).toBe(true);
+    });
+  });
+
+  it('names all three kinds a category can be', () => {
+    ctx.TX_TYPES.forEach((value) => {
+      expect(categories.includes('`' + value + '`'),
+        `CATEGORIES.md never mentions \`${value}\``).toBe(true);
+    });
+  });
+});
+
 describe('the counts the docs quote', () => {
+  it('counts the seeded labels the way CATEGORIES.md does', () => {
+    const NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+    const categories = pages.find(([file]) => file === 'docs/CATEGORIES.md')[1];
+    const claim = categories.match(/The (\w+) seeded labels are examples/);
+
+    expect(claim, 'CATEGORIES.md no longer counts the seeded labels').not.toBeNull();
+    expect(NUMBER[claim[1]], `it says "${claim[1]}"`).toBe(ctx.DEFAULT_LABELS.length);
+  });
+
   it('says the number of tabs setup actually builds', () => {
     const fresh = load({ userEmail: 'owner@example.com' });
     fresh.setup();
