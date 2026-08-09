@@ -755,4 +755,150 @@ describe('a query against a real book', () => {
     expect(() => c.webAppAnalytics_({})).not.toThrow();
     expect(c.webAppRecords_({}, 0)).toMatchObject({ rows: [], total: 0, hasMore: false });
   });
+
+  /*
+    Drilling from a number on Charts to the rows behind it.
+
+    **The reconciliation tests are the point of this block.** Everything else
+    here is a narrow assertion about one filter; those are the ones that prove
+    the feature, because the failure this design exists to prevent is not an
+    error — it is a list that looks right and does not add up to the figure
+    that opened it. `matchesRecordFilters_` and `aggregate_` are two independent
+    walks over the same rows applying rules written in different files, and the
+    only evidence they agree is asking both and comparing.
+
+    One book, deliberately awkward, is used for all of them: income, a transfer
+    excluded from reports, a row with no `amount_base` at all, a category with
+    two children, and a row whose subcategory is blank so that
+    `(uncategorised)` is a real bucket rather than a hypothetical one.
+  */
+  const mixed = () => bookWith([
+    tx({ description: 'salary', amount_base: 2000, category: 'Income',
+         subcategory: 'Salary', type: 'income' }),
+    tx({ description: 'moved money', amount_base: -500, category: 'Transfer',
+         subcategory: 'Internal', type: 'transfer', in_reports: false }),
+    tx({ description: 'swiss francs', amount_base: '', category: 'Shopping',
+         subcategory: 'Clothes' }),
+    tx({ description: 'esselunga', amount_base: -40, category: 'Food & Drink',
+         subcategory: 'Groceries' }),
+    tx({ description: 'coop', amount_base: -25, category: 'Food & Drink',
+         subcategory: 'Groceries' }),
+    tx({ description: 'osteria', amount_base: -60, category: 'Food & Drink',
+         subcategory: 'Restaurants' }),
+    tx({ description: 'unclear', amount_base: -10, category: 'Food & Drink',
+         subcategory: '' }),
+    tx({ description: 'trenitalia', amount_base: -15, category: 'Transport',
+         subcategory: 'Public transport' })
+  ]);
+
+  /**
+   * What the drilled list adds up to, which is the only number that matters.
+   *
+   * `amount` on a page record is `amount_base` — see `recordForPage_`, which
+   * sends the raw one as `rawAmount`. Negated, because `aggregate_` reports
+   * expenses as a positive number and the comparison is against that.
+   */
+  const drilledTotal = (c, drill) => {
+    const page = c.webAppRecords_({ ...july, ...drill }, 0);
+    return {
+      total: page.total,
+      sum: Number(page.rows.reduce((n, r) => n + -r.amount, 0).toFixed(2)),
+      rows: page.rows.map((r) => r.description).sort()
+    };
+  };
+
+  it('drills the spending total to rows that add up to it', () => {
+    const c = mixed();
+    const expenses = c.webAppAnalytics_(july).totals.expenses;
+
+    // 40 + 25 + 60 + 10 + 15. Not the salary, not the transfer, and not the
+    // row with no base amount — which `aggregate_` counts as `unconvertible`
+    // and leaves out rather than treating as zero.
+    expect(expenses).toBe(150);
+    expect(drilledTotal(c, { spendOnly: true })).toMatchObject({ total: 5, sum: 150 });
+  });
+
+  it('drills each category bar to rows that add up to that bar', () => {
+    const c = mixed();
+    const byCategory = c.webAppAnalytics_(july).byCategory;
+    expect(byCategory.length).toBeGreaterThan(1);
+
+    byCategory.forEach((entry) => {
+      expect(drilledTotal(c, { spendOnly: true, category: entry.name }).sum, entry.name)
+        .toBe(entry.total);
+    });
+  });
+
+  it('drills a subcategory to rows that add up to it, under its own parent', () => {
+    const c = mixed();
+    const food = c.webAppAnalytics_(july).byCategory
+      .filter((e) => e.name === 'Food & Drink')[0];
+
+    expect(food.total).toBe(135);
+    food.children.forEach((child) => {
+      expect(drilledTotal(c, {
+        spendOnly: true, category: food.name, subcategory: child.name
+      }).sum, child.name).toBe(child.total);
+    });
+
+    expect(drilledTotal(c, {
+      spendOnly: true, category: 'Food & Drink', subcategory: 'Groceries'
+    }).rows).toEqual(['coop', 'esselunga']);
+  });
+
+  it('drills `(uncategorised)` to the blank rows, which is where the tally put them', () => {
+    // The bucket name is an address as well as a label, and `groupKey_` is the
+    // one place the two are decided. A second copy of the rule would agree
+    // until it did not, and the symptom is an empty list — indistinguishable
+    // from a group with nothing in it.
+    const c = mixed();
+    const food = c.webAppAnalytics_(july).byCategory
+      .filter((e) => e.name === 'Food & Drink')[0];
+
+    expect(food.children.map((k) => k.name)).toContain('(uncategorised)');
+    expect(drilledTotal(c, {
+      spendOnly: true, category: 'Food & Drink', subcategory: '(uncategorised)'
+    })).toMatchObject({ total: 1, sum: 10, rows: ['unclear'] });
+  });
+
+  it('leaves out income, an excluded row, and a row with no base amount', () => {
+    const c = mixed();
+    const drilled = drilledTotal(c, { spendOnly: true }).rows;
+
+    expect(drilled).not.toContain('salary');       // money in
+    expect(drilled).not.toContain('moved money');  // in_reports false
+    expect(drilled).not.toContain('swiss francs'); // amount_base blank
+  });
+
+  it('still lists all of them when the drill is off, because the ledger is not a report', () => {
+    expect(mixed().webAppRecords_(july, 0).total).toBe(8);
+  });
+
+  it('treats `All` and an absent field as no filter at all', () => {
+    // Both forms reach the server: `All` from the page, absent from a filter
+    // object built before these three existed.
+    const c = mixed();
+    expect(c.webAppRecords_({ ...july, category: 'All', subcategory: 'All' }, 0).total).toBe(8);
+    expect(c.webAppRecords_({ ...july, spendOnly: false }, 0).total).toBe(8);
+  });
+
+  it('drops the holds on a drill, because a hold was never part of the number', () => {
+    // `pending` carries no category, no `amount_base` and no `in_reports`, so
+    // it cannot be one of the rows a tapped total was made of — and drawn above
+    // a list whose promise is that it adds up, it is the row that breaks it.
+    const c = withHolds([tx({ amount_base: -12.5 })], [hold()]);
+
+    expect(c.webAppRecords_(july, 0).pending).toHaveLength(1);
+    expect(c.webAppRecords_({ ...july, spendOnly: true }, 0).pending).toEqual([]);
+    expect(c.webAppRecords_({ ...july, category: 'Food & Drink' }, 0).pending).toEqual([]);
+  });
+
+  it('narrows further when a drill and a search are both on', () => {
+    const c = mixed();
+    const both = c.webAppRecords_({
+      ...july, spendOnly: true, category: 'Food & Drink', search: 'coop'
+    }, 0);
+
+    expect(both.rows.map((r) => r.description)).toEqual(['coop']);
+  });
 });

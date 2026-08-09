@@ -66,6 +66,15 @@ An asset — a brokerage account, a car, a property — is a wallet you top up b
 
 **Account** — chips, and more than one at a time. **Label** and **search** on Records.
 
+### Drilling from a number to the rows behind it
+
+On Charts, the **Spending** card and every **category bar** open the transactions that make them up. Tapping a bar drills; the small chevron beside it opens that category's subcategories, which drill too.
+
+The list you land on is the rows the number was computed from, not merely the same period. Spending counts money **out** and only rows marked `in_reports`, so the drill carries that restriction with it — a transfer, a refund and a salary are all absent, and the list adds up to the figure you tapped. That is the point of it: a list that came from a total and disagreed with it would leave you with two plausible answers and no way to tell which was wrong.
+
+Records shows what was carried across as chips above the list — **Money out**, the category, the subcategory — and each one clears on tap. Clearing the category clears the subcategory with it, because a subcategory on its own does not name one group: `(uncategorised)` is a bucket every category has.
+
+The period, accounts and label come across from Charts as they were set. Search and *needs review* are cleared, since either would narrow the list below the number that opened it.
 ### The URL remembers what you were looking at
 
 The address bar is rewritten every time you change screen or change a filter, so a **refresh brings back exactly what was on screen** — the tab, the period, the accounts, the label, the search text and the review toggle.
@@ -85,6 +94,8 @@ That makes it a bookmark rather than only a recovery. `…/exec?v=records&p=year
 Only what differs from the default is written, so a fresh open stays at a bare `?v=dashboard`, and anything the URL leaves out opens on its default. A **period** the app does not recognise is ignored rather than guessed at, so a stale link opens on this month. An **account** it does not recognise is still applied and still gets its chip, pressed — a renamed account would otherwise filter everything away with nothing on screen saying it was doing so.
 
 The two screens reached from an account tile — adding cash, updating a balance — are deliberately **not** in the URL. They carry the account you tapped, which a bookmark cannot, so a refresh from either lands back on the screen you opened it from.
+
+A **drill** is not in the URL either, for a different reason: it is three more filters, and carrying them means a matching mirror in the server's parser and a category name validated against a list. So a refresh after tapping a number comes back to Records without the drill — the chips go with it, so nothing on screen claims a narrowing that is no longer applied.
 
 ### Pending
 

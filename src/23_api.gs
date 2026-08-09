@@ -178,12 +178,18 @@ function appInlineBoot_() {
  * They differ on purpose. Charts asks "how is this month going", so it opens on
  * this month. Records is the screen you go to *to find something*, and a ledger
  * that searches only the last few days is not a ledger.
+ *
+ * Records carries the three drill filters at their off values rather than
+ * omitting them. Nothing here sets them — they arrive by tapping a number on
+ * Charts — but `applyOverview` assigns this object *over* `state.filters.records`
+ * wholesale, so a shape short of a key is a shape that can silently drop one.
  */
 function appDefaultFilters_() {
   return {
     analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
     records: { period: { kind: 'last_12' }, account: 'All', label: 'All',
-      search: '', unconfirmedOnly: false }
+      search: '', unconfirmedOnly: false,
+      spendOnly: false, category: 'All', subcategory: 'All' }
   };
 }
 
