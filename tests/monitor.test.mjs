@@ -379,10 +379,13 @@ describe('snapshotToDrive', () => {
   });
 
   it('still writes the file when the folder is refused for want of a scope', () => {
-    // DriveApp.createFolder needs the full `drive` scope, which this project
-    // deliberately does not ask for. That killed every snapshot on a book that
-    // had not made the folder already, and took `Remove synced duplicates`
-    // down with it. The folder is tidiness; the file is the backup.
+    // The folder is tidiness; the file is the backup. This used to be the
+    // whole story of the snapshot's failure, and it was the smaller half —
+    // `DriveApp.createFolder` is refused without the full `drive` scope, and
+    // so is `DriveApp.createFile`, so the fallback this test covers had
+    // nowhere to fall back to. Both go over the Drive REST API now, which
+    // `drive.file` does answer for, and the test survives because the
+    // reasoning did: a refusal here must cost the folder and not the file.
     const c = load({ refuseDriveFolders: true });
     c.setup();
     addTransactions(c, 2);
@@ -408,6 +411,93 @@ describe('snapshotToDrive', () => {
     expect(c.__driveFiles).toHaveLength(2);
   });
 
+  it('files the CSV in the folder rather than only making one', () => {
+    // The folder id has to reach the upload as `parents`. Without it Drive
+    // takes the file happily and puts it in My Drive, so the folder exists,
+    // the call succeeds, and the backups are not in it.
+    const c = built();
+    addTransactions(c, 1);
+    c.snapshotToDrive();
+
+    expect(c.__driveFiles[0].parent).toBe(c.__driveFolders[0].id);
+  });
+
+  it('signs the upload, since an unsigned Drive call is a 401', () => {
+    const c = built();
+    addTransactions(c, 1);
+    c.snapshotToDrive();
+
+    const upload = c.__fetches.filter((f) => f.url.includes('/upload/drive/v3/'))[0];
+    expect(upload.params.headers.Authorization).toBe('Bearer fake-oauth-token');
+    expect(upload.params.muteHttpExceptions).toBe(true);
+  });
+
+  it('throws when Drive refuses the file, rather than reporting a backup', () => {
+    // The whole point of the rewrite: a snapshot that cannot be written must
+    // fail loudly. It failed loudly before too — what it did not do was fail
+    // in a way anyone could act on, because the error named the folder.
+    const c = built();
+    addTransactions(c, 1);
+    c.UrlFetchApp.fetch = () => ({
+      getResponseCode: () => 403,
+      getContentText: () => JSON.stringify({ error: { message: 'Insufficient Permission' } }),
+      getHeaders: () => ({})
+    });
+
+    expect(() => c.snapshotToDrive()).toThrow(/Drive API 403/);
+  });
+
+  it('says which project to enable the API in, when that is the reason', () => {
+    // A 403 reading `accessNotConfigured` is not a consent problem and the
+    // fix is not in this repo. Saying "insufficient permission" would send
+    // the reader to the scope list, which is the one place with nothing wrong.
+    const c = built();
+    addTransactions(c, 1);
+    c.UrlFetchApp.fetch = () => ({
+      getResponseCode: () => 403,
+      getContentText: () => JSON.stringify({
+        error: { errors: [{ reason: 'accessNotConfigured' }], message: 'Drive API has not been used' }
+      }),
+      getHeaders: () => ({})
+    });
+
+    expect(() => c.snapshotToDrive()).toThrow(/enable the Drive API/);
+  });
+});
+
+describe('checkSnapshotPermitted_', () => {
+  it('proves the write by making a file and removing it again', () => {
+    // The check a fake cannot stand in for, which is why it runs from the
+    // smoke tests against a real book. Here it can only be proved to clean up.
+    const c = built();
+
+    expect(c.checkSnapshotPermitted_()).toMatch(/backup folder/);
+    expect(c.__driveWrites).toHaveLength(1);
+    expect(c.__driveFiles).toHaveLength(0);
+
+    const deletes = c.__fetches.filter((f) => (f.params.method || '') === 'delete');
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].url).toContain('/drive/v3/files/file-1');
+  });
+
+  it('checks the file even when the folder cannot be made', () => {
+    const c = load({ refuseDriveFolders: true });
+    c.setup();
+
+    expect(c.checkSnapshotPermitted_()).toMatch(/My Drive/);
+    expect(c.__driveWrites).toHaveLength(1);
+  });
+
+  it('does not write a transaction into the probe', () => {
+    // It is a permission check, not a backup. A check that costs a full CSV
+    // of `transactions` is a check nobody runs.
+    const c = built();
+    addTransactions(c, 3);
+    c.checkSnapshotPermitted_();
+
+    expect(c.__driveWrites[0].mime).toBe('text/plain');
+    expect(c.__driveWrites[0].content).not.toContain('"uid"');
+  });
 });
 
 describe('toCsv_', () => {

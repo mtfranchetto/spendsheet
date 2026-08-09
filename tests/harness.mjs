@@ -721,7 +721,8 @@ export function createGoogleStubs(options = {}) {
       fetch(url, params) {
         fetches.push({ url, params });
         const handler = options.fetch;
-        const res = handler ? handler(url, params) : { code: 200, body: '{}' };
+        const res = driveApiResponse(url, params) ||
+          (handler ? handler(url, params) : { code: 200, body: '{}' });
         return {
           getResponseCode: () => res.code,
           getContentText: () => res.body,
@@ -781,6 +782,13 @@ export function createGoogleStubs(options = {}) {
         };
         return builder;
       },
+      /**
+       * The token the Drive REST calls sign with. Real Apps Script mints one
+       * carrying exactly the manifest's scopes, which is why the fake Drive
+       * below refuses a request that arrives without it — an unsigned call is
+       * a 401 there and has to be one here.
+       */
+      getOAuthToken: () => 'fake-oauth-token',
       getProjectTriggers: () => triggers.slice(),
       deleteTrigger: (t) => { triggers = triggers.filter((x) => x !== t); },
       getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/FAKE/exec' }),
@@ -811,48 +819,26 @@ export function createGoogleStubs(options = {}) {
     },
 
     /**
-     * No `getFoldersByName`, deliberately — searching Drive needs a restricted
-     * scope this project does not have, and a fake that offers the method
-     * would let code depending on it pass here and fail in production, which
-     * is exactly how the first snapshotToDrive shipped broken.
+     * Every method refuses, because in this project every method does.
+     *
+     * `DriveApp` is documented against the full `drive` scope — the whole
+     * Drive — which `appsscript.json` deliberately does not ask for. The
+     * previous fake modelled that for `createFolder` alone and let
+     * `createFile` succeed, on the same wrong belief the code held; the
+     * snapshot trigger then failed weekly in production with the message
+     * below while the suite stayed green. A fake more forgiving than the real
+     * thing is the recurring way this project ships broken code, and the
+     * cheapest cure is a service that says no to everything, so any new use
+     * of it fails here first. The Drive calls that *are* permitted go over
+     * REST — see `driveApiResponse`.
      */
-    DriveApp: {
-      getFolderById: (id) => {
-        const folder = folders.filter((f) => f.id === id)[0];
-        if (!folder) throw new Error(`No item with the given ID could be found: ${id}`);
-        return folder;
-      },
-      /**
-       * `drive.file` covers this; it does not cover createFolder. Modelled
-       * because the difference is invisible to a fake with no scopes, and that
-       * is exactly how a snapshot that could never run shipped green.
-       */
-      createFile: (fileName, content, mime) => {
-        driveFiles.push({ name: fileName, content, mime });
-        return { getName: () => fileName, getId: () => `file-${driveFiles.length}` };
-      },
-      createFolder: (name) => {
-        if (options.refuseDriveFolders) {
-          throw new Error('Specified permissions are not sufficient to call ' +
-            'DriveApp.createFolder. Required permissions: ' +
-            'https://www.googleapis.com/auth/drive');
-        }
-        const folder = {
-          name,
-          id: `folder-${folders.length + 1}`,
-          trashed: false,
-          getName: () => name,
-          getId: () => folder.id,
-          isTrashed: () => folder.trashed,
-          createFile: (fileName, content, mime) => {
-            driveFiles.push({ name: fileName, content, mime });
-            return { getName: () => fileName, getId: () => `file-${driveFiles.length}` };
-          }
-        };
-        folders.push(folder);
-        return folder;
+    DriveApp: new Proxy({}, {
+      get: (_target, method) => () => {
+        throw new Error('Specified permissions are not sufficient to call ' +
+          `DriveApp.${String(method)}. Required permissions: ` +
+          'https://www.googleapis.com/auth/drive');
       }
-    },
+    }),
 
     /**
      * `createHtmlOutputFromFile` really reads `src/<name>.html`, because the
@@ -934,7 +920,116 @@ export function createGoogleStubs(options = {}) {
   let lockHeld = Boolean(options.lockHeld);
   let triggerSeq = 1;
   const folders = [];
+  /** What Drive still holds — a delete removes from here, as it does there. */
   const driveFiles = [];
+  /**
+   * Every file ever uploaded, deleted or not. `checkSnapshotPermitted_` writes
+   * one and removes it, so `driveFiles` alone cannot say whether it wrote
+   * anything at all, and "wrote nothing" is the failure worth catching.
+   */
+  const driveWrites = [];
+
+  /**
+   * Drive v3, for the three calls this project makes: create a folder, create
+   * a file with its content, read one file's metadata by id.
+   *
+   * It lives inside `UrlFetchApp` rather than beside `DriveApp` because that
+   * is where the real one lives — the snapshot writes over HTTP, since
+   * `drive.file` grants per-file access through the REST API and grants
+   * `DriveApp` nothing at all. Returning `null` for any other URL leaves
+   * `options.fetch` in charge of Enable Banking, which is every other request
+   * in the project.
+   *
+   * Faithful in the two ways that have cost something here: an unauthorised
+   * request is a 401 rather than a success, and a refusal is an HTTP status
+   * with Drive's own error body rather than a thrown Error — the code has to
+   * read `getResponseCode()` to notice, exactly as it must in production.
+   */
+  function driveApiResponse(url, params) {
+    if (String(url).indexOf('googleapis.com/drive/v3/files') === -1 &&
+        String(url).indexOf('googleapis.com/upload/drive/v3/files') === -1) {
+      return null;
+    }
+
+    const headers = (params && params.headers) || {};
+    if (!headers.Authorization) {
+      return { code: 401, body: JSON.stringify({ error: { code: 401, message: 'Login Required' } }) };
+    }
+
+    const method = ((params && params.method) || 'get').toLowerCase();
+
+    if (url.indexOf('/upload/drive/v3/files') !== -1) {
+      const part = multipartParts(params);
+      const metadata = JSON.parse(part.metadata);
+      driveFiles.push({
+        id: `file-${driveFiles.length + 1}`,
+        name: metadata.name,
+        content: part.media,
+        mime: metadata.mimeType,
+        parent: (metadata.parents || [])[0] || null
+      });
+      const created = driveFiles[driveFiles.length - 1];
+      driveWrites.push(created);
+      return { code: 200, body: JSON.stringify({ id: created.id, name: created.name }) };
+    }
+
+    if (method === 'post') {
+      if (options.refuseDriveFolders) {
+        return {
+          code: 403,
+          body: JSON.stringify({
+            error: {
+              code: 403,
+              message: 'Insufficient Permission',
+              errors: [{ reason: 'insufficientPermissions', message: 'Insufficient Permission' }]
+            }
+          })
+        };
+      }
+      const folder = JSON.parse(params.payload);
+      folder.id = `folder-${folders.length + 1}`;
+      folder.trashed = false;
+      folders.push(folder);
+      return { code: 200, body: JSON.stringify({ id: folder.id }) };
+    }
+
+    const id = decodeURIComponent(url.split('/files/')[1].split('?')[0]);
+
+    if (method === 'delete') {
+      // 204 and an empty body, as Drive answers — the caller has to cope with
+      // a success carrying no JSON, which is the one thing about DELETE that
+      // can break a client written against the other two calls.
+      const index = driveFiles.findIndex((f) => f.id === id);
+      if (index === -1) return notFound(id);
+      driveFiles.splice(index, 1);
+      return { code: 204, body: '' };
+    }
+
+    const found = folders.filter((f) => f.id === id)[0];
+    if (!found) return notFound(id);
+    return { code: 200, body: JSON.stringify({ id: found.id, trashed: found.trashed }) };
+  }
+
+  function notFound(id) {
+    return { code: 404, body: JSON.stringify({ error: { code: 404, message: 'File not found: ' + id } }) };
+  }
+
+  /**
+   * The metadata and the content out of a `multipart/related` upload, split on
+   * the boundary the caller declared rather than on a guess — a body whose
+   * boundary does not match its Content-Type is a 400 from Drive and would be
+   * silently accepted by a fake that went looking for `{` instead.
+   */
+  function multipartParts(params) {
+    const boundary = /boundary=(.+)$/.exec(params.contentType)[1];
+    const parts = String(params.payload)
+      .split('--' + boundary)
+      .slice(1, -1)
+      .map((part) => part.replace(/^\r\n/, '').replace(/\r\n$/, ''))
+      .map((part) => part.slice(part.indexOf('\r\n\r\n') + 4));
+
+    return { metadata: parts[0], media: parts[1] };
+  }
 
   // Handles for assertions.
   sandbox.__spreadsheet = spreadsheet;
@@ -947,6 +1042,7 @@ export function createGoogleStubs(options = {}) {
   sandbox.__ui = uiCalls;
   sandbox.__triggers = () => triggers;
   sandbox.__driveFiles = driveFiles;
+  sandbox.__driveWrites = driveWrites;
   sandbox.__driveFolders = folders;
   /** Take or release the script lock from a test, after the sheet is built. */
   sandbox.__setLockHeld = (held) => { lockHeld = held; };

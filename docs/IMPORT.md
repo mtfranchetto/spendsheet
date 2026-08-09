@@ -140,7 +140,7 @@ The synced copy is the one that goes. Neither is more true — they describe the
 
 This is the one place in the project that deletes a row of history, so every row it removes is copied to **`_removed`** first — same columns as `transactions`, so putting one back is a paste. It also refuses to touch row 2 (where every `ARRAYFORMULA` is anchored) and resets the row-loss detector afterwards, which would otherwise block every future sync, correctly, having watched the tab shrink.
 
-The copy goes to a tab rather than to Drive on purpose. `DriveApp.createFolder` needs the full `drive` scope this project deliberately doesn't ask for, so on a book that has never snapshotted the backup fails — and a backup that fails on exactly the books most likely to need one is worse than no backup at all. A tab needs no scope and can't fail for a reason outside the sheet.
+The copy goes to a tab rather than to Drive on purpose. A Drive snapshot reaches outside the book and everything out there can refuse — and it did, for want of a scope, on every run for months (see [MONITORING.md](MONITORING.md)). A backup that fails on exactly the books most likely to need one is worse than no backup at all. A tab needs no scope and can't fail for a reason outside the sheet.
 
 ## Other providers
 

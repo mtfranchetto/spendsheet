@@ -87,6 +87,15 @@ function runSmokeTests() {
     return owner + ' can open the web app';
   }));
 
+  // The one check here that writes something outside the book, and the only
+  // kind of check that could have caught the snapshot: whether Google permits
+  // the write is a fact about this book's consent, invisible to a fake. The
+  // trigger failed weekly for months, mailed each failure to the same address
+  // as every other alert, and nothing in the sheet disagreed with it.
+  results.push(smokeTest_('backup', 'Drive accepts a file from this script', function () {
+    return checkSnapshotPermitted_();
+  }));
+
   results.push(smokeTest_('sheet', 'every chart points at data', function () {
     var empty = emptyCharts_();
     if (empty.length) throw new Error('nothing to plot in ' + empty.join(', '));

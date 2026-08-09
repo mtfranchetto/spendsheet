@@ -719,9 +719,10 @@ describe('removing synced duplicates of imported rows', () => {
   });
 
   it('needs no Drive scope, so a book that never snapshotted still works', () => {
-    // DriveApp.createFolder requires the full `drive` scope this project
-    // refuses. Backing up to Drive here meant the delete died on exactly the
-    // books most likely to need it.
+    // Backing up to Drive here meant the delete died on exactly the books
+    // most likely to need it — and the Drive write was refused for want of a
+    // scope on every book, for months, which nothing in the suite could see.
+    // The undo for a destructive operation does not leave the spreadsheet.
     const c = load({ refuseDriveFolders: true });
     c.setup();
     imported(c);

@@ -28,7 +28,7 @@ const SCOPE_FOR = [
   [/\bUrlFetchApp\./, 'script.external_request', 'outbound HTTP'],
   [/\bScriptApp\./, 'script.scriptapp', 'reading the deployment URL and installing triggers'],
   [/\bMailApp\./, 'script.send_mail', 'sending alerts'],
-  [/\bDriveApp\./, 'drive.file', 'CSV snapshots'],
+  [/googleapis\.com\/(upload\/)?drive\/v3\//, 'drive.file', 'CSV snapshots'],
   [/\bSession\./, 'userinfo.email', 'knowing where to send an alert'],
   [/\bSpreadsheetApp\./, 'spreadsheets.currentonly', 'reading and writing the sheet']
 ];
@@ -66,22 +66,32 @@ describe('appsscript.json', () => {
     expect(manifest.oauthScopes).not.toContain('https://www.googleapis.com/auth/drive.readonly');
   });
 
-  it('calls no DriveApp method that would need a wider scope than drive.file', () => {
-    // Declaring `DriveApp.` is not enough to know which scope it needs, and
-    // this is the gap that let snapshotToDrive ship: getFoldersByName
-    // *searches* Drive, and searching needs drive or drive.readonly. Both are
-    // restricted scopes — an unverified app asking for one is hard-blocked on
-    // some account types, with no Advanced link to click through.
+  it('calls DriveApp nowhere, because every method of it needs the full scope', () => {
+    // The earlier version of this test listed the DriveApp methods believed to
+    // need a wider scope than drive.file and allowed the rest. That list was
+    // the bug: `createFolder` was on it, `createFile` was not, and both throw
+    // "Specified permissions are not sufficient" in production. The weekly
+    // snapshot trigger failed every week for months while this test passed.
     //
-    // Everything below reads beyond what this script created. The way to find
-    // our own folder is to remember its id, not to look for it.
-    const NEEDS_WIDER_SCOPE = [
-      'getFoldersByName', 'getFilesByName', 'getRootFolder', 'getStorageUsed',
-      'searchFiles', 'searchFolders', 'getFolders(', 'getFiles(', 'getTrashedFiles'
-    ];
+    // DriveApp as a service is documented against the full `drive` scope — the
+    // whole Drive, a restricted scope an unverified app is hard-blocked from
+    // on some account types, with no Advanced link to click through. So the
+    // line is drawn at the service, not at a list of its methods: there is no
+    // DriveApp call this project can make. `drive.file` is per-file access
+    // through the REST API, which is how 12_monitor.gs writes the snapshot.
+    //
+    // Matched with the parenthesis so this file may name the thing it forbids
+    // — a rule quoting its own token has twice defeated the grep that enforces
+    // it here, and prose cannot call a function.
+    expect(/\bDriveApp\.\w+\s*\(/.test(source)).toBe(false);
+  });
 
-    const used = NEEDS_WIDER_SCOPE.filter((method) => source.includes('DriveApp.' + method));
-    expect(used).toEqual([]);
+  it('signs its Drive calls with the script token, which the scopes bound', () => {
+    // The token ScriptApp mints carries exactly the manifest's scopes, so a
+    // call needing more fails as a 403 from Google. That is what keeps the
+    // scope list the whole truth about what this script can reach — and it
+    // only holds while nothing reaches Drive by some other route.
+    expect(source).toContain('ScriptApp.getOAuthToken()');
   });
 
   it('needs no new scope for the page, since HtmlService asks for none', () => {

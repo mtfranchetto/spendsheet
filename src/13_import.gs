@@ -611,13 +611,13 @@ function commitStagedImport_(plan) {
  * having watched the tab shrink.
  *
  * The copy goes to a tab rather than to Drive. `snapshotToDrive` was the
- * obvious choice and it is the wrong one: it needs to create a folder, and
- * `DriveApp.createFolder` requires the full `drive` scope this project
- * deliberately does not ask for — so on a book that has never snapshotted, the
- * backup fails and takes the deletion down with it. A tab in the same
- * spreadsheet needs no scope at all, cannot fail for a reason outside the
- * sheet, and is a better artefact besides: the rows are right there to read,
- * and putting one back is a paste.
+ * obvious choice and it is the wrong one: it reaches outside the book, for a
+ * folder and then for a file, and everything out there can refuse. It did
+ * refuse — for want of a Drive scope, on every run, for months — and had this
+ * deletion leaned on it, an undo the user was promised would have been gone
+ * with it. A tab in the same spreadsheet needs no scope at all, cannot fail
+ * for a reason outside the sheet, and is a better artefact besides: the rows
+ * are right there to read, and putting one back is a paste.
  */
 function removeSyncedDuplicates() {
   var ui = SpreadsheetApp.getUi();

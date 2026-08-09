@@ -393,14 +393,12 @@ function startOfDay_(date) {
 function snapshotToDrive() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = sheetOrThrow_(TABS.TRANSACTIONS);
-  var config = readConfig_();
 
   var rows = lastRecordRow_(sheet, colIndex_(TX_COLUMNS, 'uid'));
   var values = sheet.getRange(1, 1, Math.max(rows, 1), TX_COLUMNS.length).getValues();
 
   var name = 'transactions-' + dateKey(new Date()) + '.csv';
-  var where = writeSnapshot_(name, toCsv_(values),
-    String(config.snapshot_folder || 'spendsheet-backups'));
+  var where = writeSnapshot_(name, toCsv_(values), snapshotFolderName_());
 
   ss.toast(name + ' — ' + (rows - 1) + ' rows, in ' + where, 'Snapshot saved', 15);
   return { file: name, rows: rows - 1, where: where };
@@ -409,62 +407,202 @@ function snapshotToDrive() {
 /**
  * The file, in a folder if we are allowed one and in My Drive if not.
  *
- * `DriveApp.createFolder` requires the **full `drive` scope**, which the
- * comment below is right to refuse and wrong to assume `drive.file` covers.
- * The consequence shipped: on any book that had never snapshotted, the folder
- * could not be created and the whole call died with *"Specified permissions
- * are not sufficient to call DriveApp.createFolder"*. Nothing caught it,
- * because the harness fakes DriveApp and a fake has no scopes to be short of.
+ * **`DriveApp` is not used here, and cannot be.** The service is documented
+ * against the full `drive` scope — the whole Drive, a *restricted* scope this
+ * project refuses for the reasons under `snapshotFolderId_`. `createFolder`
+ * was the first casualty, and the fix at the time was to fall back to
+ * `DriveApp.createFile` on the belief that `drive.file` covered at least that.
+ * It does not. The fallback was never reachable ground: the weekly trigger
+ * died with *"Specified permissions are not sufficient to call
+ * DriveApp.createFile"* on every run from the day it shipped, so a backup that
+ * had never once been written went on reporting nothing wrong. Two separate
+ * fixes, both aimed at the folder, because the error named the folder.
  *
- * So the folder is an improvement, not a requirement. Losing it costs tidiness;
- * refusing to write the backup costs the backup.
+ * The Drive **REST API** is what `drive.file` was defined for — per-file
+ * access to files the app itself created. `files.create` is permitted under
+ * it, for a folder exactly as much as for a CSV, so the transport changes and
+ * every decision below it survives. The cost is ~40 lines of multipart body
+ * and an `Authorization` header; the alternative was asking for read access to
+ * every file in the Drive in order to write one.
+ *
+ * The folder is still an improvement rather than a requirement. Losing it
+ * costs tidiness; refusing to write the backup costs the backup.
  */
 function writeSnapshot_(name, content, folderName) {
+  var folderId = null;
   try {
-    snapshotFolder_(folderName).createFile(name, content, MimeType.CSV);
-    return folderName;
+    folderId = snapshotFolderId_(folderName);
   } catch (e) {
-    // Left to throw. If neither a folder nor a plain file is permitted then
-    // there is no backup, and saying so beats a toast claiming there is one.
-    DriveApp.createFile(name, content, MimeType.CSV);
-    return 'My Drive';
+    // Tidiness, not the backup. Fall through and write it to My Drive.
   }
+
+  // Left to throw. If no file can be written then there is no backup, and
+  // saying so beats a toast claiming there is one.
+  driveCreateFile_(name, content, MimeType.CSV, folderId);
+  return folderId ? folderName : 'My Drive';
 }
 
 /**
  * The backup folder, remembered rather than searched for.
  *
- * `getFoldersByName` searches your whole Drive, and searching needs `drive`
- * or `drive.readonly` — both **restricted** scopes. An unverified app asking
- * for those is hard-blocked on some account types with no way through, and
- * verifying one requires a paid annual security assessment. Neither is a
- * reasonable price for finding a folder we made ourselves.
+ * Searching Drive by name needs `drive` or `drive.readonly` — both
+ * **restricted** scopes. An unverified app asking for one is hard-blocked on
+ * some account types with no way through, and verifying one requires a paid
+ * annual security assessment. Neither is a reasonable price for finding a
+ * folder we made ourselves. That reasoning is unchanged by the move to REST:
+ * `files.list` with a name query reads files this script did not create, so
+ * `drive.file` will not answer it either.
  *
  * So it is created once and its id kept in Script Properties. `drive.file`
- * grants access to exactly what this script created, which `getFolderById`
- * is happy with and searching never will be.
+ * grants access to exactly what this script created, which a `files.get` by
+ * id is happy with and a search never will be.
  *
  * Deleting the folder is not an error: the id stops resolving, or resolves to
  * something in the bin, and the next snapshot makes a new one.
  */
 var SNAPSHOT_FOLDER_PROPERTY = 'EB_SNAPSHOT_FOLDER_ID';
 
-function snapshotFolder_(name) {
+var DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
+
+function snapshotFolderId_(name) {
   var properties = PropertiesService.getScriptProperties();
   var id = properties.getProperty(SNAPSHOT_FOLDER_PROPERTY);
 
   if (id) {
     try {
-      var folder = DriveApp.getFolderById(id);
-      if (!folder.isTrashed()) return folder;
+      if (!driveFile_(id).trashed) return id;
     } catch (e) {
       // Gone, or made by another account. Making a new one is the recovery.
     }
   }
 
-  var created = DriveApp.createFolder(name);
-  properties.setProperty(SNAPSHOT_FOLDER_PROPERTY, created.getId());
-  return created;
+  var created = driveRequest_('https://www.googleapis.com/drive/v3/files?fields=id', {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ name: name, mimeType: DRIVE_FOLDER_MIME })
+  });
+
+  properties.setProperty(SNAPSHOT_FOLDER_PROPERTY, created.id);
+  return created.id;
+}
+
+/** One file's metadata, by the id we stored when we created it. */
+function driveFile_(id) {
+  return driveRequest_('https://www.googleapis.com/drive/v3/files/' +
+    encodeURIComponent(id) + '?fields=id,trashed', { method: 'get' });
+}
+
+/**
+ * A file with its content, in one request.
+ *
+ * `uploadType=multipart` is the only single-request form that carries metadata
+ * *and* bytes — `media` alone uploads content under the name "Untitled", which
+ * is a backup you cannot find, and resumable is two round trips for a file
+ * measured in hundreds of kilobytes. The boundary is a UUID because it must
+ * not occur in the payload, and the payload is a CSV of whatever the bank put
+ * in a description field.
+ *
+ * `parents` is omitted rather than sent empty when there is no folder: Drive
+ * reads an absent parent as My Drive, and an empty array as an error.
+ */
+function driveCreateFile_(name, content, mime, folderId) {
+  var metadata = { name: name, mimeType: mime };
+  if (folderId) metadata.parents = [folderId];
+
+  var boundary = 'spendsheet-' + Utilities.getUuid();
+  var body = '--' + boundary + '\r\n' +
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(metadata) + '\r\n' +
+    '--' + boundary + '\r\n' +
+    'Content-Type: ' + mime + '\r\n\r\n' +
+    content + '\r\n' +
+    '--' + boundary + '--';
+
+  return driveRequest_(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+      method: 'post',
+      contentType: 'multipart/related; boundary=' + boundary,
+      payload: body
+    });
+}
+
+/**
+ * The Drive API, signed with this script's own token.
+ *
+ * `ScriptApp.getOAuthToken()` returns a token for the scopes in the manifest
+ * and nothing more, so a call needing something we did not ask for fails as a
+ * 403 from Google rather than as a surprise later. That is the property worth
+ * having: the scope list stays the whole truth about what this script can
+ * reach, which is not true of a service whose scope Apps Script infers.
+ *
+ * `muteHttpExceptions` so the body is readable — Drive puts the reason in it,
+ * and the default behaviour throws it away and leaves you with a status code
+ * to guess from. The one code worth translating is the 403 raised because the
+ * Drive API is switched off in the Cloud project behind the script, which
+ * reads as a permissions failure and is not one.
+ */
+function driveRequest_(url, params) {
+  params.headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+  params.muteHttpExceptions = true;
+
+  var response = UrlFetchApp.fetch(url, params);
+  var code = response.getResponseCode();
+  var body = response.getContentText();
+
+  if (code < 200 || code >= 300) {
+    if (code === 403 && body.indexOf('accessNotConfigured') !== -1) {
+      throw new Error('The Drive API is disabled in the Cloud project behind this ' +
+        'script. Apps Script → Project Settings → Google Cloud Platform project, ' +
+        'then enable the Drive API there. (HTTP 403: ' + body.slice(0, 200) + ')');
+    }
+    throw new Error('Drive API ' + code + ': ' + body.slice(0, 300));
+  }
+
+  return body ? JSON.parse(body) : {};
+}
+
+/**
+ * Can this book write a backup at all? Proven by writing one and deleting it.
+ *
+ * The weekly snapshot is the one piece of this project that a unit test can
+ * never speak for: whether Google permits the write is a fact about the
+ * consent this book was granted, and a fake has no scopes to be short of. It
+ * went unwritten for months — the trigger failed, the failure mail went to the
+ * same address as every other alert, and nothing in the book disagreed.
+ *
+ * A probe rather than a real snapshot, because a check that costs a full CSV
+ * of `transactions` is a check nobody runs. It goes in the backup folder so it
+ * proves the folder too, and it is deleted rather than trashed: a file this
+ * script created is one `drive.file` may remove, and a bin filling with probes
+ * is its own small mess.
+ */
+function checkSnapshotPermitted_() {
+  var name = 'spendsheet-permission-check-' + dateKey(new Date()) + '.txt';
+  var folderId = null;
+  var where = 'My Drive';
+
+  try {
+    folderId = snapshotFolderId_(snapshotFolderName_());
+    where = 'the backup folder';
+  } catch (e) {
+    // The folder is tidiness. Keep going and prove the file, which is not.
+  }
+
+  var created = driveCreateFile_(name, 'Written by Spendsheet to check it may ' +
+    'write backups. Safe to delete.', MimeType.PLAIN_TEXT, folderId);
+
+  driveRequest_('https://www.googleapis.com/drive/v3/files/' +
+    encodeURIComponent(created.id), { method: 'delete' });
+
+  return 'wrote and removed a file in ' + where;
+}
+
+/**
+ * Where the snapshots go, read in one place so the weekly file and the check
+ * that the weekly file is permitted cannot disagree about the folder.
+ */
+function snapshotFolderName_() {
+  return String(readConfig_().snapshot_folder || 'spendsheet-backups');
 }
 
 /**

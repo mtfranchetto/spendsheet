@@ -112,7 +112,9 @@ That leaves exactly one spare, so a single impatient "Sync now" after the nightl
 
 **A weekly CSV of `transactions` into Drive**, installed by Install triggers alongside the sync. Folder name is `snapshot_folder` in `_config`; run it on demand with Spendsheet → Set up and maintain → Snapshot to Drive.
 
-The folder is best-effort. `DriveApp.createFolder` requires the full `drive` scope, which this project refuses for the reasons in [SETUP.md](SETUP.md) — so if Google declines it the CSV is written to My Drive instead and the toast says which. The file is the backup; the folder is tidiness.
+The folder is best-effort: if Google declines it the CSV is written to My Drive instead and the toast says which. The file is the backup; the folder is tidiness.
+
+**The snapshot writes over the Drive REST API rather than through `DriveApp`.** The Apps Script service is documented against the full `drive` scope — read and write access to your whole Drive — which this project refuses for the reasons in [SETUP.md](SETUP.md). `drive.file`, the scope it does ask for, is per-file access to files this script itself created, and that is a REST-API idea: `DriveApp` cannot use it, and every call to it fails with *"Specified permissions are not sufficient"*. That was not understood when the snapshot was written, and the weekly trigger failed on every run for months while mailing each failure to the same address as every other alert. **Smoke tests now include a check that Drive accepts a file from this script** — it writes a small probe file into the backup folder and deletes it again — because whether Google permits the write is a fact about the consent this book was granted, and nothing that runs in CI can stand in for it. If it fails, run the smoke tests before assuming the next weekly snapshot worked.
 
 Version history is not a backup here. A free account keeps **30 days or 100 revisions, whichever comes first** — and a daily sync burns 100 revisions in roughly three months, so discovering in June that something broke in March means it's genuinely gone.
 
