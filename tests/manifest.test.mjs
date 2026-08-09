@@ -28,7 +28,7 @@ const SCOPE_FOR = [
   [/\bUrlFetchApp\./, 'script.external_request', 'outbound HTTP'],
   [/\bScriptApp\./, 'script.scriptapp', 'reading the deployment URL and installing triggers'],
   [/\bMailApp\./, 'script.send_mail', 'sending alerts'],
-  [/googleapis\.com\/(upload\/)?drive\/v3\//, 'drive.file', 'CSV snapshots'],
+  [/\bDrive\.Files\./, 'drive.file', 'CSV snapshots'],
   [/\bSession\./, 'userinfo.email', 'knowing where to send an alert'],
   [/\bSpreadsheetApp\./, 'spreadsheets.currentonly', 'reading and writing the sheet']
 ];
@@ -86,12 +86,29 @@ describe('appsscript.json', () => {
     expect(/\bDriveApp\.\w+\s*\(/.test(source)).toBe(false);
   });
 
-  it('signs its Drive calls with the script token, which the scopes bound', () => {
-    // The token ScriptApp mints carries exactly the manifest's scopes, so a
-    // call needing more fails as a 403 from Google. That is what keeps the
-    // scope list the whole truth about what this script can reach — and it
-    // only holds while nothing reaches Drive by some other route.
-    expect(source).toContain('ScriptApp.getOAuthToken()');
+  it('declares the Drive advanced service, which is what enables the API', () => {
+    // A scope is permission to use an API; it does not switch that API on.
+    // They are separate gates and they fail alike — "has not been used in
+    // project 000000000000 before or it is disabled" reads as a permissions
+    // error and sends you to the scope list, which is the one place with
+    // nothing wrong. Declaring the dependency is what opens the second gate:
+    // Apps Script enables the API in a default Cloud project for a script
+    // that depends on it, and a default project is one the Cloud console will
+    // not open, so there is no other route to it from here.
+    const services = manifest.dependencies.enabledAdvancedServices || [];
+    expect(services.map((s) => s.serviceId)).toContain('drive');
+  });
+
+  it('calls Drive by the names the declared version uses', () => {
+    // v2 is `insert` and `delete`; v3 is `create` and `remove`. The manifest
+    // picks the version and the source has to agree with it — disagree and
+    // every call is a TypeError, raised inside a weekly trigger, which is the
+    // one place in this project that can stay broken without anyone noticing.
+    const drive = (manifest.dependencies.enabledAdvancedServices || [])
+      .filter((s) => s.serviceId === 'drive')[0];
+
+    expect(drive.version).toBe('v3');
+    expect(/\bDrive\.Files\.(insert|delete)\b/.test(source)).toBe(false);
   });
 
   it('needs no new scope for the page, since HtmlService asks for none', () => {
@@ -226,6 +243,67 @@ describe('the repository', () => {
       const text = readFileSync(path, 'utf8');
       MARKUP_SINKS.forEach((sink) => {
         if (text.includes(sink)) offenders.push(`${relative(ROOT, path)} uses ${sink}`);
+      });
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * A colour written as a literal cannot follow the theme, and one of them
+   * was the least legible text in the app.
+   *
+   * The page defines a full token pair for light and dark and then switches on
+   * `prefers-color-scheme`, which works exactly as long as every colour is a
+   * token. `.chip[aria-pressed="true"]` set `color: #fff` — fine over the blue
+   * `--accent` is in light mode, and 2.1:1 over the *light blue* it becomes in
+   * dark. That was the selected state of a filter: the one control whose whole
+   * job is to say which one is on. `.swipe-action` had the identical bug over
+   * `--in`, and `button.primary` had already solved both by using `var(--bg)`.
+   *
+   * White and black are the only two worth forbidding, because they are the
+   * two a person reaches for without thinking of the other theme. A literal
+   * inside a token *definition* is the point of the definition, so the rule is
+   * scoped to declarations that are not in the `:root` blocks.
+   */
+  it('paints no colour in a page with a literal white or black', () => {
+    const LITERAL = /(?:color|background|border-color)\s*:[^;{}]*(#fff\b|#ffffff\b|#000\b|#000000\b|\bwhite\b|\bblack\b)/gi;
+
+    const offenders = [];
+    textFiles(SRC).filter((path) => path.endsWith('.html')).forEach((path) => {
+      readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
+        // A token being defined is the one place a literal belongs.
+        if (/^\s*--/.test(line)) return;
+        const bad = line.match(LITERAL);
+        if (bad) offenders.push(`${relative(ROOT, path)}:${i + 1} ${bad.join(', ').trim()}`);
+      });
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * No ES module syntax, checked before the push rather than after it.
+   *
+   * Apps Script concatenates `src/*.gs` into one global scope and has no module
+   * system, so an `import` or an `export` is a runtime failure for every user —
+   * and an `export` is worse than a break, because it would make a function
+   * reachable from a test while removing it from the one place it has to work.
+   *
+   * This existed only as a CI step, which is a step in the wrong place. The
+   * documented workflow is `npm test` then `npx clasp push --force`, and both
+   * of those happen before CI ever runs — so the exact failure the check exists
+   * to prevent was reachable through the happy path and caught one push too
+   * late. The workflow keeps its copy; it costs nothing and guards a branch
+   * nobody ran the tests on.
+   */
+  it('has no ES module syntax under src/, which Apps Script cannot parse', () => {
+    const MODULE_SYNTAX = /^\s*(import|export)\s/;
+
+    const offenders = [];
+    sourceFiles().forEach((file) => {
+      readFileSync(join(SRC, file), 'utf8').split('\n').forEach((line, i) => {
+        if (MODULE_SYNTAX.test(line)) offenders.push(`src/${file}:${i + 1} ${line.trim()}`);
       });
     });
 

