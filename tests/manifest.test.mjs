@@ -265,6 +265,34 @@ describe('the repository', () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * No ES module syntax, checked before the push rather than after it.
+   *
+   * Apps Script concatenates `src/*.gs` into one global scope and has no module
+   * system, so an `import` or an `export` is a runtime failure for every user —
+   * and an `export` is worse than a break, because it would make a function
+   * reachable from a test while removing it from the one place it has to work.
+   *
+   * This existed only as a CI step, which is a step in the wrong place. The
+   * documented workflow is `npm test` then `npx clasp push --force`, and both
+   * of those happen before CI ever runs — so the exact failure the check exists
+   * to prevent was reachable through the happy path and caught one push too
+   * late. The workflow keeps its copy; it costs nothing and guards a branch
+   * nobody ran the tests on.
+   */
+  it('has no ES module syntax under src/, which Apps Script cannot parse', () => {
+    const MODULE_SYNTAX = /^\s*(import|export)\s/;
+
+    const offenders = [];
+    sourceFiles().forEach((file) => {
+      readFileSync(join(SRC, file), 'utf8').split('\n').forEach((line, i) => {
+        if (MODULE_SYNTAX.test(line)) offenders.push(`src/${file}:${i + 1} ${line.trim()}`);
+      });
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   it('has no literal control character in any text file', () => {
     const offenders = [];
 
