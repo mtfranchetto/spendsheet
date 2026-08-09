@@ -497,6 +497,17 @@
   .rec-sub { color: var(--muted); font-size: 13px; }
   .rec-desc { color: var(--muted); font-size: 12px; }
 
+  /* Labels on a row. Read-only, so they are quieter than the `.chip` you can
+     press — same shape, no border, and they wrap rather than scroll, because a
+     row that scrolls sideways fights the swipe-to-confirm gesture on top of
+     it. */
+  .rec-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .rec-tags .tag {
+    font-size: 11px; line-height: 1.5; padding: 0 7px; border-radius: 999px;
+    background: var(--line); color: var(--muted); max-width: 40vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   #tabs {
     position: fixed; left: 0; right: 0; bottom: 0;
     display: flex; background: var(--bg); border-top: 1px solid var(--line);
@@ -532,10 +543,36 @@
     position: fixed; top: 0; left: 0; right: 0;
     display: flex; align-items: center; justify-content: center;
     height: 56px; pointer-events: none; z-index: 15;
-    color: var(--muted); font-size: 13px;
     transform: translateY(-56px);
   }
   #pull[hidden] { display: none; }
+
+  /*
+    The indicator itself, as a pill rather than as a line of text.
+
+    It was 13px muted grey on the page background, and crossing the threshold
+    changed four words and nothing else — which is a state change announced only
+    by the thing you are least likely to be reading, mid-drag, with a thumb over
+    it. A shape that gains a border and inverts is legible from the corner of
+    an eye; the arrow rotating is the second signal, and it costs nothing.
+
+    `transition` on the colours only. Never on `transform` — the arrow's
+    rotation is a state and the pill's position is your finger, and easing the
+    second one puts the indicator behind the drag.
+  */
+  #pull .pill {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 600;
+    color: var(--muted); background: var(--surface);
+    border: 1px solid var(--line);
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  #pull .pill .arrow { transition: transform .2s ease; font-size: 11px; }
+  #pull[data-armed="true"] .pill {
+    color: var(--bg); background: var(--accent); border-color: var(--accent);
+  }
+  #pull[data-armed="true"] .pill .arrow { transform: rotate(180deg); }
 
   dialog {
     border: none; border-radius: 16px 16px 0 0; padding: 16px;
@@ -704,10 +741,15 @@
       searches only the last five days is not a ledger — a search for a shop
       you remember from March returning nothing is worse than slow, because it
       reads as the transaction not being there.
+
+      Both are overwritten wholesale by `appDefaultFilters_` when the bootstrap
+      lands, so these are the shape rather than the decision. They are kept in
+      step with it anyway: a page that flashed a different period for one paint
+      is a page that has two answers to the same question.
     */
     filters: {
       analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
-      records: { period: { kind: 'last_12' }, account: 'All', label: 'All',
+      records: { period: { kind: 'ytd' }, account: 'All', label: 'All',
                  search: '', unconfirmedOnly: false,
                  // Set only by `drillToRecords`, cleared only by `drillChips`.
                  // No control in the filter bar sets these — the bar is already
@@ -727,6 +769,26 @@
     // screen that has never been opened — so every visit would re-fetch it.
     records: { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
                loading: false, loaded: false },
+
+    /*
+      A counter per screen, stamped on each request and checked on arrival.
+
+      Nothing was tracking requests at all, and both loaders assigned their
+      result wholesale — so of two overlapping fetches the *last to land* won
+      rather than the last requested. Change a filter twice quickly on a slow
+      connection and the screen settles on whichever answer the server happened
+      to finish second, with the filter bar showing the other one.
+
+      A counter rather than an abort: `google.script.run` has no cancel, so the
+      request is going to complete either way. What can be controlled is whether
+      its answer is allowed to land.
+    */
+    requests: { records: 0, analytics: 0 },
+
+    // One dashboard refresh at a time, plus a note that another was asked for
+    // while it ran. See `loadDashboard`.
+    dashboard: { inFlight: false, again: false, fresh: false },
+
     // Which account a cash entry is being added to, set by the tile that
     // opened the form and read back by it as the default.
     addAccount: '',
@@ -804,6 +866,51 @@
         .withFailureHandler(function (error) {
           reject(new Error(error && error.message ? error.message : String(error)));
         })[name].apply(null, args);
+    });
+  }
+
+  /** How long to wait before the one retry. Long enough for a lift to pass. */
+  var RETRY_MS = 1200;
+
+  /**
+   * Errors from the transport rather than from our code.
+   *
+   * `http connection failure 0` is the sandbox host's own wording for an XHR
+   * that died — a radio drop, a tab the OS suspended, a session that expired,
+   * or an execution that queued behind another for long enough that the bridge
+   * gave up. None of those are answers to the question that was asked, and all
+   * of them are reported through the same `withFailureHandler` as a genuine
+   * refusal from `requireOwner_`. Matched on the wording because that is all
+   * there is: the object carries no status and no type.
+   */
+  function isTransportFailure(error) {
+    var message = String((error && error.message) || error || '').toLowerCase();
+    return message.indexOf('connection failure') !== -1 ||
+      message.indexOf('network') !== -1 ||
+      message.indexOf('timed out') !== -1;
+  }
+
+  /**
+   * `call`, with one retry when the transport dropped it.
+   *
+   * **One.** A retry loop against a server that is genuinely unwell turns one
+   * failure into a queue of them, and this is a phone on a train: the second
+   * attempt either works or the answer really is "not now". A refusal from our
+   * own code is never retried, because asking twice cannot change it.
+   *
+   * The reason this earns its place is what the failures looked like. Every
+   * write called `appDashboard`, which forgot the ledger cache and rebuilt it
+   * from four and a half thousand rows — so confirming three rows in a row
+   * queued three multi-second executions, and the bridge dropped the ones at
+   * the back. That cause is fixed at the source; this is for the radio.
+   */
+  function callOrRetry(name) {
+    var args = arguments;
+    return call.apply(null, args).catch(function (error) {
+      if (!isTransportFailure(error)) throw error;
+
+      return new Promise(function (resolve) { setTimeout(resolve, RETRY_MS); })
+        .then(function () { return call.apply(null, args); });
     });
   }
 
@@ -1010,8 +1117,7 @@
    * Looked up by name rather than sent per row, because `byCategory` is keyed
    * by the category name and the icons are a list of about a dozen — joining
    * them on the server would put the same string in the response once per row
-   * to save one lookup here. A subcategory falls through to nothing, which is
-   * correct: only parents carry an icon that means anything at a glance.
+   * to save one lookup here.
    */
   function categoryIcon(name) {
     var found = state.lists.categories.parents.filter(function (entry) {
@@ -1023,11 +1129,16 @@
   /**
    * A *sub*category's icon, which is a different question and a separate list.
    *
-   * Deliberately not folded into `categoryIcon`: that one falls through to
-   * nothing for a subcategory on purpose, because it feeds the row avatars,
-   * where a dozen parent icons are a vocabulary you learn and sixty child ones
-   * are noise. The sheet is the opposite case — one row, named in full, where
-   * `🛒 Groceries` is the confirmation that you picked the right thing.
+   * This used to be for the detail sheet only. The row avatars deliberately
+   * drew the parent's, on the argument that a dozen parent icons are a
+   * vocabulary you learn where sixty child ones are noise — and the argument is
+   * a reasonable one about a *designed* set of parent icons, which this is not.
+   * `categoryChoices_` has no parent icon to send, because `categories` stores
+   * one icon per row and a row is a subcategory; a parent's is simply **the
+   * first child's, whichever that happens to be**. So a flight drew 🎬, from
+   * `Cinema & Events` being the first row under Entertainment, and the ✈️ sat
+   * unused on the row that meant it. A vocabulary of a dozen arbitrary
+   * inheritances is not one you can learn.
    *
    * `children` is the flat list `categoryChoices_` sends, so the names here are
    * unique by construction: a subcategory that named two parents could not
@@ -1915,6 +2026,64 @@
     return row;
   }
 
+  /**
+   * Is this money arriving? The sign, except when there is no sign.
+   *
+   * A €0.00 pre-authorisation is a real debit — a card check at a fuel pump or
+   * a hotel — and `0 < 0` is false, so the row painted it the green of money
+   * received. `kindOfRecord` answered the same question with `0 > 0` and got
+   * `expense`, so the list and the sheet it opened disagreed about one row.
+   * `type` is a formula over the row's category and is the stored answer to
+   * exactly this; at zero it is the only one worth having.
+   *
+   * `null` — a foreign-currency row with no rate yet — is money-out for the
+   * same reason: it is drawn as `—` rather than as a figure, and the muted red
+   * is the one that does not claim anything arrived.
+   */
+  function moneyIn(record) {
+    if (record.amount === null) return false;
+    if (record.amount === 0) return record.type === 'income';
+    return record.amount > 0;
+  }
+
+  /**
+   * The account line: `Revolut`, or `Revolut → Fineco` when the money moved.
+   *
+   * A transfer row used to show the account it was already on, next to a `⇄`
+   * that said only "this went somewhere". The one account the arrow is not
+   * about is that one, and a positive transfer was the worst case — €500
+   * arriving on Fineco, drawn as `⇄ Fineco`, with nothing anywhere saying where
+   * it came from.
+   *
+   * `peerDirection` decides which way the arrow points, and comes from the
+   * server rather than from the sign here: the pairing is `transfer_group`, and
+   * a page that inferred it from the amount would be a second implementation of
+   * something that has an answer already. Blank peer means the other leg is not
+   * in this book — money to another bank or to a person — and the line is left
+   * alone rather than guessing at "outside".
+   */
+  function whereLine(record) {
+    if (!record.peerAccount) return record.account;
+    return record.peerDirection === 'from'
+      ? record.peerAccount + ' \u{2192} ' + record.account
+      : record.account + ' \u{2192} ' + record.peerAccount;
+  }
+
+  /**
+   * A row's labels, as chips under it.
+   *
+   * `labels` has been on every record since `recordForPage_` was written and
+   * was displayed nowhere: you could filter by one, and set one in the sheet,
+   * and never see which rows carried it. Read-only here — the detail sheet is
+   * where they are edited, and a tappable chip in a list whose rows are already
+   * a tap target would be two gestures fighting over the same pixels.
+   */
+  function labelTags(labels) {
+    var box = el('div', 'rec-tags');
+    labels.forEach(function (label) { add(box, el('span', 'tag', label)); });
+    return box;
+  }
+
   function recordRow(record) {
     var button = el('button', 'tap');
     button.type = 'button';
@@ -1928,20 +2097,25 @@
     // category on the same day.
     var what = record.subcategory || record.category || '(uncategorised)';
 
+    // The subcategory's own icon, falling back to the parent's. The colour
+    // still comes from the parent, so a row is placed by its colour and named
+    // by its glyph — and `Flights` stops being a cinema reel.
     var avatar = el('div', 'avatar');
     avatar.style.background = categoryColor(record.category || what);
     avatar.setAttribute('aria-hidden', 'true');
-    add(avatar, document.createTextNode(categoryIcon(record.category) || ''));
+    add(avatar, document.createTextNode(
+      subcategoryIcon(record.subcategory) || categoryIcon(record.category) || ''));
     if (record.confirmed) add(avatar, el('span', 'check'));
     add(button, avatar);
 
     var middle = el('div', 'grow');
     add(middle, add(el('div', 'ellipsis'), document.createTextNode(what)));
-    add(middle, el('div', 'rec-sub', record.account));
+    add(middle, el('div', 'rec-sub', whereLine(record)));
     if (record.description) {
       add(middle, add(el('div', 'rec-desc ellipsis'),
         document.createTextNode(record.description)));
     }
+    if (record.labels && record.labels.length) add(middle, labelTags(record.labels));
     add(button, middle);
 
     /*
@@ -1961,7 +2135,7 @@
     */
     var moved = record.type === TRANSFER;
     var counted = record.inReports !== false;
-    var tone = moved || !counted ? 'moved' : (record.amount < 0 ? 'out' : 'in');
+    var tone = moved || !counted ? 'moved' : moneyIn(record) ? 'in' : 'out';
 
     var amount = el('span', 'num ' + tone);
     if (moved) add(amount, document.createTextNode('\u{21C4} '));
@@ -1972,7 +2146,8 @@
     button.setAttribute('aria-label',
       (record.confirmed ? 'Confirmed. ' : 'Needs review. ') +
       (moved ? 'Transfer. ' : '') + what + ', ' +
-      shortDate(record.date) + ', ' + record.account + ', ' + money(record.amount) +
+      shortDate(record.date) + ', ' + whereLine(record) + ', ' + money(record.amount) +
+      (record.labels && record.labels.length ? '. Labelled ' + record.labels.join(', ') : '') +
       (record.description ? '. ' + record.description : ''));
     button.addEventListener('click', function () {
       // The tail of a swipe, not a tap. Cleared here rather than on a timer,
@@ -2692,7 +2867,10 @@
   function kindOfRecord(record) {
     if (record.type === TRANSFER) return TRANSFER;
     if (record.type === 'income' || record.type === 'expense') return record.type;
-    return record.amount > 0 ? 'income' : 'expense';
+    // Through `moneyIn` rather than `amount > 0`, so the tab this opens on and
+    // the colour the row was drawn in are one decision. They were two, and they
+    // disagreed at exactly zero.
+    return moneyIn(record) ? 'income' : 'expense';
   }
 
   /**
@@ -2892,7 +3070,10 @@
    */
   function destinationPicker(record) {
     var box = el('div');
-    add(box, el('label', null, 'Where did it go?'));
+    // The question is the wrong way round for money arriving, and this sheet is
+    // opened on both legs of the same move.
+    add(box, el('label', null,
+      record.peerDirection === 'from' ? 'Where did it come from?' : 'Where did it go?'));
 
     var where = el('select');
     where.className = 'field';
@@ -2910,6 +3091,13 @@
       option.value = name;
       add(where, option);
     });
+
+    // Opened on the answer, when there is one. This always started at
+    // "Somewhere outside Spendsheet" — including on a row that was already
+    // paired, where re-saving it would have moved a recorded transfer to
+    // nowhere. `peerAccount` is blank unless the other leg is genuinely in the
+    // book, so the default is unchanged for every row that has no answer.
+    if (record.peerAccount) where.value = record.peerAccount;
     add(box, where);
 
     add(box, el('div', 'muted',
@@ -2918,6 +3106,62 @@
       'or as soon as it does.'));
 
     return { node: box, value: function () { return where.value; } };
+  }
+
+  /**
+   * Which *kind* of transfer, which is a question the pane never asked.
+   *
+   * `Cash withdrawal` has been in the taxonomy since the seed, written
+   * automatically by MCC 6011 and by the `PRELIEVO` rules — and unreachable by
+   * hand, because `transferSubcategoryFor_` decided from the destination alone.
+   * That guess is right whenever there is a wallet account to withdraw into and
+   * wrong the rest of the time: an ATM withdrawal by someone who does not track
+   * cash goes to "somewhere outside" and files as `Between accounts`, which is
+   * not what happened.
+   *
+   * The options are the children of any category whose kind is `transfer`, from
+   * the list the bootstrap already sends — so a subcategory you add to the
+   * `Transfer` row of `categories` appears here without a change in this file.
+   * The server checks the answer against the same list rather than trusting it.
+   *
+   * Left unset it sends nothing, and the server guesses as it always did. That
+   * matters more than it looks: the guess is right for the common case, and a
+   * picker that forced an answer would make the ordinary move slower to record
+   * than it is now.
+   */
+  function transferKindPicker(record) {
+    var box = el('div');
+    box.style.marginTop = '12px';
+    add(box, el('label', null, 'What kind of move?'));
+
+    var pick = el('select');
+    pick.className = 'field';
+
+    var children = (state.lists.categories.children || [])
+      .filter(function (entry) { return entry.kind === TRANSFER; });
+
+    // Nothing to choose from is a `categories` tab with no transfer children,
+    // which is a book someone has edited down. The server's own default still
+    // applies, so the control simply does not appear.
+    if (!children.length) return { node: box, value: function () { return ''; } };
+
+    children.forEach(function (entry) {
+      var option = el('option', null, withIcon(entry.icon, entry.name));
+      option.value = entry.name;
+      add(pick, option);
+    });
+
+    // Only when it is one of these. Setting `value` to something no option
+    // carries leaves a `<select>` showing nothing at all — `selectedIndex` goes
+    // to -1 — so a row that was `Groceries` a moment ago would open the pane on
+    // a blank control rather than on the first sensible answer.
+    var already = children.filter(function (entry) {
+      return entry.name === record.subcategory;
+    })[0];
+    if (already) pick.value = already.name;
+    add(box, pick);
+
+    return { node: box, value: function () { return pick.value; } };
   }
 
   /**
@@ -2970,6 +3214,48 @@
 
     // Without this, iOS opens its own selection callout mid-press.
     button.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+  }
+
+  /**
+   * `showModal`, without losing where you were on the page behind it.
+   *
+   * Opening a `<dialog>` on iOS scrolls the document — the browser brings the
+   * focused element into view, and the sheet is fixed to the bottom of the
+   * viewport rather than sitting in the flow, so "into view" means the top. Tap
+   * a transaction four hundred rows down, close the sheet, and you are back at
+   * the newest row with no way to find your place again.
+   *
+   * Pinning the body is the fix that works everywhere: `position: fixed` with a
+   * negative `top` freezes the page exactly where it was, and unpinning it
+   * restores the offset by hand — `scrollTo` because removing `position: fixed`
+   * puts the document back at zero on its own.
+   *
+   * `overflow: hidden` alone is not enough; iOS Safari scrolls the body behind
+   * a fixed element regardless. And the pin is what stops `installPullToRefresh`
+   * arming underneath an open sheet, which it could, being bound to `document`
+   * with `scrollY > 0` as its only guard.
+   */
+  function openWithoutMoving(dialog) {
+    var at = window.scrollY;
+
+    document.body.style.position = 'fixed';
+    document.body.style.top = -at + 'px';
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+
+    // `close` rather than a wrapper around every dismissal: the sheet closes
+    // from the ✕, from a tap on the backdrop, from Escape, and from four
+    // different buttons that act and then close. One listener covers all of
+    // them, and `once` keeps it from accumulating on a reused element.
+    dialog.addEventListener('close', function () {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      window.scrollTo(0, at);
+    }, { once: true });
+
+    dialog.showModal();
   }
 
   /**
@@ -3065,7 +3351,7 @@
     dialog.onclick = function (event) {
       if (event.target === dialog) dialog.close();
     };
-    dialog.showModal();
+    openWithoutMoving(dialog);
   }
 
   /**
@@ -3257,16 +3543,30 @@
       var where = destinationPicker(record);
       add(pane, where.node);
 
-      var labels = labelChips(record);
-      add(pane, labels.node);
+      var kind = transferKindPicker(record);
+      add(pane, kind.node);
 
+      /*
+        **No label chips here, and that is a rule rather than a tidy-up.**
+
+        A label is the axis a category cannot express — `travel` spanning a
+        flight, a hotel and forty euros of coffee. A transfer is the same money
+        in two places, excluded from every total through `in_reports`, so a
+        label on one builds a filter that can never match what it was set to
+        find. `applyReviewDecisions_` refuses the same write, because a page can
+        send anything.
+
+        Labels already on such a row are left where they are. The sheet still
+        owns that column, and quietly clearing something the moment you opened a
+        pane would be the worse half of the same opinion.
+      */
       var mark = el('button', 'primary',
         was === TRANSFER ? 'Save' : 'Mark as a transfer');
       mark.style.marginTop = '16px';
       mark.type = 'button';
       mark.addEventListener('click', function () {
         var destination = where.value();
-        var chosenLabels = labels.chosen();
+        var subcategory = kind.value();
         var renamed = renamedTo();
         dialog.close();
 
@@ -3274,17 +3574,17 @@
         // is what makes it a transfer, and the row redraws neutral at once.
         var before = { category: record.category, subcategory: record.subcategory,
           type: record.type, inReports: record.inReports,
-          confirmed: record.confirmed, labels: record.labels };
+          confirmed: record.confirmed };
 
         record.category = TRANSFER_CATEGORY;
+        record.subcategory = subcategory;
         record.type = TRANSFER;
         record.inReports = false;
         record.confirmed = true;
-        record.labels = chosenLabels.slice();
         render();
 
         var request = { uid: record.uid, destination: destination,
-          labels: chosenLabels };
+          subcategory: subcategory };
         if (renamed) request.description = renamed;
 
         call('appMarkTransfer', request)
@@ -3297,7 +3597,6 @@
             record.type = before.type;
             record.inReports = before.inReports;
             record.confirmed = before.confirmed;
-            record.labels = before.labels;
             toast(error.message);
             render();
           });
@@ -3319,7 +3618,7 @@
       if (event.target === dialog) dialog.close();
     };
 
-    dialog.showModal();
+    openWithoutMoving(dialog);
   }
 
   /**
@@ -3361,6 +3660,22 @@
       return entry.name === name;
     })[0];
     return found ? found.kind : '';
+  }
+
+  /**
+   * Replace an optimistic guess with what the server actually says.
+   *
+   * In place rather than by swapping the object: `state.records.rows` holds
+   * these by reference, `dropIfFiltered` remembers an index into that array,
+   * and the sheet that is still open closed over this exact record. Assigning a
+   * new object would leave three of those pointing at the old one.
+   *
+   * Keyed off the server's own shape, so a field added to `recordForPage_`
+   * arrives here without a second list to keep in step.
+   */
+  function patchRecord(record, fresh) {
+    Object.keys(fresh).forEach(function (key) { record[key] = fresh[key]; });
+    render();
   }
 
   function sendDecision(record, decision) {
@@ -3407,9 +3722,22 @@
       var outcome = (result.results || [])[0];
       if (outcome && !outcome.ok) return refuse('Not saved: ' + outcome.reason);
 
-      toast('Saved.');
-      // The derived columns are formulas, so what a confirmation *means* is
-      // only knowable by asking the sheet again.
+      /*
+        No toast on success, deliberately.
+
+        The row has already redrawn — it carries a tick, it may have changed
+        category, it may have left the list entirely if you were filtering on
+        unconfirmed. A banner saying "Saved." adds nothing to that and costs
+        four seconds of the screen, every single time, on the action you do most
+        often. A refusal still speaks, because a refusal has nothing else to
+        show for itself: the row goes back to how it was, which looks exactly
+        like a tap that never landed.
+
+        `record` is the row as the sheet describes it *now* — the derived
+        columns are formulas, so what a confirmation means is only knowable by
+        asking, and the optimistic patch above is a guess at what it will say.
+      */
+      if (outcome && outcome.record) patchRecord(record, outcome.record);
       reloadAfterWrite();
     }).catch(function (error) { refuse(error.message); });
   }
@@ -3766,9 +4094,20 @@
     var pulling = false;
     var distance = 0;
 
-    var show = function (amount, text) {
+    // Built once and mutated, rather than rebuilt per touchmove. `touchmove`
+    // fires at the screen's refresh rate, and replacing two nodes sixty times a
+    // second is how a gesture starts dropping frames on the device it is for.
+    var pill = el('div', 'pill');
+    var arrow = el('span', 'arrow', '\u{2193}');
+    var caption = el('span', null, '');
+    add(pill, arrow);
+    add(pill, caption);
+    add(node, pill);
+
+    var show = function (amount, text, armed) {
       node.hidden = false;
-      node.textContent = text;
+      caption.textContent = text;
+      node.setAttribute('data-armed', armed ? 'true' : 'false');
       node.style.transform = 'translateY(' + (amount - 56) + 'px)';
       node.style.opacity = Math.min(1, amount / PULL_THRESHOLD);
     };
@@ -3777,6 +4116,7 @@
       node.hidden = true;
       node.style.transform = '';
       node.style.opacity = '';
+      node.setAttribute('data-armed', 'false');
       pulling = false;
       distance = 0;
     };
@@ -3809,7 +4149,8 @@
         ? moveY
         : PULL_THRESHOLD + Math.min(PULL_MAX - PULL_THRESHOLD, (moveY - PULL_THRESHOLD) * 0.4);
 
-      show(distance, distance >= PULL_THRESHOLD ? 'Release to refresh' : 'Pull to refresh');
+      var armed = distance >= PULL_THRESHOLD;
+      show(distance, armed ? 'Release to refresh' : 'Pull to refresh', armed);
     }, { passive: true });
 
     document.addEventListener('touchend', function () {
@@ -3818,14 +4159,14 @@
       var fired = distance >= PULL_THRESHOLD;
       if (!fired) return hide();
 
-      show(PULL_THRESHOLD, 'Refreshing\u{2026}');
+      show(PULL_THRESHOLD, 'Refreshing\u{2026}', true);
       state.refreshing = true;
 
       // Everything, not just the dashboard: a pull is the gesture for "this is
       // stale", and refreshing only the screen behind the indicator would leave
       // the other two exactly as wrong as they were.
       invalidate();
-      loadDashboard();
+      loadDashboard(true);
       refreshCurrentScreen();
 
       // Nothing here returns a promise the gesture can wait on — `loadDashboard`
@@ -3932,8 +4273,11 @@
     state.data.analytics = null;
     render();
 
-    call('appAnalytics', filters).then(function (result) {
+    var stamp = ++state.requests.analytics;
+    callOrRetry('appAnalytics', filters).then(function (result) {
       state.cache[key] = result;
+      if (stamp !== state.requests.analytics) return;
+
       state.data.analytics = result;
       render();
     }).catch(fail);
@@ -3949,7 +4293,10 @@
       loading: true, loaded: false };
     render();
 
-    call('appRecords', currentFilters('records'), 0).then(function (result) {
+    var stamp = ++state.requests.records;
+    callOrRetry('appRecords', currentFilters('records'), 0).then(function (result) {
+      if (stamp !== state.requests.records) return;
+
       state.records = { rows: result.rows, pending: result.pending || [],
         offset: result.rows.length,
         hasMore: result.hasMore, total: result.total, loading: false, loaded: true };
@@ -3961,26 +4308,63 @@
     state.records.loading = true;
     render();
 
-    call('appRecords', currentFilters('records'), state.records.offset).then(function (result) {
-      state.records.rows = state.records.rows.concat(result.rows);
-      state.records.offset += result.rows.length;
-      state.records.hasMore = result.hasMore;
-      state.records.total = result.total;
-      state.records.loading = false;
-      render();
-    }).catch(fail);
+    // Stamped like the others, and this is the one where a late answer does
+    // visible damage rather than merely being stale: it *appends*. A page
+    // fetched under the old filters, arriving after you changed them, would
+    // concatenate rows from a different question onto the list — plausible
+    // rows, in the right shape, in the wrong query.
+    var stamp = ++state.requests.records;
+    callOrRetry('appRecords', currentFilters('records'), state.records.offset)
+      .then(function (result) {
+        if (stamp !== state.requests.records) return;
+
+        state.records.rows = state.records.rows.concat(result.rows);
+        state.records.offset += result.rows.length;
+        state.records.hasMore = result.hasMore;
+        state.records.total = result.total;
+        state.records.loading = false;
+        render();
+      }).catch(fail);
   }
 
   /**
-   * Re-read the dashboard after a write, through the call that drops the cache.
+   * Re-read the dashboard, after a write or after a pull.
    *
    * One call rather than the two the boot makes: this runs after you have
    * already been looking at the screen, so there is no first paint left to
-   * win, and the write that prompted it has bumped the data version anyway.
-   * The result is the union of both halves, distributed back into them.
+   * win. The result is the union of both halves, distributed back into them.
+   *
+   * `fresh` is passed straight to `appDashboard` and decides whether the ledger
+   * cache is thrown away first. Only a pull-to-refresh says yes — see the note
+   * there. A write does not need it and must not ask for it: this used to be
+   * called with no argument from a server that always forgot, so every single
+   * confirmation rebuilt the ledger from the sheet.
+   *
+   * **One in flight at a time, with a trailing re-run.** Confirming three rows
+   * in a row fired three of these, which on Apps Script queue rather than
+   * overlap — so the third answer arrived seconds after the third tap, and the
+   * two before it were thrown away on arrival having cost the same. The trailing
+   * flag is what keeps the last write's numbers from being the ones missed.
    */
-  function loadDashboard() {
-    call('appDashboard').then(function (result) {
+  function loadDashboard(fresh) {
+    if (state.dashboard.inFlight) {
+      state.dashboard.again = true;
+      state.dashboard.fresh = state.dashboard.fresh || !!fresh;
+      return;
+    }
+
+    state.dashboard.inFlight = true;
+    var settle = function () {
+      state.dashboard.inFlight = false;
+      if (!state.dashboard.again) return;
+
+      var wanted = state.dashboard.fresh;
+      state.dashboard.again = false;
+      state.dashboard.fresh = false;
+      loadDashboard(wanted);
+    };
+
+    callOrRetry('appDashboard', !!fresh).then(function (result) {
       // `assetAccounts` carries balances rather than names, so it is refetched
       // with them rather than kept — see the note on `lists` in appDashboard.
       state.lists.accounts = result.lists.accounts;
@@ -4003,7 +4387,11 @@
       };
       state.overviewError = '';
       render();
-    }).catch(fail);
+      settle();
+    }).catch(function (error) {
+      settle();
+      fail(error);
+    });
   }
 
   function fail(error) {
@@ -4079,10 +4467,25 @@
     if (state.screen === 'records' && !state.records.loaded) loadRecords();
   }
 
+  /**
+   * Redraw the whole screen, and stay where you were while doing it.
+   *
+   * This clears `#screens` and rebuilds it, which is fine on a screen change and
+   * costly in the middle of a list: confirming a row four hundred deep tears the
+   * document down and puts it back, and for the instant it is empty the browser
+   * clamps `scrollY` to a page one row tall. Rebuilding restores the height and
+   * not the position.
+   *
+   * Restored synchronously, in the same frame as the rebuild, so nothing is
+   * painted at the wrong offset. Only when it actually moved — an unconditional
+   * `scrollTo` would fight `go()`, which deliberately sends you to the top.
+   */
   function render() {
+    var at = window.scrollY;
     var root = clear(document.getElementById('screens'));
     var screen = SCREENS.filter(function (entry) { return entry.id === state.screen; })[0];
     screen.render(root);
+    if (at && window.scrollY !== at) window.scrollTo(0, at);
 
     var tabs = clear(document.getElementById('tabs'));
     SCREENS.filter(function (entry) {

@@ -28,7 +28,8 @@ The sheet that opens asks **what the row is** before it asks what to file it und
 
 - **Category** is one dropdown, parents as group headings and subcategories under them. Picking a subcategory is enough; its parent comes with it. Each group also offers *"Anything in Shopping"* for when you know the parent and not the child.
 - **The list is filtered to the tab you are on.** A salary should not be offered sixty expense categories. Switching tab is how you reach the other half — which is also the answer for a refund, which arrives positive and belongs under the expense it reverses.
-- **Labels** are chips, pre-ticked to what the row already has. They are chips and not a text box on purpose: filtering matches whole labels, so a typed `business-travel` would silently never match `travel`.
+- **Labels** are chips, pre-ticked to what the row already has. They are chips and not a text box on purpose: filtering matches whole labels, so a typed `business-travel` would silently never match `travel`. They show on the row in the list too, so you can see which transactions carry one without opening anything.
+- **Not on a transfer.** The Transfer tab offers no labels, and the server refuses them there. A label is the axis a category cannot express — `travel` spanning a flight, a hotel and forty euros of coffee — and a transfer is the same money in two places, counted in neither direction. Labelling one builds a filter that can never match what you set it to find. Labels already on such a row are left alone.
 - **The description** is editable on rows you own — cash you typed, a leg this project wrote, anything imported — and read-only on rows a bank sent. The field simply is not there on the second kind, which is worth knowing so its absence reads as a rule rather than a bug. A bank's description is part of what *identifies* the transaction: when the bank sends no immutable reference, the row's id is a hash that includes it, so rewriting one could stop a later sync recognising something already in the book and quietly append a duplicate.
 - **Long-press** a row instead, and you get a rule built from it — pattern, match type, category, priority, all editable before saving. The pattern comes from the server's own merchant normaliser, not a second copy of it in the page.
 - **Swipe right** to confirm without opening anything.
@@ -50,7 +51,11 @@ A cash withdrawal is one row: the bank debits €100, and nothing credits your w
 
 If the matching row hasn't arrived yet, which is the ordinary case on the day you move the money, it marks this side and says so. The pair is made on its own once the other bank syncs — transfer detection treats an already-marked transfer as still pairable, and the app writes the same group id that detection would derive, so the two agree rather than renaming each other.
 
+**What kind of move** is a second dropdown, and it is the one place `Transfer › Cash withdrawal` was previously unreachable by hand. It defaults to what the destination implies — cash out of a bank into a wallet is a withdrawal, everything else is between accounts — which is right whenever you have a wallet account to withdraw into, and wrong for an ATM withdrawal by someone who tracks no cash at all. It offers every subcategory of `Transfer`, so one you add to `categories` appears there without a code change.
+
 Net worth falls on an *outside* transfer, correctly: it is the sum of what you track, and the money has left.
+
+**A row already paired says so.** The list shows `Revolut → Fineco` rather than the one account the ⇄ is not about, and the sheet opens the destination on the account it is already paired with instead of on *"Somewhere outside Spendsheet"*. On the receiving leg the arrow and the question both turn round: money that arrived asks where it came from.
 
 ### Asset accounts, without a balance-history tab
 
@@ -64,7 +69,9 @@ An asset — a brokerage account, a car, a property — is a wallet you top up b
 
 **Period** — this week, this month, last month, **a month**, year to date, last 12 months, one entry per year that has data, or a custom range. The year list is built from your ledger, so it holds no year you have nothing in.
 
-Picking *A month…* puts a row of month chips under the dropdown, and that split is deliberate: a month is a year *and* a month, so spelling out the pairs would mean scrolling a wheel past a hundred entries to reach March. Only months that have started are offered, for the same reason the year list skips a year with nothing in it — a window that is empty by construction looks exactly like a filter that is broken.
+Records opens on **year to date** and Charts on **this month**. Both are the server's answer rather than the page's — `appDefaultFilters_` — so there is one place they are decided. Records is the screen you go to *to find something*, and "this year" is a period you already have an opinion about, where a trailing twelve months is a window that moves under you.
+
+Picking *A month* puts a row of month chips under the dropdown, and that split is deliberate: a month is a year *and* a month, so spelling out the pairs would mean scrolling a wheel past a hundred entries to reach March. Only months that have started are offered, for the same reason the year list skips a year with nothing in it — a window that is empty by construction looks exactly like a filter that is broken.
 
 **Account** — chips, and more than one at a time. **Label** and **search** on Records.
 
@@ -107,9 +114,15 @@ Holds the bank has authorised and not settled appear at the top of Records and o
 
 They are **in no total anywhere**, which is why they say so on screen. Whether the balances above them already account for them is your bank's choice: the preferred balance type is closing-booked, which excludes holds, but not every bank reports one.
 
+They ignore the date filter as long as it **reaches the present** — a hold's date is not final, so windowing it out of "this month" on a date the bank has not settled would hide the rows this exists to show. A period that ended in the past is different: a look back at March 2024 is not a question this morning's holds answer, so they are left out of it.
+
 ### Pull to refresh
 
 Drag down on Home. This is the one gesture that drops the ledger cache explicitly, which makes it the answer for an edit nothing else saw — typing straight into the `transactions` tab from a laptop, say.
+
+The indicator inverts and its arrow turns over once you have pulled far enough, so "release to refresh" is a state you can see without reading it — which matters, because your thumb is over the words.
+
+**Nothing else drops the cache**, and that is the fix for the connection errors. Every write used to route through the same call, so confirming a transaction threw away the whole compacted ledger and rebuilt it from the sheet — and confirming three in a row queued three of those behind each other until the browser's bridge gave up with *"http connection failure 0"*. A write does not need it: writing bumps a version counter the cache is keyed on, which invalidates it without asking.
 
 ## Two deployments, and getting them the wrong way round is the mistake that matters
 

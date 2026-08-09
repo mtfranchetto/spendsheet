@@ -134,13 +134,11 @@ Two rows per transaction, both counted, every total wrong by the overlap.
 
 **Going forward this is handled.** A sync now checks fetched rows against imported ones on **account, date and amount** — not description, which is the field that differs by source, and the reason this was thought impossible. An imported row shadows at most one fetched row, so two €3 coffees imported on one day suppress two and a third still lands. Runs that suppress anything say so: *"12 matched history you imported and were not written again."* If that number climbs when you haven't imported recently, the match is reaching too far and you want to know.
 
-**For copies already in the sheet:** **Spendsheet → Import → Remove synced duplicates**. It pairs each synced row with an imported one, shows the count, the accounts and the date range, and asks before removing anything.
+**That match is exact on all three fields, and one of them is softer than it looks.** An export can record the day a transaction appeared where the bank records the day it booked — a refund a day apart on the two sides is the same refund, and no sync will ever pair it. Suppression stays exact, because it runs silently and the failure it can cause is a real transaction swallowed.
 
-The synced copy is the one that goes. Neither is more true — they describe the same money — so the tie is broken by what's attached: the imported row carries the category you gave it in the tool it came from, the tick that says you meant it, and its labels. The synced row carries an `entry_reference` nothing downstream reads.
+**For copies already in the sheet:** **Spendsheet → Import → Remove synced duplicates**. It pairs each synced row with an imported one, on the exact rule and then again a few days either side, and asks before removing anything. The imported copy is the one that goes, and what it was carrying — category, subcategory, labels, notes — is copied onto the survivor first.
 
-This is the one place in the project that deletes a row of history, so every row it removes is copied to **`_removed`** first — same columns as `transactions`, so putting one back is a paste. It also refuses to touch row 2 (where every `ARRAYFORMULA` is anchored) and resets the row-loss detector afterwards, which would otherwise block every future sync, correctly, having watched the tab shrink.
-
-The copy goes to a tab rather than to Drive on purpose. A Drive snapshot reaches outside the book and everything out there can refuse — and it did, for want of a scope, on every run for months (see [MONITORING.md](MONITORING.md)). A backup that fails on exactly the books most likely to need one is worse than no backup at all. A tab needs no scope and can't fail for a reason outside the sheet.
+That whole subject, including which copy to keep when you do it by hand and why deleting the wrong one silently undoes itself, is [DUPLICATES.md](DUPLICATES.md).
 
 ## Other providers
 

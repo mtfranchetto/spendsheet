@@ -218,6 +218,18 @@ function conflictsWith(previous, record) {
  * make every recurring €50 withdrawal a candidate for every other one. The
  * exports seen here agree with the bank to the day, so precision is worth more
  * than the reach.
+ *
+ * **That last sentence was true of the exports seen at the time and is not a
+ * property of exports.** BudgetBakers recorded an Amazon refund on the day it
+ * appeared and the bank booked it the next morning: same account, same €24.08,
+ * the same description verbatim, and one day between them — which was enough
+ * for this to see nothing at all, and for the row to sit in the book twice for
+ * two months. The rest of the paragraph still holds, so the widened match lives
+ * in `15_duplicates.gs` rather than here: this function runs **silently**, on
+ * every sync, and the failure it can cause is a real transaction swallowed —
+ * the direction the header of this file calls the worse one. `pairNear_` runs
+ * only from a menu item that shows you the pairs and asks. Same relaxation,
+ * different permission to be wrong.
  */
 /**
  * The key, or `''` when any part of it is missing.

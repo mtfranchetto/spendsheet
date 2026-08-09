@@ -958,7 +958,8 @@ function webAppRecords_(filters, offset) {
   var window = resolveWindow_(request.period, now);
   var scope = { account: request.account, label: request.label, window: window };
 
-  var matched = readLedger_()
+  var ledger = readLedger_();
+  var matched = ledger
     .filter(function (row) { return matchesRecordFilters_(row, scope, request); })
     .sort(function (a, b) {
       var byDate = dayNumber_(b.booking_date) - dayNumber_(a.booking_date);
@@ -968,8 +969,14 @@ function webAppRecords_(filters, offset) {
   var start = Math.max(0, Math.floor(Number(offset) || 0));
   var page = matched.slice(start, start + QUERY_PAGE_SIZE);
 
+  // Built from the **whole** ledger and not from `matched`. The other leg of a
+  // transfer is on a different account by definition, so an account filter is
+  // exactly the case that would hide it — and "moved to somewhere" is the one
+  // answer this must not give when it knows the name.
+  var peers = transferPeers_(ledger);
+
   return {
-    rows: page.map(recordForPage_),
+    rows: page.map(function (row) { return recordForPage_(row, peers); }),
     total: matched.length,
     offset: start,
     hasMore: start + page.length < matched.length,
@@ -1019,10 +1026,29 @@ function pendingForPage_(scope, request) {
     .filter(function (row) {
       if (!matchesAccount_(row, scope)) return false;
 
-      // No window test. A hold is by definition recent and by definition not
-      // yet dated the way it will be once it books — filtering it out of "last
-      // 12 months" on a date the bank has not finalised would hide the rows
-      // this exists to show.
+      /*
+        The window test, and it is not the one a row gets.
+
+        This used to skip it entirely, on the grounds that a hold is by
+        definition recent and by definition not yet dated the way it will be
+        once it books — so filtering it out of "last 12 months" on a date the
+        bank has not finalised would hide the rows this exists to show. Sound
+        for a window that reaches the present, and plainly wrong for one that
+        does not: a view of March 2024 drew this morning's holds above a list of
+        two-year-old transactions, under a heading and a count that did not
+        include them.
+
+        So the test is on the *window* rather than on the row. A window that
+        contains today is one where a hold belongs whatever date the bank has
+        put on it, and it keeps the original reasoning intact — which covers
+        every default and every current period. A window that ended in the past
+        is a deliberate look backwards, and a hold placed this week is not part
+        of the answer.
+      */
+      if (!windowReachesToday_(scope.window) && !inWindow_(row.booking_date, scope.window)) {
+        return false;
+      }
+
       var search = String((request || {}).search || '').trim().toLowerCase();
       if (!search) return true;
 
@@ -1044,6 +1070,21 @@ function pendingForPage_(scope, request) {
         pending: true
       };
     });
+}
+
+/** Does this window still include today? See `pendingForPage_`. */
+function windowReachesToday_(window) {
+  if (!window) return true;
+  return dayNumber_(new Date()) <= window.to;
+}
+
+/** Is this date inside the window? Blank dates are outside it. */
+function inWindow_(value, window) {
+  if (!window) return true;
+
+  var day = dayNumber_(value);
+  if (day === null) return false;
+  return day >= window.from && day <= window.to;
 }
 
 /**
@@ -1082,19 +1123,29 @@ function matchesRecordFilters_(row, scope, request) {
     if (splitLabels_(row.labels).indexOf(String(scope.label)) === -1) return false;
   }
 
-  // The two directions, and they are one rule with the comparison flipped:
-  // `in_reports` first, then the sign that `aggregate_` sorted the row into.
-  // `incomeOnly` keeps the strictly positive rather than the non-negative,
-  // which is where it stops being a mirror of `spendOnly` — `aggregate_` puts
-  // a zero row on the income side of its `else`, so it is counted there and
-  // contributes nothing. Listing it would put a €0.00 row in a list of money
-  // received, and leaving it out cannot make the list disagree with the total.
+  /*
+    The two directions, and they are one rule with the comparison flipped:
+    `in_reports` first, then the sign that `aggregate_` sorted the row into.
+
+    **Exactly zero has no sign, so it is answered by `type` instead.** A
+    pre-authorisation is a real debit of €0.00 — a card check at a fuel pump or
+    a hotel — and every part of this project used to answer it differently:
+    this excluded it from both drills, the row on the phone painted it green
+    because `0 < 0` is false, and the sheet opened it on the Expense tab
+    because `0 > 0` is false too. Three plausible answers to a question with a
+    stored answer, since `type` is a formula over the row's category and says
+    `expense`. Nothing about a total moves either way — a zero row adds zero to
+    whichever side takes it — so this costs nothing and stops the list, the
+    colour and the sheet disagreeing about the same row.
+  */
   if (request.spendOnly || request.incomeOnly) {
     if (!isTruthyCell_(row.in_reports)) return false;
     var amount = cellNumber_(row.amount_base);
     if (amount === null) return false;
-    if (request.spendOnly && amount >= 0) return false;
-    if (request.incomeOnly && amount <= 0) return false;
+
+    var moneyIn = amount === 0 ? String(row.type) === TX_TYPE.INCOME : amount > 0;
+    if (request.spendOnly && moneyIn) return false;
+    if (request.incomeOnly && !moneyIn) return false;
   }
 
   if (!matchesGroup_(row.category, request.category)) return false;
@@ -1148,7 +1199,9 @@ function isDrilled_(request) {
  * server knows it. Blank here means the cascade had no opinion, and the page
  * must offer no undo rather than invent one.
  */
-function recordForPage_(row) {
+function recordForPage_(row, peers) {
+  var peer = peers ? peers.of(row) : null;
+
   return {
     uid: String(row.uid || ''),
     date: dayKey_(dayNumber_(row.booking_date)),
@@ -1174,7 +1227,72 @@ function recordForPage_(row) {
     confirmed: isConfirmedRow_(row),
     inReports: isTruthyCell_(row.in_reports),
     // Whether the description is yours to change. See `descriptionIsEditable_`.
-    editableDescription: descriptionIsEditable_(row.source)
+    editableDescription: descriptionIsEditable_(row.source),
+    /*
+      The other end of a transfer, when this book holds it.
+
+      Blank on everything else, and blank on a transfer whose counter-leg is not
+      in the book — money to another bank, or to a person, has no second row and
+      never will. The page has to be able to tell "somewhere outside" from "I do
+      not know", so this says nothing rather than guessing.
+
+      `peerDirection` rather than leaving the page to work it out from the sign:
+      a €500 credit marked as a transfer is money arriving, and its peer is
+      where it came *from*, while the matching debit's peer is where it went
+      *to*. The page had neither and drew both as `⇄` beside the row's own
+      account, which is the one account the arrow is not about.
+    */
+    peerAccount: peer ? peer.account : '',
+    peerDirection: peer ? peer.direction : ''
+  };
+}
+
+/**
+ * `transfer_group` → the other leg, for whichever leg you ask about.
+ *
+ * The column is written by `detectTransfers_` and by `webAppLinkTransfer_`, and
+ * both write the identical `tr:<the debit's uid>` to *both* rows — so a group
+ * is a pair, and the other one is whichever member is not the row in hand. A
+ * group holding three rows is a pairing that has gone wrong; this answers
+ * nothing for it rather than picking one, because a transfer that names two
+ * destinations is worse than one that names none.
+ *
+ * Rows are matched by `_row` rather than by uid: a leg this project wrote for a
+ * cash withdrawal has a derived uid, and a book carrying two rows with the same
+ * uid is a state `08_dedup` exists to prevent but cannot promise about history
+ * that predates it. The row number is the one identifier a sheet cannot
+ * duplicate.
+ *
+ * Built once per request and handed in, rather than looked up per row: the
+ * alternative is a scan of the whole ledger for every transfer on the page.
+ */
+function transferPeers_(ledger) {
+  var groups = {};
+
+  (ledger || []).forEach(function (row) {
+    var group = String(row.transfer_group || '');
+    if (!group) return;
+    if (!groups[group]) groups[group] = [];
+    groups[group].push(row);
+  });
+
+  return {
+    of: function (row) {
+      var group = String(row.transfer_group || '');
+      var members = group ? groups[group] : null;
+      if (!members || members.length !== 2) return null;
+
+      var other = members[0]._row === row._row ? members[1] : members[0];
+      if (other._row === row._row) return null;
+
+      var amount = cellNumber_(row.amount_base);
+      if (amount === null) amount = cellNumber_(row.amount);
+
+      return {
+        account: String(other.account_name || ''),
+        direction: amount !== null && amount > 0 ? 'from' : 'to'
+      };
+    }
   };
 }
 

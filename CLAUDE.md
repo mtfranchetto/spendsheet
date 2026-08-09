@@ -35,7 +35,7 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `12_monitor.gs` | the six failure detectors, alerting, Drive snapshots. |
 | `13_import.gs` | formula builders for `_import_staged`. No importer — see the governing rule. |
 | `14_categorize.gs` | the cascade: merchant keys, learned memory, transfer pairing, confirming. |
-| *(15 is free)* | `15_recurring.gs` held cadence detection and a 90-day cashflow projection. Both were removed — the most machinery in the project per question answered, and the question is one `reports` reaches directly. `git log -- src/15_recurring.gs`. |
+| `15_duplicates.gs` | one transaction, two rows, two sources. The only code in the project that deletes a row of history. (`15_recurring.gs` held cadence detection and a 90-day cashflow projection; both were removed as the most machinery in the project per question answered, and the question is one `reports` reaches directly. `git log -- src/15_recurring.gs`.) |
 | *(16 is free)* | `16_dashboard.gs` built the `dashboard` and `recent` tabs. Both were removed once the mobile app answered the same questions better: between them they were ~1,300 lines and about fifty `ARRAYFORMULA` anchors, which is the single largest source of the failures listed below. Its addressing helpers — `columnIndexOf_`, `nextColumn_`, `sheetRange_`, `txRange_`, `txQueryRange_`, `q_` — moved to `03_sheets.gs`, where the reports tab and the review tab were already using them. `git log -- src/16_dashboard.gs`. |
 | `17_analytics.gs` | period arithmetic, the `reports` tab, and every chart in the book. |
 | `17_review.gs` | the review queue and the `onEdit` write-back. |

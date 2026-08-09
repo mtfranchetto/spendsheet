@@ -520,7 +520,8 @@ describe('a query against a real book', () => {
     // The derived columns are formulas on a real book, and the harness never
     // evaluates one — so the values they would have produced are written in.
     rows.forEach((r, i) => {
-      ['amount_base', 'category', 'subcategory', 'type', 'in_reports', 'labels', 'confirmed']
+      ['amount_base', 'category', 'subcategory', 'type', 'in_reports', 'labels',
+        'confirmed', 'transfer_group']
         .forEach((name) => {
           if (r[name] !== undefined) c.writeCell_(tx, i + 2, c.TX_COLUMNS, name, r[name]);
         });
@@ -664,11 +665,29 @@ describe('a query against a real book', () => {
   });
 
   it('does not window holds out on a date the bank has not finalised', () => {
-    // A pending authorisation's date moves on the way to being booked. Filtering
-    // it against the chosen window would hide exactly the rows this shows.
+    // A pending authorisation's date moves on the way to being booked, so a
+    // window that reaches the present keeps it whatever date it carries —
+    // which is every default and every current period.
     const c = withHolds([tx()], [hold({ booking_date: new Date(2026, 0, 4) })]);
 
-    expect(c.webAppRecords_(july, 0).pending).toHaveLength(1);
+    expect(c.webAppRecords_({ period: { kind: 'ytd' } }, 0).pending).toHaveLength(1);
+    expect(c.webAppRecords_({ period: { kind: 'mtd' } }, 0).pending).toHaveLength(1);
+  });
+
+  it('windows holds out of a period that ended in the past', () => {
+    // The other half, and the reason the rule is about the window rather than
+    // the row: a view of a month two years ago drew this morning's holds above
+    // a list of two-year-old transactions, under a count that excluded them.
+    // A deliberate look backwards is not a question today's holds answer.
+    const c = withHolds([tx()], [hold({ booking_date: new Date(2026, 0, 4) })]);
+
+    expect(c.webAppRecords_({ period: { kind: 'month', year: 2024, month: 3 } }, 0)
+      .pending).toHaveLength(0);
+
+    // Still shown when the hold's own date falls inside that past window —
+    // it is only the ones that could not belong that go.
+    expect(c.webAppRecords_({ period: { kind: 'month', year: 2026, month: 1 } }, 0)
+      .pending).toHaveLength(1);
   });
 
   it('searches holds on the two text fields the tab actually has', () => {
@@ -693,6 +712,76 @@ describe('a query against a real book', () => {
 
     expect(c.webAppRecords_(july, 0).rows.map((r) => r.description)).toEqual(['a transfer']);
     expect(c.webAppAnalytics_(july).totals.count).toBe(0);
+  });
+
+  /*
+    Where a transfer went, or where it came from.
+
+    The row used to say only that it *was* one — a `⇄` next to the account it
+    was already on, which is the one account the arrow is not about. Both legs
+    carry the same `tr:<debit uid>` in `transfer_group`, so the other end is
+    whichever member of the group this row is not.
+  */
+  it('names the other end of a transfer, and which end this one is', () => {
+    const c = bookWith([
+      tx({ uid: 't-out', description: 'to savings', account_name: 'Revolut',
+        amount_base: -500, type: 'transfer', in_reports: false,
+        transfer_group: 'tr:t-out' }),
+      tx({ uid: 't-in', description: 'from current', account_name: 'Fineco',
+        amount_base: 500, type: 'transfer', in_reports: false,
+        transfer_group: 'tr:t-out' })
+    ]);
+    const rows = c.webAppRecords_(july, 0).rows;
+    const out = rows.find((r) => r.uid === 't-out');
+    const into = rows.find((r) => r.uid === 't-in');
+
+    expect(out).toMatchObject({ peerAccount: 'Fineco', peerDirection: 'to' });
+    expect(into).toMatchObject({ peerAccount: 'Revolut', peerDirection: 'from' });
+  });
+
+  it('says nothing about a transfer with no second leg in the book', () => {
+    // Money to another bank, or to a person, has no second row and never will.
+    // The page has to tell "somewhere outside" from "I do not know".
+    const c = bookWith([
+      tx({ description: 'to a friend', type: 'transfer', in_reports: false })
+    ]);
+
+    expect(c.webAppRecords_(july, 0).rows[0]).toMatchObject({
+      peerAccount: '', peerDirection: ''
+    });
+  });
+
+  it('finds the other leg even when the account filter hides it', () => {
+    // The other leg is on a different account by definition, so an account
+    // filter is exactly the case that would hide it — and "moved to somewhere"
+    // is the one answer this must not give when it knows the name.
+    const c = bookWith([
+      tx({ uid: 't-out', account_name: 'Revolut', amount_base: -500,
+        type: 'transfer', in_reports: false, transfer_group: 'tr:t-out' }),
+      tx({ uid: 't-in', account_name: 'Fineco', amount_base: 500,
+        type: 'transfer', in_reports: false, transfer_group: 'tr:t-out' })
+    ]);
+    const rows = c.webAppRecords_({ ...july, account: ['Revolut'] }, 0).rows;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].peerAccount).toBe('Fineco');
+  });
+
+  it('names nothing when a group holds more than two rows', () => {
+    // A pairing that has gone wrong. A transfer naming two destinations is
+    // worse than one naming none.
+    const c = bookWith([
+      tx({ uid: 't-1', account_name: 'Revolut', transfer_group: 'tr:t-1',
+        type: 'transfer', in_reports: false }),
+      tx({ uid: 't-2', account_name: 'Fineco', transfer_group: 'tr:t-1',
+        type: 'transfer', in_reports: false }),
+      tx({ uid: 't-3', account_name: 'Wallet', transfer_group: 'tr:t-1',
+        type: 'transfer', in_reports: false })
+    ]);
+
+    c.webAppRecords_(july, 0).rows.forEach((row) => {
+      expect(row.peerAccount).toBe('');
+    });
   });
 
   it('searches the fields a phone would search', () => {
@@ -834,22 +923,27 @@ describe('a query against a real book', () => {
     expect(page.rows.reduce((n, r) => n + r.amount, 0)).toBe(2000);
   });
 
-  it('leaves a zero-amount row out of income, which cannot change the total', () => {
-    // Where the mirror stops being exact, stated as a test because the comment
-    // saying so is the kind that rots. `aggregate_` sorts a zero into income on
-    // its `else`, contributing nothing; the list keeps only the strictly
-    // positive, so a €0.00 row never appears among money received. Both halves
-    // still report 2000.
+  it('sorts a zero-amount row by its type, because zero has no sign', () => {
+    // A €0.00 pre-authorisation is a real debit — a card check at a fuel pump.
+    // Nothing about a total moves whichever side takes it, so the only thing at
+    // stake is agreement, and there used to be none: this excluded it from both
+    // directions while the phone painted it green and the sheet opened it on
+    // the Expense tab. `type` is a formula over the category and is the one
+    // stored answer.
     const c = bookWith([
       tx({ description: 'salary', amount_base: 2000, category: 'Income',
            subcategory: 'Salary', type: 'income' }),
       tx({ description: 'nothing at all', amount_base: 0, category: 'Income',
-           subcategory: 'Salary', type: 'income' })
+           subcategory: 'Salary', type: 'income' }),
+      tx({ description: 'fuel pump check', amount_base: 0, category: 'Transport',
+           subcategory: 'Fuel', type: 'expense' })
     ]);
-    const page = c.webAppRecords_({ ...july, incomeOnly: true }, 0);
 
     expect(c.webAppAnalytics_(july).totals.income).toBe(2000);
-    expect(page.rows.map((r) => r.description)).toEqual(['salary']);
+    expect(c.webAppRecords_({ ...july, incomeOnly: true }, 0)
+      .rows.map((r) => r.description)).toEqual(['nothing at all', 'salary']);
+    expect(c.webAppRecords_({ ...july, spendOnly: true }, 0)
+      .rows.map((r) => r.description)).toEqual(['fuel pump check']);
   });
 
   it('never lists a row under both directions', () => {

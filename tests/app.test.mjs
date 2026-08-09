@@ -291,6 +291,87 @@ describe('confirming from the app', () => {
   });
 
   /*
+    A label is an axis over spending, and a transfer is not spending.
+
+    `travel` earns its place by spanning a flight, a hotel and forty euros of
+    coffee — things a category cannot group. A transfer is the same money in two
+    places, excluded from every total through `in_reports`, so a label on one
+    builds a filter that can never match what it was set to find. The page no
+    longer offers the chips on that pane; this is the second ask, for the same
+    reason `descriptionIsEditable_` is asked twice.
+  */
+  it('refuses a label on a row that is already a transfer', () => {
+    const c = book([tx({ uid: 'u-1', category: 'Transfer',
+      subcategory: 'Between accounts', type: 'transfer' })]);
+
+    const result = c.appConfirm([{ uid: 'u-1', confirmed: true, labels: ['travel'] }]);
+
+    expect(uidRow(c, 'u-1').labels).toBe('');
+    expect(uidRow(c, 'u-1').confirmed).toBe(true);
+    expect(result.results[0]).toMatchObject({ ok: true, refused: ['labels'] });
+  });
+
+  it('refuses a label on a row this very decision makes a transfer', () => {
+    // The question is about the row *after* the write. Marking something a
+    // transfer and labelling it arrive in one request, and reading the current
+    // category would let the label through on the way past.
+    const c = book([tx({ uid: 'u-1' })]);
+
+    c.appConfirm([{ uid: 'u-1', category_override: 'Transfer', labels: ['travel'] }]);
+
+    expect(uidRow(c, 'u-1').labels).toBe('');
+    expect(uidRow(c, 'u-1').category_override).toBe('Transfer');
+  });
+
+  it('says so rather than reporting nothing to write, when the label was all there was', () => {
+    const c = book([tx({ uid: 'u-1', category: 'Transfer', type: 'transfer' })]);
+
+    const result = c.appConfirm([{ uid: 'u-1', labels: ['travel'] }]);
+
+    expect(result.results[0]).toMatchObject({ ok: false });
+    expect(result.results[0].reason).toContain('transfer');
+  });
+
+  /*
+    The page patches its own copy before this call and has to — a phone that
+    waits three seconds to redraw a row you just tapped feels broken. But the
+    patch is a guess: `type`, `category`, `subcategory` and `in_reports` are
+    formulas, so what a confirmation *means* is only knowable by asking the
+    sheet. The guess used to be left standing until something else happened to
+    refetch, which on the Records screen could be never.
+  */
+  it('hands back the row as the sheet now describes it', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+
+    const result = c.appConfirm([{ uid: 'u-1', category_override: 'Housing',
+      subcategory_override: 'Rent' }]);
+
+    expect(result.results[0].record).toMatchObject({
+      uid: 'u-1', confirmed: true, account: 'Revolut', description: 'COOP SUPERMERCATO'
+    });
+  });
+
+  it('sends no row number back, because a page cannot address one', () => {
+    // The uid is the whole of the addressing. `_row` is an address in a sheet
+    // the page has never seen and that re-numbers under it.
+    const c = book([tx({ uid: 'u-1' })]);
+
+    const entry = c.appConfirm([{ uid: 'u-1', confirmed: true }]).results[0];
+
+    expect(entry._row).toBeUndefined();
+    expect(entry.record).toBeTruthy();
+  });
+
+  it('hands nothing back for a row it could not write', () => {
+    const c = book([tx({ uid: 'u-1' })]);
+
+    const entry = c.appConfirm([{ uid: 'gone', confirmed: true }]).results[0];
+
+    expect(entry.ok).toBe(false);
+    expect(entry.record).toBeUndefined();
+  });
+
+  /*
     A boolean in the labels column is not a label called "false".
 
     It reached the phone as a fourth chip beside three real labels, selected,
@@ -597,6 +678,51 @@ describe('marking a transfer, with somewhere for the money to go', () => {
       String(r.source) === c.TX_SOURCE_TRANSFER_LEG).forEach((r) => {
       expect(String(r.category_override)).toBe('Transfer');
     });
+  });
+
+  /*
+    The subcategory is a guess that is right whenever a wallet account exists
+    to withdraw into, and wrong the rest of the time. An ATM withdrawal by
+    someone who does not track cash goes to "somewhere outside" and used to file
+    as `Between accounts`, which is not what happened — and there was no way to
+    say so, because the pane never asked.
+  */
+  it('guesses the subcategory from the destination when you say nothing', () => {
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet' });
+
+    expect(ledger(c).find((r) => String(r.uid) === 'w-tx').subcategory_override)
+      .toBe('Cash withdrawal');
+  });
+
+  it('takes the subcategory you picked over the one it would have guessed', () => {
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: c.TRANSFER_OUTSIDE,
+      subcategory: 'Cash withdrawal' });
+
+    expect(ledger(c).find((r) => String(r.uid) === 'w-tx').subcategory_override)
+      .toBe('Cash withdrawal');
+  });
+
+  it('ignores a subcategory that is not a child of Transfer', () => {
+    // A browser can send anything, and a name from another parent would resolve
+    // through `VLOOKUP` to that parent's kind — quietly putting the row back
+    // into spending, which is the one thing marking a transfer is for.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet', subcategory: 'Groceries' });
+
+    expect(ledger(c).find((r) => String(r.uid) === 'w-tx').subcategory_override)
+      .toBe('Cash withdrawal');
+  });
+
+  it('writes no labels, whatever the page sends', () => {
+    // This used to accept them to save a round trip — sound about the cost, and
+    // about a write it no longer makes. A transfer is excluded from every
+    // total, so a label on one is a filter that can never match.
+    const c = withdrawal();
+    c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet', labels: ['travel'] });
+
+    expect(ledger(c).find((r) => String(r.uid) === 'w-tx').labels).toBe('');
   });
 
   it('writes one leg however many times you tap', () => {
@@ -1803,12 +1929,31 @@ describe('the ledger cache', () => {
   */
   it('goes to the sheet for a pull to refresh', () => {
     const c = book([tx({ uid: 'u-1', description: 'ORIGINAL', amount_base: -5 })]);
+    c.appDashboard(true);
+
+    editDescriptionDirectly(c, 2, 'EDITED ON THE DESKTOP');
+    c.appDashboard(true);
+
+    expect(descriptions(c)).toEqual(['EDITED ON THE DESKTOP']);
+  });
+
+  it('does not go to the sheet after an ordinary write', () => {
+    // The same call serves a pull-to-refresh and every write, and only one of
+    // them means "I do not believe what is on screen". Forgetting the cache on
+    // a write rebuilt the whole ledger per confirmation — and three
+    // confirmations in a row queued three of those, which is what the client
+    // bridge gives up on with `http connection failure 0`.
+    //
+    // A write does not need it: `writeCell_` bumps `transactions_version`,
+    // which invalidates the cache by construction. This edits the sheet
+    // *behind* that mechanism, which is the one case a cache is allowed to
+    // miss, and asserts it is not paid for on every tap.
+    const c = book([tx({ uid: 'u-1', description: 'ORIGINAL', amount_base: -5 })]);
     c.appDashboard();
 
     editDescriptionDirectly(c, 2, 'EDITED ON THE DESKTOP');
-    c.appDashboard();
 
-    expect(descriptions(c)).toEqual(['EDITED ON THE DESKTOP']);
+    expect(descriptions(c)).toEqual(['ORIGINAL']);
   });
 
   /*
@@ -1946,7 +2091,7 @@ describe('the first screen, inlined into the page', () => {
     const c = book([tx()]);
     const screens = c.appOverview().screens;
 
-    expect(screens.filters.records.period.kind).toBe('last_12');
+    expect(screens.filters.records.period.kind).toBe('ytd');
     expect(screens.filters.analytics.period.kind).toBe('mtd');
     expect(screens.records.rows).toBeInstanceOf(Array);
   });
