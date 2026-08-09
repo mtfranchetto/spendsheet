@@ -222,6 +222,17 @@
     background: var(--accent); border-color: var(--accent); color: #fff;
   }
 
+  /*
+    The drill chips on Records, which are a different kind of chip: an account
+    chip is a toggle you press, these report a filter set on another screen and
+    the only thing they do is remove it. Hence `.on` rather than
+    `aria-pressed` — there is no off state to be in — and the ✕, which says
+    "tapping me takes this away" where a filled chip would say the opposite.
+  */
+  .drills { margin: -4px 0 12px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip .x { margin-left: 7px; opacity: .75; }
+
   /* A row you can act on. 44px is the smallest thing a thumb hits reliably. */
   .tap {
     display: flex; align-items: center; gap: 10px; width: 100%;
@@ -344,12 +355,26 @@
     the other — and side by side that reads as the app contradicting itself.
     Nested, "(uncategorised)" inside Food & Drink explains itself.
   */
-  .catline { display: block; width: 100%; margin-bottom: 10px;
-             background: none; border: none; border-radius: 0; padding: 0;
-             min-height: auto; text-align: left; color: inherit; }
+  /*
+    The row is a flex container of two buttons: the bar, which opens the
+    transactions, and the chevron, which opens the subcategories. `.catdrill`
+    carries the chrome-stripping the row itself used to carry when it was the
+    button; `.catline` is now only the layout.
+  */
+  .catline { display: flex; align-items: center; gap: 4px; width: 100%;
+             margin-bottom: 10px; }
+  .catdrill { display: block; width: 100%; flex: 1; min-width: 0;
+              background: none; border: none; border-radius: 0; padding: 0;
+              min-height: auto; text-align: left; color: inherit; }
+  /* 32px so the chevron is a real touch target beside a bar it must not steal
+     taps from — the bar is the common gesture and gets everything else. */
+  .catchevron { flex: none; width: 32px; min-height: 32px; padding: 0;
+                background: none; border: none; color: var(--muted);
+                font-size: 13px; line-height: 1; }
   .children { margin: -2px 0 12px 12px; padding-left: 10px;
               border-left: 2px solid var(--line); }
   .children .bar-fill { opacity: .55; }
+  .children .catdrill { margin-bottom: 8px; }
 
   /*
     The stat cards on Charts: a label, the number, and the shape of it.
@@ -363,6 +388,11 @@
                  color: var(--muted); font-weight: 600; }
   .stat .value { font-size: 23px; font-weight: 600; }
   .stat .thumb { width: 62px; height: 38px; flex: none; overflow: visible; }
+
+  /* The one stat card with rows behind it. See `statCard`. */
+  .stat.tappable { width: 100%; background: none; border: none; border-radius: 0;
+                   padding: 0; min-height: auto; text-align: left; color: inherit; }
+  .stat .chev { flex: none; color: var(--muted); font-size: 20px; line-height: 1; }
 
   /*
     Records grouped under the day they happened on.
@@ -591,7 +621,12 @@
     filters: {
       analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
       records: { period: { kind: 'last_12' }, account: 'All', label: 'All',
-                 search: '', unconfirmedOnly: false }
+                 search: '', unconfirmedOnly: false,
+                 // Set only by `drillToRecords`, cleared only by `drillChips`.
+                 // No control in the filter bar sets these — the bar is already
+                 // five rows tall on a phone, and a filter you can see and
+                 // dismiss is the whole of what these need.
+                 spendOnly: false, category: 'All', subcategory: 'All' }
     },
     data: {},
 
@@ -679,7 +714,8 @@
   /** The filters, as a string, so a result can be cached against them. */
   function signature(filters) {
     return JSON.stringify([filters.period, filters.account, filters.label,
-      filters.search || '', !!filters.unconfirmedOnly]);
+      filters.search || '', !!filters.unconfirmedOnly,
+      !!filters.spendOnly, filters.category || 'All', filters.subcategory || 'All']);
   }
 
   // -------------------------------------------------------------------------
@@ -858,6 +894,17 @@
    * The best form on a narrow screen: lengths from a common baseline, read
    * top to bottom, with the label and the number on the same line as the bar
    * rather than in a legend you have to look back and forth to.
+   *
+   * **The bar opens the transactions; the chevron opens the subcategories.**
+   * The bar used to do the expanding, which made the gesture mean two different
+   * things depending on whether a category happened to have children — and left
+   * the commonest question about a number with no way to ask it. One rule now
+   * covers the whole screen: tap a figure, get the rows behind it. Expanding is
+   * a second, smaller control, which is the right weight for it.
+   *
+   * The row is a `div` holding two buttons rather than a button holding one.
+   * Nested buttons are invalid and browsers resolve the click by unnesting them
+   * in whichever direction they please.
    */
   function categoryBars(rows) {
     var box = el('div');
@@ -871,17 +918,15 @@
       var opens = children.length > 0;
       var open = opens && !!state.expanded[row.name];
 
-      // A button only when there is something to open. A control that does
-      // nothing is worse than no control: it is a promise the row cannot keep.
-      var line = el(opens ? 'button' : 'div', 'catline');
-      if (opens) {
-        line.type = 'button';
-        line.setAttribute('aria-expanded', open ? 'true' : 'false');
-        line.addEventListener('click', function () {
-          state.expanded[row.name] = !open;
-          render();
-        });
-      }
+      var line = el('div', 'catline');
+
+      var drill = el('button', 'catdrill');
+      drill.type = 'button';
+      drill.setAttribute('aria-label',
+        row.name + ' ' + money(row.total) + ', show these transactions');
+      drill.addEventListener('click', function () {
+        drillToRecords({ spendOnly: true, category: row.name });
+      });
 
       // The icon comes from the `categories` tab, which has carried one since
       // the tab was seeded — the page simply never asked for it. A dozen bars
@@ -891,9 +936,8 @@
       var icon = categoryIcon(row.name);
       if (icon) add(label, el('span', null, icon + ' '));
       add(label, document.createTextNode(row.name));
-      if (opens) add(label, el('span', 'muted', open ? '  ▾' : '  ▸'));
 
-      add(line, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
+      add(drill, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
 
       // The same hue the row's disc gets on Records, so a category looks like
       // itself wherever you meet it. One accent colour for twelve bars meant
@@ -902,9 +946,26 @@
       var fill = el('div', 'bar-fill');
       fill.style.background = categoryColor(row.name);
       fill.style.width = Math.max(2, (row.total / biggest) * 100).toFixed(1) + '%';
-      add(line, add(el('div', 'bar-track'), fill));
-      add(box, line);
+      add(drill, add(el('div', 'bar-track'), fill));
 
+      // A chevron only when there is something to open, for the same reason the
+      // whole row used to be a button only then.
+      if (!opens) {
+        add(box, add(line, drill));
+        return;
+      }
+
+      var chevron = el('button', 'catchevron', open ? '▾' : '▸');
+      chevron.type = 'button';
+      chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
+      chevron.setAttribute('aria-label',
+        (open ? 'Hide' : 'Show') + ' subcategories of ' + row.name);
+      chevron.addEventListener('click', function () {
+        state.expanded[row.name] = !open;
+        render();
+      });
+
+      add(box, add(line, drill, chevron));
       if (!open) return;
 
       // Children are drawn against their *parent's* total, not the biggest
@@ -913,8 +974,19 @@
       // under a small category would be a sliver.
       var kids = el('div', 'children');
       children.forEach(function (child) {
-        var kid = el('div');
+        // Drills with **both** names. A child is unique under its parent and
+        // `(uncategorised)` is not unique at all — every category has one — so
+        // the pair is what addresses a group. `matchesGroup_` is asked twice
+        // on the server for exactly this.
+        var kid = el('button', 'catdrill');
+        kid.type = 'button';
         kid.style.marginBottom = '8px';
+        kid.setAttribute('aria-label', child.name + ' in ' + row.name + ' ' +
+          money(child.total) + ', show these transactions');
+        kid.addEventListener('click', function () {
+          drillToRecords({ spendOnly: true, category: row.name, subcategory: child.name });
+        });
+
         add(kid, add(el('div', 'row'),
           add(el('span', 'grow ellipsis'), document.createTextNode(child.name)),
           el('span', 'num muted', money(child.total))));
@@ -1578,9 +1650,81 @@
       (date.getFullYear() === new Date().getFullYear() ? '' : ' ' + date.getFullYear());
   }
 
+  /**
+   * What a drill narrowed this list to, and the way back out of it.
+   *
+   * These three filters have no control in the filter bar — they are set by
+   * tapping a number on Charts — so without this row they would be state you
+   * cannot see, on the screen you go to *to find something*. A search that comes
+   * back empty because of a filter set two screens ago reads as the transaction
+   * not being there, which is the worst answer this app can give.
+   *
+   * Clearing the category clears the subcategory with it. A child on its own
+   * does not name one group — `(uncategorised)` belongs to every category — and
+   * the server would have to guess which parent was meant.
+   *
+   * `spendOnly` is named `Money out` rather than `Spending`, because the chip
+   * says what it is doing to the list rather than which card opened it. The
+   * cleared list is a superset, not a different question.
+   */
+  function drillChips(filters) {
+    var category = filters.category && filters.category !== 'All' ? filters.category : '';
+    var subcategory =
+      filters.subcategory && filters.subcategory !== 'All' ? filters.subcategory : '';
+    if (!filters.spendOnly && !category && !subcategory) return null;
+
+    var box = el('div', 'chips drills');
+    var chip = function (text, clear) {
+      var button = el('button', 'chip on');
+      button.type = 'button';
+      button.setAttribute('aria-label', 'Remove filter: ' + text);
+      add(button, document.createTextNode(text));
+      add(button, el('span', 'x', '✕'));
+      button.addEventListener('click', function () {
+        clear();
+        refreshCurrentScreen();
+      });
+      add(box, button);
+    };
+
+    if (filters.spendOnly) {
+      chip('Money out', function () { filters.spendOnly = false; });
+    }
+    if (category) {
+      chip(withIcon(categoryIcon(category), category), function () {
+        filters.category = 'All';
+        filters.subcategory = 'All';
+      });
+    }
+    if (subcategory) {
+      chip(withIcon(subcategoryIcon(subcategory), subcategory), function () {
+        filters.subcategory = 'All';
+      });
+    }
+
+    // Only when there is more than one thing to clear. With one chip showing,
+    // `Clear all` is a second control doing what the first one already does.
+    if (box.childNodes.length > 1) {
+      var all = el('button', 'chip', 'Clear all');
+      all.type = 'button';
+      all.addEventListener('click', function () {
+        filters.spendOnly = false;
+        filters.category = 'All';
+        filters.subcategory = 'All';
+        refreshCurrentScreen();
+      });
+      add(box, all);
+    }
+
+    return box;
+  }
+
   function renderRecords(root) {
     add(root, el('h1', null, 'Records'));
     add(root, filterBar('records', { search: true, unconfirmed: true }));
+
+    var drills = drillChips(state.filters.records);
+    if (drills) add(root, drills);
 
     // Holds first, above the dated groups, because that is where they are in
     // time — a pending authorisation is newer than anything settled — and
@@ -1622,16 +1766,31 @@
     }
   }
 
-  /** A headline number with the shape of it beside it. */
-  function statCard(label, value, thumb) {
+  /**
+   * A headline number with the shape of it beside it.
+   *
+   * `onTap` makes the whole card a button, and only the cards that *have* rows
+   * behind them get one — a control that does nothing is a promise the card
+   * cannot keep, the same rule `categoryBars` follows for a category with no
+   * subcategories. The chevron says so before it is tapped.
+   */
+  function statCard(label, value, thumb, onTap) {
     var card = el('div', 'card');
-    var stat = el('div', 'stat');
+    var stat = el(onTap ? 'button' : 'div', 'stat');
 
     var left = el('div', 'grow');
     add(left, el('div', 'label', label));
     add(left, el('div', 'value num', value));
     add(stat, left);
     add(stat, thumb);
+
+    if (onTap) {
+      stat.type = 'button';
+      stat.className = 'stat tappable';
+      stat.setAttribute('aria-label', label + ' ' + value + ', show these transactions');
+      add(stat, el('span', 'chev', '›'));
+      stat.addEventListener('click', onTap);
+    }
 
     return add(card, stat);
   }
@@ -1710,7 +1869,14 @@
     // Three answers, biggest first, each with its shape next to it. The full
     // charts are below; these are what you read without scrolling.
     add(root, statCard('Balance', money(data.netWorth.total), sparkline(data.balance)));
-    add(root, statCard('Spending', money(data.totals.expenses), donut(data.byCategory)));
+
+    // The one card with a row set behind it. `Balance` is a position rather
+    // than a set of transactions, and `Cash flow` is a net of two directions
+    // that no single list is the answer to — a drill from either would open
+    // rows that do not add up to the number that opened them.
+    add(root, statCard('Spending', money(data.totals.expenses), donut(data.byCategory),
+      function () { drillToRecords({ spendOnly: true }); }));
+
     add(root, statCard('Cash flow', money(data.totals.net), flowThumb(data.totals)));
 
     if (data.totals.unconvertible) {
@@ -3180,7 +3346,12 @@
       account: filters.account,
       label: filters.label,
       search: filters.search || '',
-      unconfirmedOnly: !!filters.unconfirmedOnly
+      unconfirmedOnly: !!filters.unconfirmedOnly,
+      // Sent from both screens, ignored by `webAppAnalytics_`. Charts never
+      // sets them and reading them there would be a filter with no control.
+      spendOnly: !!filters.spendOnly,
+      category: filters.category || 'All',
+      subcategory: filters.subcategory || 'All'
     };
   }
 
@@ -3287,6 +3458,44 @@
     if (id === 'analytics' && !state.data.analytics) loadAnalytics();
     if (id === 'records' && !state.records.loaded) loadRecords();
     window.scrollTo(0, 0);
+  }
+
+  /**
+   * A number on Charts, opened as the rows behind it.
+   *
+   * **Records' filters are replaced, not merged into.** Whatever was set there
+   * belongs to a different question — a search you typed last week, `needs
+   * review` left on — and any of it surviving would produce a list that no
+   * longer sums to the figure you tapped. That reconciliation is the entire
+   * point of the drill, so everything the server can filter on is stated here
+   * rather than inherited: the three period/account/label answers copied from
+   * Charts, the drill itself, and the other two explicitly off.
+   *
+   * `period` is copied by reference, which is safe because `filterBar` replaces
+   * the object rather than mutating it — except for `custom`, where the two date
+   * inputs write into `filters.period[edge]`. Cloned for that one case, so
+   * editing the range on Records cannot reach back into Charts.
+   *
+   * `loaded` is cleared before `go`, because `go` fetches only when it is false
+   * and the rows on screen belong to the old filters.
+   */
+  function drillToRecords(drill) {
+    var from = state.filters.analytics;
+    state.filters.records = {
+      period: from.period && from.period.kind === 'custom'
+        ? { kind: 'custom', from: from.period.from, to: from.period.to }
+        : from.period,
+      account: from.account,
+      label: from.label,
+      search: '',
+      unconfirmedOnly: false,
+      spendOnly: !!drill.spendOnly,
+      category: drill.category || 'All',
+      subcategory: drill.subcategory || 'All'
+    };
+
+    state.records.loaded = false;
+    go('records');
   }
 
   function render() {

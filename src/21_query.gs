@@ -432,14 +432,28 @@ function aggregate_(rows, window) {
   };
 }
 
+/**
+ * The name a category or subcategory is tallied under, blanks included.
+ *
+ * A helper rather than the ternary it replaces, because this string is now an
+ * *address* as well as a label: `matchesRecordFilters_` takes a group name back
+ * from the page and has to find the same rows the tally counted. Two copies of
+ * the rule would agree until one of them changed, and the failure is silent —
+ * drilling into `(uncategorised)` would return an empty list, which is exactly
+ * what a category with nothing in it looks like.
+ */
+function groupKey_(name) {
+  return isBlankCell_(name) ? '(uncategorised)' : String(name);
+}
+
 function addTo_(target, name, amount) {
-  var key = isBlankCell_(name) ? '(uncategorised)' : String(name);
+  var key = groupKey_(name);
   target[key] = (target[key] || 0) + amount;
 }
 
 /** The same tally, one level down: a subcategory total inside its own parent. */
 function addUnder_(target, parent, child, amount) {
-  var key = isBlankCell_(parent) ? '(uncategorised)' : String(parent);
+  var key = groupKey_(parent);
   if (!target[key]) target[key] = {};
   addTo_(target[key], child, amount);
 }
@@ -960,7 +974,13 @@ function webAppRecords_(filters, offset) {
     offset: start,
     hasMore: start + page.length < matched.length,
     // A separate list, deliberately. See `pendingForPage_`.
-    pending: start === 0 ? pendingForPage_(scope, request) : [],
+    //
+    // Dropped entirely on a drill, and that is the one case where these rows
+    // would mislead rather than inform. `pending` carries `TX_COLUMNS_CODE`
+    // only — no `category`, no `amount_base`, no `in_reports` — so a hold can
+    // never be one of the rows a tapped total was made of. Drawn above a list
+    // whose whole promise is that it adds up, it is the row that breaks it.
+    pending: start === 0 && !isDrilled_(request) ? pendingForPage_(scope, request) : [],
     currency: baseCurrency_(),
     window: { kind: window.kind, from: dayKey_(window.from), to: dayKey_(window.to) }
   };
@@ -1027,13 +1047,29 @@ function pendingForPage_(scope, request) {
 }
 
 /**
- * The records list is the one place `in_reports` must **not** be the gate.
+ * The records list is the one place `in_reports` must **not** be the gate —
+ * unless the list was reached by tapping a number, which is what `spendOnly` is.
  *
  * Every other block here answers "what did I spend", where a transfer and an
  * excluded row are noise. This one answers "what is in my ledger", and a row
  * you cannot find in the list you use to look things up is a row you conclude
  * was never imported. `search` is what a phone actually reaches for, so it is
  * here rather than being a filter you have to set.
+ *
+ * **`spendOnly` exists so that a list reached from a total adds up to it.** The
+ * three drill filters are set by tapping the Spending card or a category bar on
+ * Charts, and a drill whose list disagrees with the figure that opened it is
+ * worse than no drill: the number and the rows are both plausible and only one
+ * of them can be right. So the test here is `matchesFilters_`'s `in_reports`
+ * gate plus `aggregate_`'s money-out rule, in that order and for those reasons —
+ * including the blank `amount_base`, which `aggregate_` counts as `unconvertible`
+ * and leaves out of `expenses` rather than treating as zero.
+ *
+ * `category` and `subcategory` go through `groupKey_`, the same function the
+ * tally keys its buckets with, so `(uncategorised)` addresses the rows it
+ * counted. They arrive as a *pair* for a subcategory drill: a child name is
+ * unique per parent by construction, but `(uncategorised)` is the bucket every
+ * category has, so a child alone cannot name one group.
  */
 function matchesRecordFilters_(row, scope, request) {
   if (!matchesAccount_(row, scope)) return false;
@@ -1046,6 +1082,15 @@ function matchesRecordFilters_(row, scope, request) {
     if (splitLabels_(row.labels).indexOf(String(scope.label)) === -1) return false;
   }
 
+  if (request.spendOnly) {
+    if (!isTruthyCell_(row.in_reports)) return false;
+    var amount = cellNumber_(row.amount_base);
+    if (amount === null || amount >= 0) return false;
+  }
+
+  if (!matchesGroup_(row.category, request.category)) return false;
+  if (!matchesGroup_(row.subcategory, request.subcategory)) return false;
+
   if (request.unconfirmedOnly && isConfirmedRow_(row)) return false;
 
   var search = String(request.search || '').trim().toLowerCase();
@@ -1055,6 +1100,27 @@ function matchesRecordFilters_(row, scope, request) {
     .some(function (field) {
       return String(field == null ? '' : field).toLowerCase().indexOf(search) !== -1;
     });
+}
+
+/**
+ * One group test, for the category and the subcategory alike.
+ *
+ * `All` and absent both mean "do not filter", the convention `matchesAccount_`
+ * and the label test already follow — the page's dropdowns say `All` and a
+ * filter object built before this feature existed says nothing at all, and both
+ * have to keep working.
+ */
+function matchesGroup_(value, wanted) {
+  if (!wanted || wanted === 'All') return true;
+  return groupKey_(value) === String(wanted);
+}
+
+/** Is any of the three drill filters set? See `webAppRecords_` on `pending`. */
+function isDrilled_(request) {
+  var want = request || {};
+  return !!want.spendOnly ||
+    (!!want.category && want.category !== 'All') ||
+    (!!want.subcategory && want.subcategory !== 'All');
 }
 
 /**

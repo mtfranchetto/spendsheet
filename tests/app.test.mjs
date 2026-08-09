@@ -890,6 +890,57 @@ describe('the merchant key a rule is built from', () => {
   });
 });
 
+/*
+  The drill, through the entry point the page actually calls.
+
+  `tests/query.test.mjs` proves the filtering and the reconciliation against
+  `webAppRecords_`. What is left to prove here is that the three fields survive
+  `appRecords` — which is a different question, because they ride inside the
+  filter object rather than as arguments of their own, and a screen that
+  silently ignores them looks exactly like a screen with nothing to show.
+*/
+describe('drilling from Charts, through the entry point', () => {
+  const drillBook = () => book([
+    tx({ uid: 'u-1', description: 'esselunga', amount_base: -40 }),
+    tx({ uid: 'u-2', description: 'osteria', amount_base: -60,
+         subcategory: 'Restaurants' }),
+    tx({ uid: 'u-3', description: 'salary', amount_base: 2000,
+         category: 'Income', subcategory: 'Salary', type: 'income' }),
+    tx({ uid: 'u-4', description: 'moved money', amount_base: -500,
+         category: 'Transfer', subcategory: 'Internal', in_reports: false })
+  ]);
+
+  const last12 = { period: { kind: 'last_12' } };
+
+  it('carries the three filters through appRecords, not just through the query', () => {
+    const c = drillBook();
+
+    expect(c.appRecords(last12, 0).total).toBe(4);
+    expect(c.appRecords({ ...last12, spendOnly: true }, 0).total).toBe(2);
+    expect(c.appRecords({ ...last12, spendOnly: true, category: 'Food & Drink' }, 0)
+      .rows.map((r) => r.description).sort()).toEqual(['esselunga', 'osteria']);
+    expect(c.appRecords({
+      ...last12, spendOnly: true, category: 'Food & Drink', subcategory: 'Restaurants'
+    }, 0).rows.map((r) => r.description)).toEqual(['osteria']);
+  });
+
+  it('adds up to the number on the card that opened it', () => {
+    // The same assertion `query.test.mjs` makes, made once through the public
+    // surface — these are the two functions the page calls within a second of
+    // each other, and they must not be able to disagree.
+    const c = drillBook();
+    const expenses = c.appAnalytics(last12).totals.expenses;
+    const drilled = c.appRecords({ ...last12, spendOnly: true }, 0);
+
+    expect(expenses).toBe(100);
+    expect(drilled.rows.reduce((n, r) => n + -r.amount, 0)).toBe(expenses);
+  });
+
+  // No gate test here: the drill adds no entry point. `appRecords` was already
+  // on `PUBLIC_API`, and the gate is asserted by reading the file rather than by
+  // calling it — see 'the gate on every entry point', which derives the list.
+});
+
 describe('the periods the picker offers', () => {
   const years = (list) => list.filter((p) => p.kind === 'year').map((p) => p.year);
 
@@ -1867,6 +1918,18 @@ describe('the first screen, inlined into the page', () => {
     expect(screens.filters.records.period.kind).toBe('last_12');
     expect(screens.filters.analytics.period.kind).toBe('mtd');
     expect(screens.records.rows).toBeInstanceOf(Array);
+  });
+
+  it('ships the drill filters off rather than absent, because the page assigns the object whole', () => {
+    // `applyOverview` does `state.filters.records = result.screens.filters.records`,
+    // so a shape short of a key is a shape that drops one. Nothing here ever
+    // sets these — they arrive by tapping a number on Charts — but the two
+    // shapes have to match.
+    const records = book([tx()]).appOverview().screens.filters.records;
+
+    expect(records.spendOnly).toBe(false);
+    expect(records.category).toBe('All');
+    expect(records.subcategory).toBe('All');
   });
 
   it('does not precompute Charts, which is not free and not always opened', () => {

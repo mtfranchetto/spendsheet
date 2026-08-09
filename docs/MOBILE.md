@@ -66,6 +66,16 @@ An asset — a brokerage account, a car, a property — is a wallet you top up b
 
 **Account** — chips, and more than one at a time. **Label** and **search** on Records.
 
+### Drilling from a number to the rows behind it
+
+On Charts, the **Spending** card and every **category bar** open the transactions that make them up. Tapping a bar drills; the small chevron beside it opens that category's subcategories, which drill too.
+
+The list you land on is the rows the number was computed from, not merely the same period. Spending counts money **out** and only rows marked `in_reports`, so the drill carries that restriction with it — a transfer, a refund and a salary are all absent, and the list adds up to the figure you tapped. That is the point of it: a list that came from a total and disagreed with it would leave you with two plausible answers and no way to tell which was wrong.
+
+Records shows what was carried across as chips above the list — **Money out**, the category, the subcategory — and each one clears on tap. Clearing the category clears the subcategory with it, because a subcategory on its own does not name one group: `(uncategorised)` is a bucket every category has.
+
+The period, accounts and label come across from Charts as they were set. Search and *needs review* are cleared, since either would narrow the list below the number that opened it.
+
 ### Pending
 
 Holds the bank has authorised and not settled appear at the top of Records and on Home, dashed and not tappable. They carry no category, no `amount_base` and no confirmed state, because a pending authorisation has no stable identity — the amount, the date and the description all move on the way to being booked.
