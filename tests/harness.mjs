@@ -314,8 +314,14 @@ class FakeSheet {
     const key = this._key(r, c);
     this._grow(r, c);
     this.formulas.delete(key);
-    if (v === '' || v === null || v === undefined) this.cells.delete(key);
-    else this.cells.set(key, v);
+    // A leading apostrophe is Sheets' "treat this as text" marker: it is
+    // consumed on write and never comes back out of `getValue`. The fake has
+    // to do the same or `textSafe_` looks lossy here and is not in production
+    // — a test would then pin `'=x` as the stored description, which is a
+    // value no book has ever held. Exactly one, as Sheets does: `''x` is `'x`.
+    const stored = typeof v === 'string' && v.startsWith("'") ? v.slice(1) : v;
+    if (stored === '' || stored === null || stored === undefined) this.cells.delete(key);
+    else this.cells.set(key, stored);
   }
 
   /**

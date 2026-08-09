@@ -16,3 +16,8 @@ node_modules/
 coverage/
 .DS_Store
 *.log
+
+# Agent worktrees. Each is a checkout of this same repo, so `git add -A` offers
+# them as embedded repositories and `npm test` collects their copy of every
+# test file — 3,583 tests over four checkouts, of which 899 are this one.
+.claude/worktrees/
