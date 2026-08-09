@@ -252,7 +252,9 @@
     "tapping me takes this away" where a filled chip would say the opposite.
   */
   .drills { margin: -4px 0 12px; }
-  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* `var(--bg)` for the reason the rule above it now gives: `--accent` is a
+     light blue in dark mode, and white on it is 2.1:1. */
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
   .chip .x { margin-left: 7px; opacity: .75; }
 
   /* A row you can act on. 44px is the smallest thing a thumb hits reliably. */
