@@ -232,6 +232,39 @@ describe('the repository', () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * A colour written as a literal cannot follow the theme, and one of them
+   * was the least legible text in the app.
+   *
+   * The page defines a full token pair for light and dark and then switches on
+   * `prefers-color-scheme`, which works exactly as long as every colour is a
+   * token. `.chip[aria-pressed="true"]` set `color: #fff` — fine over the blue
+   * `--accent` is in light mode, and 2.1:1 over the *light blue* it becomes in
+   * dark. That was the selected state of a filter: the one control whose whole
+   * job is to say which one is on. `.swipe-action` had the identical bug over
+   * `--in`, and `button.primary` had already solved both by using `var(--bg)`.
+   *
+   * White and black are the only two worth forbidding, because they are the
+   * two a person reaches for without thinking of the other theme. A literal
+   * inside a token *definition* is the point of the definition, so the rule is
+   * scoped to declarations that are not in the `:root` blocks.
+   */
+  it('paints no colour in a page with a literal white or black', () => {
+    const LITERAL = /(?:color|background|border-color)\s*:[^;{}]*(#fff\b|#ffffff\b|#000\b|#000000\b|\bwhite\b|\bblack\b)/gi;
+
+    const offenders = [];
+    textFiles(SRC).filter((path) => path.endsWith('.html')).forEach((path) => {
+      readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
+        // A token being defined is the one place a literal belongs.
+        if (/^\s*--/.test(line)) return;
+        const bad = line.match(LITERAL);
+        if (bad) offenders.push(`${relative(ROOT, path)}:${i + 1} ${bad.join(', ').trim()}`);
+      });
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   it('has no literal control character in any text file', () => {
     const offenders = [];
 
