@@ -377,3 +377,68 @@ describe('nothing public is left with no way to reach it', () => {
     expect(orphans).toEqual([]);
   });
 });
+
+/**
+ * The forward reference, which is the one mechanism here built to fail quietly.
+ *
+ * File numbering is load order, so a lower file calling a higher one has to ask
+ * first — `functionExists_('x') && x()`. That is deliberate and it works. What
+ * it also does, by construction, is turn *deleting a file* into a live call
+ * site that does nothing, passes every test, and reads at the call site as a
+ * feature that still runs.
+ *
+ * It had already happened. `09_sync.gs` guarded a call to
+ * `refreshCashflowQuietly_` for the whole of the time since `15_recurring.gs`
+ * was removed, under three lines of comment asserting a post-sync invariant
+ * that no longer held — so an agent asked to make the projection refresh after
+ * a sync would read that, conclude it already did, and stop.
+ *
+ * Two tests already do exactly this for the two places names are held as
+ * strings: `tests/triggers.test.mjs` for the trigger handlers and `the menu`
+ * above for the menu items. Neither could see the inline guards, which are the
+ * majority of them.
+ */
+describe('every forward reference points at something', () => {
+  it('names only functions that exist, so no guard is permanently false', () => {
+    const fresh = load();
+    const src = sourceFiles().map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
+
+    const guarded = [...src.matchAll(/functionExists_\(\s*'([A-Za-z0-9_]+)'\s*\)/g)]
+      .map((m) => m[1]);
+
+    // Not an empty-set trap: if the regex ever stops matching the call shape,
+    // the assertion below passes over nothing and this is what notices.
+    expect(guarded.length).toBeGreaterThan(5);
+
+    const missing = [...new Set(guarded)].filter((name) => typeof fresh[name] !== 'function');
+    expect(missing, `guarded call to a function that no longer exists`).toEqual([]);
+  });
+});
+
+/**
+ * A `_config` row is a promise on a tab the owner reads.
+ *
+ * The same two file deletions left `cashflow_horizon_days` and `trend_days`
+ * seeded into every book, each with a description naming a feature that had
+ * gone. A dead constant is invisible; a dead config row is offered to the
+ * person using the sheet as something they can change.
+ */
+describe('every seeded config row is read by something', () => {
+  it('has a reader in src/ for each key it seeds', () => {
+    const ctx = load();
+    const src = sourceFiles().map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
+
+    // Two shapes count as a reader and both have to, because the codebase uses
+    // both: `configNumber_(config, 'sync_window_days')` names the key as a
+    // string, and `readConfig_().timezone` reaches it as a property. Matching
+    // only the quoted form called three live keys dead. A bare word match
+    // would be worse in the other direction — every one of these keys is also
+    // discussed in a comment, so prose alone would count as use.
+    const readers = (key) =>
+      (src.match(new RegExp("'" + key + "'|\\." + key + "\\b", 'g')) || []).length;
+
+    const unread = ctx.DEFAULT_CONFIG.map((row) => row[0]).filter((key) => readers(key) <= 1);
+
+    expect(unread, 'seeded in _config and read by nothing').toEqual([]);
+  });
+});

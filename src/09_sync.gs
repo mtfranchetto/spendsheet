@@ -144,12 +144,7 @@ function runSync_(options) {
   // this runs long after everything is defined.
   if (totals.inserted && functionExists_('categorizeAfterSync_')) categorizeAfterSync_(config);
 
-  // Balances have just moved, so the projection built from them is now wrong.
-  // It is entirely derived and costs one write, and a "runs out on" date that
-  // silently refers to last week is worse than not showing one.
-  if (functionExists_('refreshCashflowQuietly_')) refreshCashflowQuietly_();
-
-  // And the review queue, for the same reason: it is a snapshot of what is
+  // The review queue, for the same reason: it is a snapshot of what is
   // unconfirmed, so a night's new transactions belong in it before you go
   // looking. Refilling it is the one part of the review workflow a phone
   // cannot do, which is exactly why it happens unattended instead.
