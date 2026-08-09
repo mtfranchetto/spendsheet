@@ -2427,19 +2427,6 @@
     return svg;
   }
 
-  /** In against out, which is the whole of what a cashflow number means. */
-  function flowThumb(totals) {
-    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40' });
-    var biggest = Math.max(totals.income, totals.expenses, 1);
-
-    [[totals.income, 5, 'barmark up'], [totals.expenses, 22, 'barmark']]
-      .forEach(function (bar) {
-        add(svg, svgNode('rect', { x: 0, y: bar[1], height: 13, rx: 3,
-          width: Math.max(3, (bar[0] / biggest) * 100).toFixed(1), class: bar[2] }));
-      });
-    return svg;
-  }
-
   function renderAnalytics(root) {
     add(root, el('h1', null, 'Charts'));
     add(root, filterBar('analytics', {}));
@@ -2454,19 +2441,25 @@
     // charts are below; these are what you read without scrolling.
     add(root, statCard('Balance', money(data.netWorth.total), sparkline(data.balance)));
 
-    // Two cards with a row set behind them, and two without. The rule is
-    // whether one list is the answer to the number: `Spending` and `Income` are
-    // each a total over rows of one sign, so the rows exist and add up.
-    // `Balance` is a position rather than a set of transactions, and `Cash
-    // flow` is the *net* of the two directions — a drill from it would open a
-    // list that sums to neither of the numbers it is made of.
+    /*
+      Two cards with a row set behind them, and one without. The rule is whether
+      one list is the answer to the number: `Spending` and `Income` are each a
+      total over rows of one sign, so the rows exist and add up. `Balance` is a
+      position rather than a set of transactions, and a drill from it would open
+      a list that sums to something else.
+
+      There was a fourth, `Cash flow`, showing `totals.net` beside a pair of
+      in-and-out bars — and the Cashflow section below is the same quantity over
+      the same window, drawn properly. Two readings of one number on one screen
+      is a thing to reconcile rather than to skim, and the summary was the weaker
+      of the two: a period's net is a single figure where the section shows when
+      the money moved. `flowThumb` went with it, having had one caller.
+    */
     add(root, statCard('Spending', money(data.totals.expenses), donut(data.byCategory),
       function () { drillToRecords({ spendOnly: true }); }));
 
     add(root, statCard('Income', money(data.totals.income), incomeThumb(data.cashflow),
       function () { drillToRecords({ incomeOnly: true }); }));
-
-    add(root, statCard('Cash flow', money(data.totals.net), flowThumb(data.totals)));
 
     if (data.totals.unconvertible) {
       add(root, add(el('div', 'card'), el('div', 'muted', data.totals.unconvertible +
