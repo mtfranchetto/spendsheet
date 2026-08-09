@@ -240,8 +240,12 @@ function validateRedirectUrl(url) {
 function doGet(e) {
   var params = (e && e.parameter) || {};
 
+  // `e.parameters` rather than `params`, and only across this one line: the app
+  // restores the account filter from the URL and that filter is a *set*, so
+  // `a=Cash&a=Revolut` has to arrive as two values. The route above is decided
+  // on the single-valued map, which is all `code` and `state` ever are.
   if (functionExists_('webAppPage_') && webAppRoute_(params) === 'app') {
-    return webAppPage_(params);
+    return webAppPage_((e && e.parameters) || {});
   }
 
   try {

@@ -222,6 +222,159 @@ describe('the owner address', () => {
   });
 });
 
+/**
+ * What the URL says the app should be showing.
+ *
+ * The app is in a sandboxed iframe, so a refresh reloads the parent `/exec`
+ * document and everything the page held is gone. The query string is the only
+ * state that crosses that, which makes this the whole of "deep linking" — and
+ * it is reached by an anonymous endpoint, so what it does with a stranger's
+ * parameters is worth writing out rather than assuming.
+ */
+describe('the view on the URL', () => {
+  const view = (parameters) => ctx.webAppView_(parameters);
+
+  it('opens on the dashboard when the URL names nothing', () => {
+    expect(view({}).screen).toBe('dashboard');
+    expect(view(undefined).screen).toBe('dashboard');
+    expect(view({}).filters).toEqual({});
+  });
+
+  it('opens on the screen the URL names', () => {
+    expect(view({ v: ['records'] }).screen).toBe('records');
+    expect(view({ v: ['analytics'] }).screen).toBe('analytics');
+  });
+
+  it('takes a screen name however it was typed', () => {
+    expect(view({ v: ['  Records '] }).screen).toBe('records');
+  });
+
+  it('replaces an unknown screen rather than passing it on', () => {
+    // The screen is interpolated into the served page. Replacing it with one of
+    // our own constants is what makes that safe by construction rather than by
+    // escaping — and `v` is a parameter anyone can put on this public URL.
+    ['add', 'revalue', 'nonsense', '', '../etc'].forEach((asked) => {
+      const screen = view({ v: [asked] }).screen;
+      expect(ctx.WEBAPP_SCREENS.indexOf(screen), asked).not.toBe(-1);
+    });
+  });
+
+  it('does not offer the two screens that need an account in hand', () => {
+    // `add` and `revalue` are opened from an account tile and carry that
+    // account in memory only. A URL naming one would restore a form that had
+    // forgotten what it was for.
+    expect(ctx.WEBAPP_SCREENS).toEqual(['dashboard', 'records', 'analytics']);
+  });
+
+  it('carries the filters the URL named, and only those', () => {
+    // Absent rather than defaulted: a key that is not here means "whatever the
+    // server's default is", so a bookmark cannot freeze today's default.
+    expect(view({ v: ['records'], p: ['year:2024'] }).filters)
+      .toEqual({ period: 'year:2024' });
+  });
+
+  it('keeps every account, because the filter is a set', () => {
+    // Repeated parameters rather than one joined value: a separator is a bet
+    // that no account is ever named with it in it, and losing an account off a
+    // filter is a screen that quietly answers a different question.
+    expect(view({ a: ['Cash', 'Revolut, Ltd'] }).filters.accounts)
+      .toEqual(['Cash', 'Revolut, Ltd']);
+  });
+
+  it('reads a single value that did not arrive in an array', () => {
+    // `e.parameters` gives arrays. Anything hand-built might not, and a bare
+    // string treated as a list is a filter for each of its characters.
+    expect(view({ a: 'Cash' }).filters.accounts).toEqual(['Cash']);
+    expect(view({ v: 'records' }).screen).toBe('records');
+  });
+
+  it('drops a parameter that is present and empty', () => {
+    // `?q=&l=` is what an emptied field would leave behind. It means "no
+    // filter", not "match the empty string".
+    expect(view({ q: [''], l: ['   '], a: ['', 'Cash'] }).filters)
+      .toEqual({ accounts: ['Cash'] });
+  });
+
+  it('treats only `1` as the review filter being on', () => {
+    // A parameter true by its presence alone makes `u=0` and `u=false` both
+    // read as "yes" — a screen showing a fraction of the ledger, silently.
+    expect(view({ u: ['1'] }).filters.unconfirmed).toBe(true);
+    ['0', 'false', 'true', 'yes', ''].forEach((asked) => {
+      expect(view({ u: [asked] }).filters.unconfirmed, asked).toBeUndefined();
+    });
+  });
+
+  it('bounds what a stranger can put into the document', () => {
+    const long = 'x'.repeat(ctx.WEBAPP_PARAM_MAX + 500);
+    expect(view({ q: [long] }).filters.search).toHaveLength(ctx.WEBAPP_PARAM_MAX);
+
+    const many = [];
+    for (let i = 0; i < ctx.WEBAPP_ACCOUNTS_MAX + 20; i++) many.push('a' + i);
+    expect(view({ a: many }).filters.accounts).toHaveLength(ctx.WEBAPP_ACCOUNTS_MAX);
+  });
+
+  it('passes a filter value through as typed, since escaping is the boundary', () => {
+    // An account name is whatever the `accounts` tab says, so this cannot be a
+    // whitelist the way the screen is. It is bounded here and escaped by
+    // `htmlSafeJson_` on the way into the page — and the page may send any
+    // filter it likes to `appRecords` already.
+    expect(view({ l: ['Kids & Co'] }).filters.label).toBe('Kids & Co');
+  });
+
+  it('cannot move a request across the consent line', () => {
+    // The route is decided by `code` and `state` alone, and none of the view
+    // parameters is either — in both directions.
+    expect(ctx.webAppRoute_({ v: 'records', p: 'mtd', a: 'Cash' })).toBe('app');
+    expect(ctx.webAppRoute_({ v: 'records', code: 'auth-code' })).toBe('consent');
+  });
+});
+
+describe('the view, in the page the server sends', () => {
+  function book(options) {
+    const c = load(options);
+    c.setup();
+    return c;
+  }
+
+  it('is written into the document, not fetched by the page', () => {
+    // `google.script.url.getLocation` would read the same URL from inside the
+    // iframe, asynchronously — so the page would draw the dashboard before
+    // learning it was meant to be on Charts. A visible flip on every refresh.
+    const html = book().webAppHtml_({ v: ['records'], p: ['year:2024'] }).getContent();
+
+    expect(html).toContain('id="view"');
+    expect(html).toContain('"screen":"records"');
+    expect(html).toContain('"period":"year:2024"');
+    expect(html).not.toContain('<?!=');
+  });
+
+  it('says dashboard when the URL named nothing, rather than nothing at all', () => {
+    // The page falls back on an unreadable payload, but a template that prints
+    // an empty element is the failure that looks like a working one.
+    const html = book().webAppHtml_().getContent();
+    expect(html).toContain('"screen":"dashboard"');
+  });
+
+  it('escapes a filter value that could close the element it sits in', () => {
+    const c = book();
+    const payload = c.htmlSafeJson_(c.webAppView_({ a: ['ACME </script> LTD'] }));
+
+    expect(payload).toContain('ACME');
+    expect(payload).not.toContain('<');
+    expect(payload).toContain('\\u003c');
+    expect(() => JSON.parse(payload)).not.toThrow();
+    expect(c.webAppHtml_({ a: ['ACME </script> LTD'] }).getContent()).toContain('\\u003c');
+  });
+
+  it('survives the inline dashboard failing, since they are different features', () => {
+    const c = book();
+    c.appInlineBoot_ = undefined;
+
+    const html = c.webAppHtml_({ v: ['analytics'] }).getContent();
+    expect(html).toContain('"screen":"analytics"');
+  });
+});
+
 describe('doGet', () => {
   function book(options) {
     const c = load(options);
@@ -259,6 +412,25 @@ describe('doGet', () => {
 
     expect(html).toContain('Not connected');
     expect(html).toContain('no longer valid');
+  });
+
+  it('hands the app the multi-valued parameters, not the flattened ones', () => {
+    // `e.parameter` keeps only the first value of a repeated parameter, and the
+    // account filter is a set — so serving the app from that map would silently
+    // drop every account after the first off a bookmarked filter.
+    const c = book({ userEmail: 'owner@example.com' });
+    const html = c.doGet({
+      parameter: { v: 'records', a: 'Cash' },
+      parameters: { v: ['records'], a: ['Cash', 'Revolut'] }
+    }).getContent();
+
+    expect(html).toContain('"screen":"records"');
+    expect(html).toContain('"Revolut"');
+  });
+
+  it('serves a page with a view on it even when there are no parameters', () => {
+    const c = book({ userEmail: 'owner@example.com' });
+    expect(c.doGet({ parameter: {} }).getContent()).toContain('"screen":"dashboard"');
   });
 
   it('reports a bank error rather than serving the app', () => {

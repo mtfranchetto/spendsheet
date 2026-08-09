@@ -66,6 +66,26 @@ An asset — a brokerage account, a car, a property — is a wallet you top up b
 
 **Account** — chips, and more than one at a time. **Label** and **search** on Records.
 
+### The URL remembers what you were looking at
+
+The address bar is rewritten every time you change screen or change a filter, so a **refresh brings back exactly what was on screen** — the tab, the period, the accounts, the label, the search text and the review toggle.
+
+That makes it a bookmark rather than only a recovery. `…/exec?v=records&p=year:2024&a=Revolut&u=1` is "everything from Revolut in 2024 that still needs a review", and it is short enough to edit by hand:
+
+| | |
+|---|---|
+| `v` | `dashboard`, `records` or `analytics` |
+| `p` | the period, as the dropdown names it — `mtd`, `last_12`, `year:2024`, `custom` |
+| `from`, `to` | the two ends, and only with `p=custom` |
+| `a` | an account. Repeat it for more than one: `a=Cash&a=Revolut` |
+| `l` | a label |
+| `q` | the search text (Records) |
+| `u` | `1` for "needs review only" (Records) |
+
+Only what differs from the default is written, so a fresh open stays at a bare `?v=dashboard`, and anything the URL leaves out opens on its default. A **period** the app does not recognise is ignored rather than guessed at, so a stale link opens on this month. An **account** it does not recognise is still applied and still gets its chip, pressed — a renamed account would otherwise filter everything away with nothing on screen saying it was doing so.
+
+The two screens reached from an account tile — adding cash, updating a balance — are deliberately **not** in the URL. They carry the account you tapped, which a bookmark cannot, so a refresh from either lands back on the screen you opened it from.
+
 ### Pending
 
 Holds the bank has authorised and not settled appear at the top of Records and on Home, dashed and not tappable. They carry no category, no `amount_base` and no confirmed state, because a pending authorisation has no stable identity — the amount, the date and the description all move on the way to being booked.

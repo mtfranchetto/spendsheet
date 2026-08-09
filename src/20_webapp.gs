@@ -43,6 +43,17 @@
  * The one thing it must never do is serve the app to a request that looks like
  * a callback, or refuse a callback because it looked like a person. Ambiguity
  * resolves towards consent: a request with either parameter is a callback.
+ *
+ * ## Why the app's own state is on the URL too
+ *
+ * The page renders inside Apps Script's sandboxed iframe, and a refresh reloads
+ * the *parent* document — so everything the page was holding is gone and it is
+ * served again from nothing. Which screen you were on and what you had filtered
+ * to therefore has to travel in the one place that survives, the query string,
+ * and `webAppView_` is the whole of reading it back. It is a second reason for
+ * this file to care about parameters, and it shares a rule with the first: the
+ * screen is *replaced* by one of our own constants rather than trusted, because
+ * this endpoint is anonymous and the value is interpolated into the page.
  */
 
 /** `_config` key holding the address allowed through Door 2. */
@@ -53,6 +64,46 @@ var WEBAPP_URL_KEY = 'viewer_url';
 
 /** `_config` key holding a public HTTPS image for the browser tab. See `webAppHtml_`. */
 var WEBAPP_FAVICON_KEY = 'favicon_url';
+
+/**
+ * The query string the app writes about itself, spelled once.
+ *
+ * Short names because this ends up on a phone's address bar and in a bookmark,
+ * and `v=records&p=year:2024&a=Revolut` is something you can read and edit.
+ * The page holds the same five as `VIEW_PARAMS` and the two must agree — one
+ * writes what the other reads, and there is no handshake to catch a drift.
+ */
+var WEBAPP_VIEW_PARAM = 'v';        // which screen
+var WEBAPP_PERIOD_PARAM = 'p';      // the period's id, as `periods` gives it
+var WEBAPP_FROM_PARAM = 'from';     // a custom period's ends, and only then
+var WEBAPP_TO_PARAM = 'to';
+var WEBAPP_ACCOUNT_PARAM = 'a';     // repeatable — the account filter is a set
+var WEBAPP_LABEL_PARAM = 'l';
+var WEBAPP_SEARCH_PARAM = 'q';
+var WEBAPP_UNCONFIRMED_PARAM = 'u'; // `1`, and nothing else is true
+
+/**
+ * The screens a URL is allowed to name, the first being the default.
+ *
+ * The page has five, and two of them — the cash form and the balance form —
+ * are reached *from an account tile* and are meaningless without it. A URL
+ * naming one would restore a form with no account in it, which is worse than
+ * landing on the dashboard. So this is the tab bar's three, and it is the same
+ * list the page keeps as `NAV`.
+ */
+var WEBAPP_SCREENS = ['dashboard', 'records', 'analytics'];
+
+/**
+ * How much of any one parameter is carried through, and how many accounts.
+ *
+ * Not a security boundary — `htmlSafeJson_` is that, and the page treats every
+ * one of these as a filter it would have let you type anyway. This is a bound
+ * on what a stranger can make this endpoint put in a document: `v` is anonymous
+ * by necessity, and an unbounded reflected string is the kind of thing that is
+ * harmless until the next person renders it somewhere else.
+ */
+var WEBAPP_PARAM_MAX = 200;
+var WEBAPP_ACCOUNTS_MAX = 50;
 
 /**
  * Only an Apps Script `/exec` URL, and nothing else.
@@ -128,6 +179,117 @@ function webAppRoute_(params) {
 }
 
 /**
+ * What the URL is asking to see: a screen, and the filters it was left on.
+ *
+ * ## Why the URL is the only place this can live
+ *
+ * The app renders inside Apps Script's sandboxed iframe, so nothing it does to
+ * its *own* location survives anything — a refresh reloads the top-level
+ * `/exec` document and the iframe is rebuilt from nothing. `sessionStorage` in
+ * that frame is a Google origin the app does not own, and a `_config` cell
+ * would make one book's phone dictate what the other one opens on. The query
+ * string on the **parent** URL is the one piece of state that crosses the
+ * boundary, and it is also the one a person can bookmark, edit and send.
+ *
+ * So the round trip is: change a filter, the page writes
+ * `…/exec?v=records&p=year:2024&a=Revolut` through `google.script.history`,
+ * refresh, `doGet` hands the parameters here, and the page opens on it.
+ *
+ * ## Multi-valued, because the account filter is a set
+ *
+ * This takes `e.parameters` — every value an array — rather than
+ * `e.parameter`, which keeps only the first. Two accounts arrive as `a=X&a=Y`,
+ * and the alternative was joining them on a separator that an account name is
+ * merely *unlikely* to contain. The failure there is a silently dropped filter,
+ * which is the shape of bug this project keeps paying for.
+ *
+ * ## What is validated here, and what deliberately is not
+ *
+ * The screen is *replaced* by one of our own constants rather than rejected, so
+ * the value interpolated into the page cannot be the caller's string at all.
+ * The filters cannot work that way — an account name is whatever the `accounts`
+ * tab says — so they are bounded and escaped (`htmlSafeJson_`) rather than
+ * checked. That is not a gap: a page can send any filter it likes to
+ * `appRecords` already, and every query function is written for that. The
+ * parameters are a starting point for a screen, not an authorisation.
+ *
+ * Inert to `webAppRoute_` by construction: a consent callback is told apart by
+ * `code` and `state`, and none of these is either.
+ */
+function webAppView_(parameters) {
+  return {
+    screen: webAppScreen_(parameters),
+    filters: webAppFilters_(parameters)
+  };
+}
+
+/** One of `WEBAPP_SCREENS`, always, and always our copy of the string. */
+function webAppScreen_(parameters) {
+  var asked = webAppParam_(parameters, WEBAPP_VIEW_PARAM).toLowerCase();
+  var at = WEBAPP_SCREENS.indexOf(asked);
+  return at === -1 ? WEBAPP_SCREENS[0] : WEBAPP_SCREENS[at];
+}
+
+/**
+ * The filters the URL named, and only those.
+ *
+ * Absent rather than empty: a key that is not here means "whatever the default
+ * is", and the page's defaults come from the server on `appOverview`. Writing
+ * `label: 'All'` instead would make a bookmark freeze today's default in place,
+ * which is the one thing a defaulted value must never do.
+ */
+function webAppFilters_(parameters) {
+  var filters = {};
+  var put = function (key, name) {
+    var value = webAppParam_(parameters, name);
+    if (value) filters[key] = value;
+  };
+
+  put('period', WEBAPP_PERIOD_PARAM);
+  put('from', WEBAPP_FROM_PARAM);
+  put('to', WEBAPP_TO_PARAM);
+  put('label', WEBAPP_LABEL_PARAM);
+  put('search', WEBAPP_SEARCH_PARAM);
+
+  var accounts = webAppParams_(parameters, WEBAPP_ACCOUNT_PARAM);
+  if (accounts.length) filters.accounts = accounts;
+
+  // Only `1`. A parameter whose presence alone meant true would make `u=0` and
+  // `u=false` both read as "yes, only unconfirmed" — which is a screen showing
+  // a fraction of the ledger and saying nothing about why.
+  if (webAppParam_(parameters, WEBAPP_UNCONFIRMED_PARAM) === '1') {
+    filters.unconfirmed = true;
+  }
+
+  return filters;
+}
+
+/** The first value of a parameter, trimmed and bounded. `''` when absent. */
+function webAppParam_(parameters, name) {
+  var values = webAppParams_(parameters, name);
+  return values.length ? values[0] : '';
+}
+
+/** Every value of a repeated parameter, each trimmed and bounded, blanks dropped. */
+function webAppParams_(parameters, name) {
+  var raw = (parameters || {})[name];
+  if (raw === null || raw === undefined) return [];
+
+  // `e.parameters` gives arrays, but this is also called with hand-built maps
+  // from the tests and from anything that ever passes `e.parameter` by mistake.
+  // A bare string is one value, not a list of characters.
+  var list = Object.prototype.toString.call(raw) === '[object Array]' ? raw : [raw];
+
+  return list
+    .map(function (value) {
+      return String(value === null || value === undefined ? '' : value)
+        .trim().slice(0, WEBAPP_PARAM_MAX);
+    })
+    .filter(function (value) { return value !== ''; })
+    .slice(0, WEBAPP_ACCOUNTS_MAX);
+}
+
+/**
  * Door 2, gated.
  *
  * Reached from `doGet` when the request carries no consent parameters. Every
@@ -144,14 +306,19 @@ function webAppRoute_(params) {
  * The refusal says nothing about why. This endpoint is public by necessity and
  * a message that distinguished "wrong account" from "no owner configured"
  * would be a probing oracle, for no benefit to the one person who can get in.
+ *
+ * Takes `e.parameters` — the multi-valued map — because that is what the view
+ * on the URL is read from, and the gate is decided before a parameter is looked
+ * at. Which is the order that matters: nothing a stranger puts on this URL is
+ * examined until Google and this function have both said who they are.
  */
-function webAppPage_(params) {
+function webAppPage_(parameters) {
   var decision = webAppAccessDecision_(webAppOwner_(), activeUserEmail_());
   if (!decision.ok) {
     Logger.log('webAppPage_ refused: ' + decision.reason);
     return authPage_('Not available', 'This page is not available.');
   }
-  return webAppHtml_();
+  return webAppHtml_(parameters);
 }
 
 /**
@@ -270,6 +437,27 @@ function seedWebAppOwner_(ss) {
 // ---------------------------------------------------------------------------
 
 /**
+ * JSON that is safe to sit inside a `<script>` element.
+ *
+ * A transaction description containing the closing-tag sequence would end the
+ * element early and put a merchant name into the document as markup. Escaping
+ * every `<` is the entire fix, and it stays valid JSON because `<` is a legal
+ * string escape — so the parse on the other side is unchanged.
+ *
+ * Deliberately not a filter on the *dangerous* sequence: a rule that matches
+ * the closing tag has to reason about case, whitespace and slashes, and this
+ * project has already learned that the narrow guard is the one that misses.
+ * Every `<` costs a few bytes and cannot be wrong.
+ *
+ * It lives here rather than beside `appInlineBoot_`, which was its first
+ * caller, because the second caller is `webAppHtml_` a few lines below and one
+ * escaper with two callers beats two escapers — see the note left in 23.
+ */
+function htmlSafeJson_(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+/**
  * The page itself, from `src/page.html`, with the first screen already in it.
  *
  * **This was deliberately a static file, and the reasoning has been overtaken
@@ -315,9 +503,24 @@ function seedWebAppOwner_(ss) {
  * does not have; being more forgiving than the real thing is the worst
  * direction for a fake to be wrong in, and it has now cost this project twice.
  */
-function webAppHtml_() {
+function webAppHtml_(parameters) {
   var template = HtmlService.createTemplateFromFile('page');
   template.boot = functionExists_('appInlineBoot_') ? appInlineBoot_() : 'null';
+
+  /*
+    Which screen to open on and with what filters, decided here rather than by
+    the page.
+
+    The alternative was `google.script.url.getLocation`, which reads the parent
+    URL from inside the iframe — and does it asynchronously, so the page would
+    have drawn the dashboard on last month's filters before learning what it
+    was meant to be showing. A visible flip on every refresh, to avoid a value
+    the document already knows.
+
+    Unlike `boot` this is never skipped: a deep link has to survive the inline
+    dashboard failing, and it costs a parse of the query string.
+  */
+  template.view = htmlSafeJson_(webAppView_(parameters));
 
   var page = template.evaluate()
     .setTitle('Spendsheet')
