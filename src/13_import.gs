@@ -536,8 +536,11 @@ function describeStagedPlan_(plan) {
  * everything it spanned.
  */
 function writeStagedColumn_(sheet, startRow, name, records) {
+  // Through `textSafe_` for the reason its comment gives, and this path needs
+  // saying separately: these columns come from a pasted CSV, so the text is a
+  // previous tool's idea of a description rather than one this project built.
   var values = records.map(function (record) {
-    return [record[name] === null || record[name] === undefined ? '' : record[name]];
+    return [record[name] === null || record[name] === undefined ? '' : textSafe_(record[name])];
   });
   sheet.getRange(startRow, colIndex_(TX_COLUMNS, name), values.length, 1).setValues(values);
 }

@@ -422,46 +422,47 @@ describe('snapshotToDrive', () => {
     expect(c.__driveFiles[0].parent).toBe(c.__driveFolders[0].id);
   });
 
-  it('signs the upload, since an unsigned Drive call is a 401', () => {
+  it('goes through the advanced service, not hand-rolled HTTP', () => {
+    // Both reach the same endpoint and only one of them arranges to be allowed
+    // to: declaring the dependency is what gets the Drive API enabled in a
+    // default Cloud project. A snapshot written with UrlFetchApp passed every
+    // test here and then failed live, because the API was switched off and the
+    // scope list — the thing everyone checks — was correct all along.
     const c = built();
     addTransactions(c, 1);
     c.snapshotToDrive();
 
-    const upload = c.__fetches.filter((f) => f.url.includes('/upload/drive/v3/'))[0];
-    expect(upload.params.headers.Authorization).toBe('Bearer fake-oauth-token');
-    expect(upload.params.muteHttpExceptions).toBe(true);
+    expect(c.__fetches.filter((f) => f.url.includes('googleapis.com/drive'))).toHaveLength(0);
+    expect(c.__driveWrites).toHaveLength(1);
   });
 
   it('throws when Drive refuses the file, rather than reporting a backup', () => {
-    // The whole point of the rewrite: a snapshot that cannot be written must
-    // fail loudly. It failed loudly before too — what it did not do was fail
-    // in a way anyone could act on, because the error named the folder.
+    // A snapshot that cannot be written must fail loudly. It did fail loudly
+    // before too — what it did not do was fail in a way anyone could act on,
+    // because the error named the folder and the fix was not about folders.
     const c = built();
     addTransactions(c, 1);
-    c.UrlFetchApp.fetch = () => ({
-      getResponseCode: () => 403,
-      getContentText: () => JSON.stringify({ error: { message: 'Insufficient Permission' } }),
-      getHeaders: () => ({})
-    });
+    c.Drive.Files.create = () => { throw new Error('Insufficient Permission'); };
 
-    expect(() => c.snapshotToDrive()).toThrow(/Drive API 403/);
+    expect(() => c.snapshotToDrive()).toThrow(/Insufficient Permission/);
   });
 
-  it('says which project to enable the API in, when that is the reason', () => {
-    // A 403 reading `accessNotConfigured` is not a consent problem and the
-    // fix is not in this repo. Saying "insufficient permission" would send
-    // the reader to the scope list, which is the one place with nothing wrong.
+  it('says how to switch the API on, and does not send you to the console', () => {
+    // The live failure this arrangement was built for. It is not a consent
+    // problem, so naming permissions would send the reader to the scope list —
+    // the one place with nothing wrong. And the console link Google puts in
+    // the message is a dead end here: the project is a default one, which the
+    // console will not open, so the only route is the editor's Services list.
     const c = built();
     addTransactions(c, 1);
-    c.UrlFetchApp.fetch = () => ({
-      getResponseCode: () => 403,
-      getContentText: () => JSON.stringify({
-        error: { errors: [{ reason: 'accessNotConfigured' }], message: 'Drive API has not been used' }
-      }),
-      getHeaders: () => ({})
-    });
+    c.Drive.Files.create = () => {
+      throw new Error('GoogleJsonResponseException: API call to drive.files.create failed ' +
+        'with error: Google Drive API has not been used in project 000000000000 before ' +
+        'or it is disabled.');
+    };
 
-    expect(() => c.snapshotToDrive()).toThrow(/enable the Drive API/);
+    expect(() => c.snapshotToDrive()).toThrow(/Services \(\+\) → Drive API → v3/);
+    expect(() => c.snapshotToDrive()).toThrow(/not a scope problem/);
   });
 });
 
@@ -474,10 +475,20 @@ describe('checkSnapshotPermitted_', () => {
     expect(c.checkSnapshotPermitted_()).toMatch(/backup folder/);
     expect(c.__driveWrites).toHaveLength(1);
     expect(c.__driveFiles).toHaveLength(0);
+  });
 
-    const deletes = c.__fetches.filter((f) => (f.params.method || '') === 'delete');
-    expect(deletes).toHaveLength(1);
-    expect(deletes[0].url).toContain('/drive/v3/files/file-1');
+  it('removes the probe by id, so a failed delete cannot pass unnoticed', () => {
+    // `remove` throws on an id Drive does not hold. A check that swallowed
+    // that would leave a probe file per run in the backup folder, which is the
+    // one folder whose contents are supposed to mean something.
+    const c = built();
+    const removed = [];
+    const real = c.Drive.Files.remove;
+    c.Drive.Files.remove = (id) => { removed.push(id); return real(id); };
+
+    c.checkSnapshotPermitted_();
+
+    expect(removed).toEqual(['file-1']);
   });
 
   it('checks the file even when the folder cannot be made', () => {

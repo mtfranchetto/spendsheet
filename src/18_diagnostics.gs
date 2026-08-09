@@ -66,6 +66,16 @@ function runSmokeTests() {
     return describeInReports_();
   }));
 
+  // `textSafe_` rests entirely on a claim about the live runtime that no fake
+  // can settle: that Sheets consumes a leading apostrophe as a "this is text"
+  // marker, so the value comes back out of `getValue` without it. If that is
+  // wrong the guard is not merely useless — it silently rewrites every bank
+  // description that happens to start with a minus sign. The harness agrees
+  // with production here because it was told to; this asks the spreadsheet.
+  results.push(smokeTest_('sheet', 'a formula-shaped description stores as text', function () {
+    return checkTextSafeRoundTrip_();
+  }));
+
   results.push(smokeTest_('sheet', 'every subcategory names one category', function () {
     return describeSubcategoryParents_();
   }));
@@ -383,6 +393,44 @@ function emptyCharts_() {
     var options = entry.chart.getOptions ? entry.chart.getOptions() : null;
     return entry.tab + ': ' + (options ? options.get('title') : 'a chart');
   });
+}
+
+/**
+ * Write a formula-shaped string through the guard and read it back.
+ *
+ * The probe goes far to the right of `_tests`, on a tab nothing formats,
+ * nothing charts and nothing queries, and is cleared whichever way this ends —
+ * a diagnostic that leaves a cell behind on failure is a diagnostic that gets
+ * blamed for the next run's mystery.
+ *
+ * Two things have to hold and they fail differently. The cell must not carry a
+ * *formula*, which is the attack; and `getValue` must return the original text,
+ * which is whether the guard is lossless. Reporting them separately matters,
+ * because "stored safely but mangled" and "stored as a live formula" are
+ * opposite bugs with the same one-line cause.
+ */
+function checkTextSafeRoundTrip_() {
+  var sheet = sheetOrThrow_(TABS.TESTS);
+  var probe = sheet.getRange(1, 26);
+  var sample = '=1+1';
+
+  try {
+    probe.setValue(textSafe_(sample));
+    var formula = probe.getFormula();
+    var value = probe.getValue();
+
+    if (formula) {
+      throw new Error('Sheets kept "' + formula + '" as a formula despite the ' +
+        'apostrophe, so textSafe_ does not defuse anything on this book');
+    }
+    if (value !== sample) {
+      throw new Error('read back "' + value + '" rather than "' + sample +
+        '" — textSafe_ is altering the text it guards');
+    }
+    return 'stored as text and read back unchanged';
+  } finally {
+    probe.clearContent();
+  }
 }
 
 function writeTestResults_(results) {

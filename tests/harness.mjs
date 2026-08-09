@@ -314,8 +314,14 @@ class FakeSheet {
     const key = this._key(r, c);
     this._grow(r, c);
     this.formulas.delete(key);
-    if (v === '' || v === null || v === undefined) this.cells.delete(key);
-    else this.cells.set(key, v);
+    // A leading apostrophe is Sheets' "treat this as text" marker: it is
+    // consumed on write and never comes back out of `getValue`. The fake has
+    // to do the same or `textSafe_` looks lossy here and is not in production
+    // — a test would then pin `'=x` as the stored description, which is a
+    // value no book has ever held. Exactly one, as Sheets does: `''x` is `'x`.
+    const stored = typeof v === 'string' && v.startsWith("'") ? v.slice(1) : v;
+    if (stored === '' || stored === null || stored === undefined) this.cells.delete(key);
+    else this.cells.set(key, stored);
   }
 
   /**
@@ -721,8 +727,7 @@ export function createGoogleStubs(options = {}) {
       fetch(url, params) {
         fetches.push({ url, params });
         const handler = options.fetch;
-        const res = driveApiResponse(url, params) ||
-          (handler ? handler(url, params) : { code: 200, body: '{}' });
+        const res = handler ? handler(url, params) : { code: 200, body: '{}' };
         return {
           getResponseCode: () => res.code,
           getContentText: () => res.body,
@@ -756,6 +761,16 @@ export function createGoogleStubs(options = {}) {
         .replace(/\+/g, '-').replace(/\//g, '_'),
       base64Decode: (s) => [...Buffer.from(s, 'base64')].map((b) => (b > 127 ? b - 256 : b)),
       getUuid: () => crypto.randomUUID(),
+      /**
+       * Enough of a Blob for the Drive upload: the bytes, and the name and
+       * type that travel with them. Deliberately not indexed by the fake Drive
+       * — the *resource* names the file there, as it does in Drive itself.
+       */
+      newBlob: (content, mime, name) => ({
+        getDataAsString: () => String(content),
+        getName: () => name,
+        getContentType: () => mime
+      }),
       sleep: () => {},
       formatDate: (date, _tz, format) => {
         const iso = new Date(date).toISOString();
@@ -930,106 +945,79 @@ export function createGoogleStubs(options = {}) {
   const driveWrites = [];
 
   /**
-   * Drive v3, for the three calls this project makes: create a folder, create
-   * a file with its content, read one file's metadata by id.
+   * The Drive **advanced service**, for the four calls this project makes:
+   * create a folder, create a file with its content, read one file's metadata
+   * by id, delete one.
    *
-   * It lives inside `UrlFetchApp` rather than beside `DriveApp` because that
-   * is where the real one lives — the snapshot writes over HTTP, since
-   * `drive.file` grants per-file access through the REST API and grants
-   * `DriveApp` nothing at all. Returning `null` for any other URL leaves
-   * `options.fetch` in charge of Enable Banking, which is every other request
-   * in the project.
+   * It is an advanced service rather than `UrlFetchApp` against the same REST
+   * endpoints because declaring it in `appsscript.json` is what gets the Drive
+   * API switched on in a *default* Cloud project — which is a separate gate
+   * from the OAuth scope, fails with a message that reads like a permissions
+   * error, and cannot be opened from the Cloud console, since a default
+   * project is one the console will not show you.
    *
-   * Faithful in the two ways that have cost something here: an unauthorised
-   * request is a 401 rather than a success, and a refusal is an HTTP status
-   * with Drive's own error body rather than a thrown Error — the code has to
-   * read `getResponseCode()` to notice, exactly as it must in production.
+   * Drive v3 only, and named as v3 names things: `create` and `remove`, not
+   * v2's `insert` and `delete`. A fake answering to both would let a script
+   * declaring `"version": "v3"` call v2 methods and pass — and the failure in
+   * production is a TypeError inside the weekly trigger, which is where this
+   * project has already learned it cannot afford to find things out.
+   *
+   * `options.refuseDriveFolders` throws the way the advanced service throws:
+   * an exception, not a status code. That is the one behavioural difference
+   * from the REST transport this replaced, and the code above has to catch
+   * rather than inspect.
    */
-  function driveApiResponse(url, params) {
-    if (String(url).indexOf('googleapis.com/drive/v3/files') === -1 &&
-        String(url).indexOf('googleapis.com/upload/drive/v3/files') === -1) {
-      return null;
-    }
+  const Drive = {
+    Files: {
+      create(resource, blob) {
+        if (resource.mimeType === 'application/vnd.google-apps.folder') {
+          if (options.refuseDriveFolders) {
+            throw new Error('GoogleJsonResponseException: API call to ' +
+              'drive.files.create failed with error: Insufficient Permission');
+          }
+          const folder = { ...resource, id: `folder-${folders.length + 1}`, trashed: false };
+          folders.push(folder);
+          return { id: folder.id, name: folder.name };
+        }
 
-    const headers = (params && params.headers) || {};
-    if (!headers.Authorization) {
-      return { code: 401, body: JSON.stringify({ error: { code: 401, message: 'Login Required' } }) };
-    }
+        if (!blob) throw new Error('A file needs content; pass a blob as the second argument.');
 
-    const method = ((params && params.method) || 'get').toLowerCase();
-
-    if (url.indexOf('/upload/drive/v3/files') !== -1) {
-      const part = multipartParts(params);
-      const metadata = JSON.parse(part.metadata);
-      driveFiles.push({
-        id: `file-${driveFiles.length + 1}`,
-        name: metadata.name,
-        content: part.media,
-        mime: metadata.mimeType,
-        parent: (metadata.parents || [])[0] || null
-      });
-      const created = driveFiles[driveFiles.length - 1];
-      driveWrites.push(created);
-      return { code: 200, body: JSON.stringify({ id: created.id, name: created.name }) };
-    }
-
-    if (method === 'post') {
-      if (options.refuseDriveFolders) {
-        return {
-          code: 403,
-          body: JSON.stringify({
-            error: {
-              code: 403,
-              message: 'Insufficient Permission',
-              errors: [{ reason: 'insufficientPermissions', message: 'Insufficient Permission' }]
-            }
-          })
+        const file = {
+          id: `file-${driveFiles.length + 1}`,
+          name: resource.name,
+          content: blob.getDataAsString(),
+          mime: resource.mimeType,
+          parent: (resource.parents || [])[0] || null
         };
+        driveFiles.push(file);
+        driveWrites.push(file);
+        return { id: file.id, name: file.name };
+      },
+
+      get(id, optionalArgs) {
+        const found = folders.filter((f) => f.id === id)[0] ||
+          driveFiles.filter((f) => f.id === id)[0];
+        if (!found) throw new Error(`GoogleJsonResponseException: File not found: ${id}`);
+
+        // `trashed` is not in Drive v3's default response — a caller that does
+        // not ask for the field reads `undefined` and concludes the folder is
+        // fine, for ever, which is precisely the bug worth failing on.
+        const fields = String((optionalArgs && optionalArgs.fields) || 'id,name,mimeType').split(',');
+        const out = { id: found.id, name: found.name };
+        if (fields.includes('trashed')) out.trashed = found.trashed;
+        return out;
+      },
+
+      remove(id) {
+        const index = driveFiles.findIndex((f) => f.id === id);
+        if (index === -1) throw new Error(`GoogleJsonResponseException: File not found: ${id}`);
+        driveFiles.splice(index, 1);
+        return {};
       }
-      const folder = JSON.parse(params.payload);
-      folder.id = `folder-${folders.length + 1}`;
-      folder.trashed = false;
-      folders.push(folder);
-      return { code: 200, body: JSON.stringify({ id: folder.id }) };
     }
+  };
 
-    const id = decodeURIComponent(url.split('/files/')[1].split('?')[0]);
-
-    if (method === 'delete') {
-      // 204 and an empty body, as Drive answers — the caller has to cope with
-      // a success carrying no JSON, which is the one thing about DELETE that
-      // can break a client written against the other two calls.
-      const index = driveFiles.findIndex((f) => f.id === id);
-      if (index === -1) return notFound(id);
-      driveFiles.splice(index, 1);
-      return { code: 204, body: '' };
-    }
-
-    const found = folders.filter((f) => f.id === id)[0];
-    if (!found) return notFound(id);
-    return { code: 200, body: JSON.stringify({ id: found.id, trashed: found.trashed }) };
-  }
-
-  function notFound(id) {
-    return { code: 404, body: JSON.stringify({ error: { code: 404, message: 'File not found: ' + id } }) };
-  }
-
-  /**
-   * The metadata and the content out of a `multipart/related` upload, split on
-   * the boundary the caller declared rather than on a guess — a body whose
-   * boundary does not match its Content-Type is a 400 from Drive and would be
-   * silently accepted by a fake that went looking for `{` instead.
-   */
-  function multipartParts(params) {
-    const boundary = /boundary=(.+)$/.exec(params.contentType)[1];
-    const parts = String(params.payload)
-      .split('--' + boundary)
-      .slice(1, -1)
-      .map((part) => part.replace(/^\r\n/, '').replace(/\r\n$/, ''))
-      .map((part) => part.slice(part.indexOf('\r\n\r\n') + 4));
-
-    return { metadata: parts[0], media: parts[1] };
-  }
+  sandbox.Drive = Drive;
 
   // Handles for assertions.
   sandbox.__spreadsheet = spreadsheet;

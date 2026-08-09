@@ -140,13 +140,28 @@ function buildReviewTab_(ss, report) {
  * and struck through is what a done row should look like, and it costs one
  * rule.
  *
- * The condition is `=$H2=TRUE`, with **no comma**, for the reason
- * `flagDashboardStates_` sets out at length: a conditional-format rule does not
- * pass through `localizeFormula`, so a comma in one is a silent parse failure
- * in a decimal-comma locale. `confirmed` is a real checkbox, so it holds a real
- * boolean and needs no coercion — and the comparison is written against `TRUE`
- * rather than as a bare cell reference, because Sheets will not coerce `1` to
- * `TRUE` and a bare reference is exactly where that bites.
+ * The condition is `=$H2=TRUE`, with **no comma**, and both halves of that are
+ * load-bearing.
+ *
+ * `localizeFormula` translates the formulas written into *cells*, at the one
+ * boundary they all cross. `setConditionalFormatRules` is not that boundary:
+ * the rule reaches Sheets as authored, so a comma in one is a parse failure in
+ * a decimal-comma locale with no cell to show `#ERROR!` in — the rule never
+ * fires and the thing it was watching goes on looking fine. That rules out
+ * `AND`, `IF`, `OR` and `VLOOKUP`, every one of which needs a separator.
+ *
+ * And the comparison is written against `TRUE` rather than as a bare cell
+ * reference, because Sheets will not coerce across types: a condition yielding
+ * `1` is not `TRUE` there, however obviously it is in Excel. `confirmed` is a
+ * real checkbox holding a real boolean, so `=$H2=TRUE` needs no coercion and
+ * says so explicitly.
+ *
+ * This used to defer the whole argument to `flagDashboardStates_`, which went
+ * with `16_dashboard.gs` — leaving the reasoning for one of this project's
+ * hardest-won invariants pointing at a name that greps to nothing, which is
+ * strictly worse than no pointer at all. `git log -- src/16_dashboard.gs` has
+ * the original. `tests/locale.test.mjs` now holds every rule in the book to
+ * both halves, which is where this belonged in the first place.
  */
 function markReviewInputs_(sheet) {
   var column = function (name) { return colOf(REVIEW_COLUMNS, name); };

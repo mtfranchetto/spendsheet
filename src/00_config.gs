@@ -475,8 +475,18 @@ var DEFAULT_CONFIG = [
   ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
-  ['cashflow_horizon_days', 90, 'How far ahead the cashflow projection runs.'],
-  ['trend_days', 90, 'How far back the net worth chart on the dashboard goes.'],
+  // `cashflow_horizon_days` and `trend_days` went from here with the two files
+  // that read them — the cashflow projection in `15_recurring.gs` and the net
+  // worth chart on the old `dashboard` tab. A dead constant is invisible; a
+  // dead *config row* is not, because it sits on a tab the owner reads with a
+  // description promising an effect it has not had since those files went.
+  //
+  // Books set up before this keep both rows, and that is the right outcome
+  // rather than an oversight: `setup()` cannot tell a row you deleted from one
+  // you never had, and `reportSeedDivergence_` walks the seed rather than the
+  // sheet, so a row the seed no longer names is simply not looked at. They are
+  // inert, they are two, and removing them by hand is a sheet edit — not worth
+  // a migration, unlike the category renames `RETIRED_CATEGORIES` exists for.
   ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.'],
   // Blank here and filled by setup() from the account running it, because this
   // file touches no services. It is the lock on the mobile web app: one
