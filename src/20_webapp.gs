@@ -503,6 +503,25 @@ function htmlSafeJson_(value) {
  * does not have; being more forgiving than the real thing is the worst
  * direction for a fake to be wrong in, and it has now cost this project twice.
  */
+/**
+ * One partial, inlined where its scriptlet sits in `page.html`.
+ *
+ * `createHtmlOutputFromFile` rather than `createTemplateFromFile`, and the
+ * difference is what the partials are allowed to contain. A template would be
+ * evaluated, so a `<?` anywhere in one — inside a regex, inside a comment
+ * explaining templating — becomes a parse failure in a file that has no
+ * scriptlets and no reason to be scanned for any. Only `page.html` is a
+ * template; everything it includes is text.
+ *
+ * The `_` suffix is right and is not a formality. A template calls whatever it
+ * likes, so this is reachable from `page.html`; `google.script.run` refuses a
+ * trailing underscore, so it is not reachable from a browser. Without it this
+ * would be an entry point that reads a file named by its caller.
+ */
+function include_(name) {
+  return HtmlService.createHtmlOutputFromFile(name).getContent();
+}
+
 function webAppHtml_(parameters) {
   var template = HtmlService.createTemplateFromFile('page');
   template.boot = functionExists_('appInlineBoot_') ? appInlineBoot_() : 'null';

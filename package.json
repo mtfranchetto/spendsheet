@@ -7,6 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "preview": "node tests/preview.mjs",
     "push": "clasp push",
     "push:watch": "clasp push --watch",
     "pull": "clasp pull",

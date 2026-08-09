@@ -1,0 +1,309 @@
+  // -------------------------------------------------------------------------
+  // Add
+  // -------------------------------------------------------------------------
+
+  /**
+   * A cash transaction.
+   *
+   * Type the amount without a sign — a bare number is spending, and an Income
+   * or Transfer category flips it. That rule lives in `cashEntryAmount` on the
+   * server and this form does not reimplement it; the hint is here because the
+   * form is where you would otherwise wonder.
+   */
+  function renderAdd(root) {
+    // No tab reaches this screen any more, so it owes you the way back that a
+    // tab bar used to be.
+    var back = el('button', 'link', '\u{2190} Home');
+    back.type = 'button';
+    back.addEventListener('click', function () { go('dashboard'); });
+    add(root, back);
+
+    add(root, el('h1', null, 'Add cash'));
+
+    if (!state.lists.cashAccounts.length) {
+      return add(root, add(el('div', 'card'),
+        el('p', 'muted', 'No cash accounts yet. Add a row to the accounts tab with ' +
+          'kind set to cash, then reload.')));
+    }
+
+    var form = el('div', 'card');
+
+    add(form, el('label', null, 'Amount'));
+    var amount = el('input');
+    amount.type = 'text';
+    // `inputmode` rather than `type=number`: a decimal-comma keyboard produces
+    // `3,50`, which a number input silently discards rather than rejecting.
+    amount.inputMode = 'decimal';
+    amount.className = 'field';
+    amount.placeholder = '3.50';
+    add(form, amount);
+    add(form, el('div', 'muted',
+      'No sign. A bare number is spending; an Income or Transfer category flips it.'));
+
+    add(form, el('label', null, 'Account'));
+    var account = el('select');
+    account.className = 'field';
+    state.lists.cashAccounts.forEach(function (name) {
+      var option = el('option', null, name);
+      option.value = name;
+      // Arriving from a tile already answers this question, so the form does
+      // not ask it again — it shows the answer, still changeable.
+      if (name === state.addAccount) option.selected = true;
+      add(account, option);
+    });
+    add(form, account);
+
+    // "Category" rather than "Subcategory", because this control now offers
+    // both levels. Every `kind` is offered on purpose — the hint above says an
+    // Income or Transfer category flips the sign, which it cannot do if the
+    // list is filtered down to spending.
+    add(form, el('label', null, 'Category'));
+    var picker = categorySelect({ firstLabel: 'Uncategorised' });
+    add(form, picker.node);
+
+    add(form, el('label', null, 'Date'));
+    var date = el('input');
+    date.type = 'date';
+    date.className = 'field';
+    date.value = state.data.generatedAt || '';
+    add(form, date);
+
+    add(form, el('label', null, 'Note'));
+    var note = el('input');
+    note.type = 'text';
+    note.className = 'field';
+    add(form, note);
+
+    var submit = el('button', 'primary', 'Add');
+    submit.style.marginTop = '16px';
+    submit.addEventListener('click', function () {
+      var chosen = picker.chosen();
+      submit.disabled = true;
+      submit.textContent = 'Adding…';
+
+      call('appAddCash', {
+        amount: amount.value.replace(',', '.'),
+        account: account.value,
+        subcategory: chosen.subcategory,
+        category: chosen.category,
+        date: date.value,
+        note: note.value
+      }).then(function (result) {
+        // `inserted` is not necessarily *your* row: the drain takes every
+        // complete unprocessed one, including a half-typed entry sitting on
+        // the Sheets tab. So the message says how many landed, not "added".
+        toast(result.message);
+        amount.value = '';
+        note.value = '';
+        submit.disabled = false;
+        submit.textContent = 'Add';
+        // A brand-new transaction, so Records genuinely does not have it —
+        // unlike a confirmation, which only changes a row already on screen.
+        // `invalidate` marks it and `go()` fetches it when you next open it.
+        reloadAfterWrite();
+      }).catch(function (error) {
+        toast(error.message);
+        submit.disabled = false;
+        submit.textContent = 'Add';
+      });
+    });
+    add(form, submit);
+    add(root, form);
+  }
+
+  /**
+   * Set an asset account's value, by stating the total rather than the change.
+   *
+   * You read 14,500 off a broker's app; you did not compute the €1,500 it moved
+   * by, and being asked for that number is being asked to do arithmetic the
+   * screen already has both operands for. So this asks for the new total and
+   * writes the **difference** as one transaction.
+   *
+   * Writing a difference rather than overwriting a cell is the whole point.
+   * `balanceSeries_` reconstructs the net-worth curve by walking transactions
+   * backwards from today, so a value that only ever changed by being overwritten
+   * was invisible to it — the curve was flat and then, on the day you retyped
+   * the number, the *whole* line moved. A dated transaction puts the change
+   * where it happened.
+   *
+   * It goes in as `Transfer › Valuation change`, so `in_reports` keeps it out of
+   * every spending and income total while `accountBalanceFormula`'s SUMIF and
+   * the balance curve both still see it. A market gain is not income.
+   *
+   * The sign needs no special case, which is worth checking against
+   * `cashEntryAmount` rather than trusting: a positive delta with a `transfer`
+   * category stays positive, and a negative one wins as typed. The raw signed
+   * difference is exactly the right thing to send.
+   */
+  function renderSetValue(root) {
+    var back = el('button', 'link', '\u{2190} Home');
+    back.type = 'button';
+    back.addEventListener('click', function () { go('dashboard'); });
+    add(root, back);
+
+    add(root, el('h1', null, 'Update balance'));
+
+    var accounts = state.lists.assetAccounts || [];
+    if (!accounts.length) {
+      return add(root, add(el('div', 'card'),
+        el('p', 'muted', 'No asset accounts yet. Add a row to the accounts tab ' +
+          'with kind set to asset, then reload.')));
+    }
+
+    var form = el('div', 'card');
+
+    add(form, el('label', null, 'Account'));
+    var account = el('select');
+    account.className = 'field';
+    accounts.forEach(function (entry) {
+      var option = el('option', null, entry.name);
+      option.value = entry.name;
+      if (entry.name === state.addAccount) option.selected = true;
+      add(account, option);
+    });
+    add(form, account);
+
+    var current = el('div', 'muted');
+    add(form, current);
+
+    add(form, el('label', null, 'New value'));
+    var value = el('input');
+    value.type = 'text';
+    // `inputmode` rather than `type=number`, for the reason `renderAdd` gives:
+    // a decimal-comma keyboard produces `14500,50`, which a number input
+    // discards silently rather than rejecting.
+    value.inputMode = 'decimal';
+    value.className = 'field';
+    add(form, value);
+
+    // Tapping the field selects what is in it, because the field arrives
+    // pre-filled — see `prefill`. Without this, correcting 12,700 to 14,500 on a
+    // phone is eight taps of backspace before the first digit of the new number.
+    value.addEventListener('focus', function () { value.select(); });
+
+    var preview = el('div', 'muted');
+    add(form, preview);
+
+    add(form, el('label', null, 'Note'));
+    var note = el('input');
+    note.type = 'text';
+    note.className = 'field';
+    note.placeholder = 'Optional';
+    add(form, note);
+
+    var submit = el('button', 'primary', 'Record the change');
+    submit.type = 'button';
+    submit.style.marginTop = '16px';
+
+    /** What is on the account now, and what pressing the button would write. */
+    var chosen = function () {
+      return assetAccount(account.value) || { balance: null };
+    };
+
+    /** Whether the field still holds what `prefill` put there. */
+    var pristine = true;
+
+    var describe = function () {
+      var was = chosen().balance;
+      current.textContent = was === null
+        ? 'No value recorded yet.'
+        : 'Currently ' + money(was);
+
+      var typed = Number(String(value.value).replace(',', '.'));
+      if (!value.value || !isFinite(typed)) {
+        preview.textContent = '';
+        submit.disabled = false;
+        return;
+      }
+
+      var delta = typed - (was || 0);
+      // `toFixed(2)` before the comparison, because the subtraction is floating
+      // point: 14500 - 12700.1 leaves a value that is not zero and not worth a
+      // transaction either.
+      var rounded = Number(delta.toFixed(2));
+
+      if (rounded === 0) {
+        // Two different situations reach zero and only one of them is a
+        // correction. Arriving on a pre-filled field and typing the same number
+        // back are indistinguishable by value, so `pristine` tells them apart —
+        // otherwise the screen greets you by saying you got it wrong.
+        preview.textContent = pristine
+          ? 'Edit this to the value it holds now.'
+          : 'That is what it already says — nothing to record.';
+        submit.disabled = true;
+        return;
+      }
+
+      submit.disabled = false;
+      preview.textContent = (rounded > 0 ? 'Up ' : 'Down ') + money(Math.abs(rounded)) +
+        ' — recorded as one transaction dated today.';
+    };
+
+    /**
+     * Start from the number that is already there.
+     *
+     * An empty field asks you to type the whole total when the change is usually
+     * a few digits at the end of it — and worse, it asks you to type it from
+     * memory or from the line just above, which is the transcription error this
+     * screen exists to avoid. Editing 12,700.00 into 14,500.00 is one gesture.
+     *
+     * A plain `toFixed(2)` and not `money()`: this value is read straight back
+     * by `Number(String(...).replace(',', '.'))`, so a currency symbol or a
+     * thousands separator would come back `NaN`. It is written with a dot even
+     * in a decimal-comma locale because that parser takes either, and a dot is
+     * the one of the two that cannot be mistaken for a group separator.
+     *
+     * Called on render and on every account change, never from `describe` —
+     * `describe` runs on `input`, and prefilling from there would overwrite each
+     * keystroke as it was typed.
+     */
+    var prefill = function () {
+      var was = chosen().balance;
+      value.value = was === null ? '' : was.toFixed(2);
+      pristine = true;
+    };
+
+    account.addEventListener('change', function () { prefill(); describe(); });
+    value.addEventListener('input', function () { pristine = false; describe(); });
+    prefill();
+    describe();
+
+    submit.addEventListener('click', function () {
+      var was = chosen().balance;
+      var typed = Number(String(value.value).replace(',', '.'));
+      if (!value.value || !isFinite(typed)) return toast('Type the new value.');
+
+      var delta = Number((typed - (was || 0)).toFixed(2));
+      if (delta === 0) return toast('That is what it already says.');
+
+      submit.disabled = true;
+      submit.textContent = 'Recording\u{2026}';
+
+      call('appAddCash', {
+        amount: delta,
+        account: account.value,
+        category: TRANSFER_CATEGORY,
+        subcategory: VALUATION_SUBCATEGORY,
+        date: state.data.generatedAt || '',
+        note: note.value || (account.value + ' revalued to ' + money(typed))
+      }).then(function (result) {
+        toast(result.message);
+        value.value = '';
+        note.value = '';
+        submit.disabled = false;
+        submit.textContent = 'Record the change';
+        reloadAfterWrite();
+        // The tile's balance came with `appOpen` and has just moved, so the
+        // screen would otherwise keep offering the old number as "currently".
+        // `loadDashboard` refetches it; this redraws once it lands.
+        go('dashboard');
+      }).catch(function (error) {
+        toast(error.message);
+        submit.disabled = false;
+        submit.textContent = 'Record the change';
+      });
+    });
+
+    add(form, submit);
+    add(root, form);
+  }

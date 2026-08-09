@@ -45,7 +45,8 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `21_query.gs` | the ledger asked a question. Pure aggregation, and **no writes**. |
 | `22_actions.gs` | the four things the app writes: a confirmation, a transfer link, a rule, a cash entry. |
 | `23_api.gs` | every function a page may call by name, each one gated. |
-| `page.html` | the app itself. The only `.html` here, and the only file the harness cannot load. |
+| `page.html` | the document, and the order its parts load in. A shell of `include_` scriptlets. |
+| `page.*.html` | the app itself, in a dozen partials — `page.css`, `page.core`, `page.api`, `page.charts`, `page.view`, `page.dashboard`, `page.records`, `page.analytics`, `page.filters`, `page.sheet`, `page.add`, `page.gestures`, `page.boot`, in that load order. |
 
 **19 is no longer last, and that is fine** — it names its items as strings and filters them through `functionExists_`, so load order was never what made it work. What it does mean is that a menu item for something in 20–23 appears by itself, exactly as every earlier phase's did.
 
@@ -131,7 +132,11 @@ Tests go in the **same phase as the code they cover**, never batched at the end.
 
 `setup()` must stay idempotent, and must not discard user customisations — see `tests/customization.test.mjs` for the boundary.
 
-**`src/page.html` is invisible to the harness**, because `node:vm` runs the `.gs` files and nothing inside an HTML file reaches it. That is not a gap to work around — it is the reason the aggregation lives on the server at all, and the reason to keep pushing decisions out of the page. What is left there is drawing, and the two things a *file* test can still prove about it are in `tests/manifest.test.mjs` and `tests/app.test.mjs`: that no string is assigned as markup, and that every name the page calls is a function that exists.
+**`src/page*.html` is not run by the harness**, because `node:vm` runs the `.gs` files and nothing inside an HTML file reaches it. That is not a gap to work around — it is the reason the aggregation lives on the server at all, and the reason to keep pushing decisions out of the page. What is left there is drawing, and the things a *file* test can prove about it are in `tests/manifest.test.mjs` and `tests/app.test.mjs`: that no string is assigned as markup, and that every name the page calls is a function that exists.
+
+**The page is a template, and that is what makes it reachable.** `webAppHtml_` runs `page.html` through `createTemplateFromFile`, resolving `boot`, `view` and one `include_` per partial. `tests/page.mjs` resolves the same scriptlets in Node — so `pageSource()` gives a file test the whole page rather than the shell, and `npm run preview` serves the assembled document with a fake `google.script.run` in front of the real `21`–`23` output. **A browser is the only thing that can answer whether the page runs**, and this project has twice shipped a page-level failure that no file test could see. Point Playwright at `http://localhost:4321` for anything about layout, a native control, or a gesture — and say whether you checked in a browser or only read the CSS, because those prove different things.
+
+Two consequences of the split worth holding on to. **A partial is a fragment of one closure, not a file**, so an unbalanced brace is a syntax error in the *assembled* document — `tests/page.test.mjs` compiles it for that reason and is the only guard that the page parses at all. And **a partial is served through `createHtmlOutputFromFile`, which does not evaluate it**, so a scriptlet in one is markup on the page rather than a feature that fails.
 
 ## Never
 

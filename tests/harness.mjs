@@ -890,16 +890,39 @@ export function createGoogleStubs(options = {}) {
        * Script. Nothing else of the scriptlet language is modelled, because
        * nothing else is used — a fake that grew a `<? if ?>` would be inviting
        * one into the page.
+       *
+       * **`include_('page.x')` is the second shape, and it is resolved by
+       * calling `include_`** — the one in `src/20_webapp.gs`, out of the same
+       * sandbox the template is being served from, rather than by a second
+       * implementation here that reads the file itself. `page.html` is a shell
+       * of a dozen of those, so a fake that left them unresolved would serve a
+       * document with no application in it and every content assertion would
+       * pass by describing the shell. Recursive, because a partial may include
+       * another; bounded, because a file including itself is otherwise a stack
+       * overflow whose trace names no file.
        */
       createTemplateFromFile: (name) => {
         const path = join(SRC, `${name}.html`);
         if (!existsSync(path)) {
           throw new Error(`No html file named ${name} was found in the script.`);
         }
+
+        const includes = (text, depth) => {
+          if (depth > 10) throw new Error('include_ nested more than ten deep — a cycle?');
+          return text.replace(
+            /<\?!?=\s*include_\(\s*['"]([\w.-]+)['"]\s*\)\s*;?\s*\?>/g,
+            (all, file) => {
+              if (typeof sandbox.include_ !== 'function') {
+                throw new Error('ReferenceError: "include_" is not defined.');
+              }
+              return includes(sandbox.include_(file), depth + 1);
+            });
+        };
+
         const source = readFileSync(path, 'utf8');
         const template = {
           evaluate() {
-            const filled = source.replace(
+            const filled = includes(source, 0).replace(
               /<\?(!?)=\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\?>/g,
               (all, raw, key) => {
                 if (!Object.prototype.hasOwnProperty.call(template, key)) {

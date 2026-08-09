@@ -1,0 +1,951 @@
+  // -------------------------------------------------------------------------
+  // Acting on a row
+  // -------------------------------------------------------------------------
+
+  /**
+   * The row's labels, as a set of chips you tick.
+   *
+   * **Chips over a text field, and the reason is a matching rule rather than a
+   * taste.** `matchesFilters_` tests a label against the *parts* of the column
+   * — `splitLabels_` on commas, then an exact comparison — so `travel` does not
+   * match `business-travel`, deliberately, because the alternative is a filter
+   * that quietly over-matches. A free text field invites exactly the near-miss
+   * that rule refuses to forgive, and it fails invisibly: the label looks right
+   * on the transaction and the transaction is missing from the report.
+   *
+   * The offered set is `labels`, the tab that is the known set. A label already
+   * on the row but no longer on that tab is offered too, and ticked — dropping
+   * it silently would mean opening a transaction and saving it was a way to
+   * lose data you never looked at.
+   */
+  function labelChips(record) {
+    // Deduplicated on the way in. `labelNames_` maps the `labels` tab row for
+    // row and nothing stops that tab holding the same word twice — which draws
+    // two chips that toggle independently and disagree about one label.
+    var current = (record.labels || []).map(String);
+    var offered = [];
+    (state.lists.labels || []).map(String).concat(current).forEach(function (name) {
+      if (name && offered.indexOf(name) === -1) offered.push(name);
+    });
+
+    var box = el('div');
+    add(box, el('label', null, 'Labels'));
+
+    if (!offered.length) {
+      add(box, el('p', 'muted', 'No labels yet. Add rows to the labels tab.'));
+      // Still answers, and answers with what is on the row — so a sheet with
+      // no chips on it cannot be the thing that clears a label.
+      return { node: box, chosen: function () { return current.slice(); } };
+    }
+
+    var picked = {};
+    current.forEach(function (name) { picked[name] = true; });
+
+    var chips = el('div', 'chips');
+    offered.forEach(function (name) {
+      var chip = el('button', 'chip', name);
+      chip.type = 'button';
+      chip.setAttribute('aria-pressed', picked[name] ? 'true' : 'false');
+      chip.addEventListener('click', function () {
+        picked[name] = !picked[name];
+        chip.setAttribute('aria-pressed', picked[name] ? 'true' : 'false');
+      });
+      add(chips, chip);
+    });
+    add(box, chips);
+
+    return {
+      node: box,
+      // Read in `offered` order rather than click order, so saving a row twice
+      // without touching anything writes the same string both times.
+      chosen: function () {
+        return offered.filter(function (name) { return picked[name]; });
+      }
+    };
+  }
+
+  /**
+   * Which of the three kinds this row is, as the sheet would answer.
+   *
+   * `type` is a formula over the category and is the authority whenever it has
+   * an answer. The sign is the fallback and only the fallback: a row nothing
+   * has categorised yet has no `type` at all, and money out of an account is
+   * spending until something says otherwise.
+   */
+  function kindOfRecord(record) {
+    if (record.type === TRANSFER) return TRANSFER;
+    if (record.type === 'income' || record.type === 'expense') return record.type;
+    // Through `moneyIn` rather than `amount > 0`, so the tab this opens on and
+    // the colour the row was drawn in are one decision. They were two, and they
+    // disagreed at exactly zero.
+    return moneyIn(record) ? 'income' : 'expense';
+  }
+
+  /**
+   * Expense · Income · Transfer, across the top of the sheet.
+   *
+   * **This replaces a toggle at the bottom, and the difference is not
+   * cosmetic.** Marking a transfer used to be a link under the Confirm button,
+   * below the pickers — so the sheet asked "which category?" first and "is this
+   * even a category question?" last, in that order, every time. It also meant
+   * the one control that changes what the *rest* of the sheet should be asking
+   * sat below all of it.
+   *
+   * A transfer is not a category with an awkward UI. It is one of the three
+   * things a row can be, `type` says which, and every total in the book already
+   * turns on it. Naming that first and letting the body follow is the shape the
+   * data has had all along.
+   *
+   * Buttons rather than a real `<select>`: three options, always visible, and
+   * on iOS a select opens a wheel picker — which is the thing this sheet had to
+   * be redesigned once already to stop doing on open.
+   */
+  function typeTabs(current, onChange) {
+    var box = el('div', 'segmented');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'What kind of transaction this is');
+
+    [['expense', 'Expense'], ['income', 'Income'], [TRANSFER, 'Transfer']]
+      .forEach(function (pair) {
+        var tab = el('button', 'seg', pair[1]);
+        tab.type = 'button';
+        tab.setAttribute('aria-pressed', pair[0] === current ? 'true' : 'false');
+        tab.addEventListener('click', function () {
+          if (pair[0] === current) return;
+          onChange(pair[0]);
+        });
+        add(box, tab);
+      });
+
+    return box;
+  }
+
+  /**
+   * The whole taxonomy in one `<select>`, parents as `<optgroup>`.
+   *
+   * There were two selects — "change the subcategory" and "or set only the
+   * category" — and the word doing the work in that pair was *or*. Two controls
+   * for one decision, where picking in the second undoes the meaning of the
+   * first, and neither label says which wins. `<optgroup>` is the element for
+   * exactly this: the parent is a heading you cannot select by accident, the
+   * children under it are the choices, and both render natively in the wheel
+   * picker on a phone.
+   *
+   * Setting only the parent is still reachable, as the first entry inside each
+   * group. It is a real answer — "this is Shopping and I do not know what kind"
+   * — and losing it to the tidier structure would have been a downgrade.
+   *
+   * **A child sends its parent with it**, which the two-select version did not
+   * and got away with: `categoryFormula` resolves a lone `subcategory_override`
+   * through a VLOOKUP, so the parent was implied correctly. It stops being
+   * implied the moment the row already carries a `category_override` — every
+   * row marked as a transfer does — because that column is checked *first* and
+   * would go on winning. Sending both is what lets this sheet move a row out of
+   * Transfer at all.
+   */
+  function categorySelect(options) {
+    var settings = options || {};
+    var lists = state.lists.categories || {};
+
+    var select = el('select');
+    select.className = 'field';
+
+    // Only where a site has a meaningful "no answer". Without it the first
+    // entry is preselected and submitting without touching the control files
+    // the row under whatever sorts first, which is the shape of bug this
+    // control exists to remove rather than to relocate.
+    if (settings.firstLabel) {
+      var leave = el('option', null, settings.firstLabel);
+      leave.value = '';
+      add(select, leave);
+    }
+
+    var parentOf = {};
+    (lists.children || []).forEach(function (entry) { parentOf[entry.name] = entry.parent; });
+
+    (lists.parents || []).forEach(function (parent) {
+      // A blank `kind` is a category the user added without saying which half
+      // it belongs to. Hiding it would make it unreachable from the app, so it
+      // is offered on both. A blank `settings.kind` asks for all of them,
+      // which is what a rule and a cash entry both want.
+      if (settings.kind && parent.kind && parent.kind !== settings.kind) return;
+
+      var group = el('optgroup');
+      group.label = withIcon(parent.icon, parent.name);
+
+      var whole = el('option', null, 'Anything in ' + parent.name);
+      whole.value = 'p:' + parent.name;
+      if (settings.category === parent.name && !settings.subcategory) whole.selected = true;
+      add(group, whole);
+
+      (lists.children || []).forEach(function (child) {
+        if (child.parent !== parent.name) return;
+        var option = el('option', null, withIcon(child.icon, child.name));
+        option.value = 'c:' + child.name;
+        if (child.name === settings.subcategory && child.parent === settings.category) {
+          option.selected = true;
+        }
+        add(group, option);
+      });
+
+      add(select, group);
+    });
+
+    return {
+      node: select,
+      /**
+       * Whether a category was chosen at all.
+       *
+       * The value rather than the index, so this reads the same with and
+       * without a placeholder: the placeholder is the only entry whose value
+       * is empty, and where there is none every entry is an answer.
+       */
+      answered: function () { return !!select.value; },
+      /** `{ category, subcategory }`, with the parent always filled in. */
+      chosen: function () {
+        var value = select.value;
+        if (!value) return { category: '', subcategory: '' };
+        if (value.indexOf('p:') === 0) return { category: value.slice(2), subcategory: '' };
+
+        var child = value.slice(2);
+        return { category: parentOf[child] || '', subcategory: child };
+      }
+    };
+  }
+
+  /**
+   * The same control, answering in the override columns the review sheet writes.
+   *
+   * A thin wrapper and worth its own name: `category_override` and
+   * `subcategory_override` are what a *decision about an existing row* is
+   * written to, and nothing else on this page writes them. A rule and a cash
+   * entry state a plain category, so they take `categorySelect` directly.
+   */
+  function categoryPicker(record, kind, firstLabel) {
+    var picker = categorySelect({
+      kind: kind,
+      firstLabel: firstLabel,
+      category: record.category,
+      subcategory: record.subcategory
+    });
+
+    return {
+      node: add(el('div'), picker.node),
+      answered: picker.answered,
+      chosen: function () {
+        if (!picker.answered()) return {};
+        var choice = picker.chosen();
+        var answer = { category_override: choice.category };
+        if (choice.subcategory) answer.subcategory_override = choice.subcategory;
+        return answer;
+      }
+    };
+  }
+
+  /**
+   * Where the money went, when the answer is Transfer.
+   *
+   * **Naming the destination is what makes the arithmetic right**, and without
+   * it this book was quietly wrong about a common case. A cash withdrawal is
+   * one row: the bank debits €100 and nothing credits your wallet, because a
+   * wallet has no API. Marking it a transfer kept it out of spending —
+   * correctly — and left net worth €100 short of the money in your pocket.
+   * Picking the wallet writes the leg the bank never will.
+   *
+   * **Every account is offered, and the server does two different things with
+   * them.** The list started as cash and asset only, on the reasoning below
+   * about not inventing a leg a bank will report itself — which is right about
+   * the leg and was wrong about the list, because it left no way to say "this
+   * €500 went to my other current account". That is the commonest internal
+   * move there is.
+   *
+   *   **Cash or asset** — the leg is *written*, because nothing will ever
+   *   report it. A wallet has no API.
+   *
+   *   **A bank** — the leg is *found*. The credit is already in the book, or
+   *   arrives with the next sync, so the two rows are paired and both marked.
+   *   Writing one would be a second copy of money that moved once, which is
+   *   the original argument and is still true.
+   *
+   * The page does not need to know which is which, and deliberately does not
+   * ask: `appMarkTransfer` decides from the account's `kind` and says in the
+   * toast what it did.
+   *
+   * **"Somewhere else" is a real answer and not a cop-out.** Money to another
+   * bank you do not sync, or to a person, has no account here to credit. It is
+   * still not spending, so it is still a transfer — and net worth does fall,
+   * correctly, because net worth is the sum of what you track and it has left.
+   */
+  function destinationPicker(record) {
+    var box = el('div');
+    // The question is the wrong way round for money arriving, and this sheet is
+    // opened on both legs of the same move.
+    add(box, el('label', null,
+      record.peerDirection === 'from' ? 'Where did it come from?' : 'Where did it go?'));
+
+    var where = el('select');
+    where.className = 'field';
+
+    var elsewhere = el('option', null, 'Somewhere outside Spendsheet');
+    elsewhere.value = TRANSFER_OUTSIDE;
+    add(where, elsewhere);
+
+    // `lists.accounts` is every active account, which is what the server now
+    // accepts. Its own is left out for the obvious reason, and because the
+    // server refuses it anyway.
+    (state.lists.accounts || []).forEach(function (name) {
+      if (name === record.account) return;
+      var option = el('option', null, name);
+      option.value = name;
+      add(where, option);
+    });
+
+    // Opened on the answer, when there is one. This always started at
+    // "Somewhere outside Spendsheet" — including on a row that was already
+    // paired, where re-saving it would have moved a recorded transfer to
+    // nowhere. `peerAccount` is blank unless the other leg is genuinely in the
+    // book, so the default is unchanged for every row that has no answer.
+    if (record.peerAccount) where.value = record.peerAccount;
+    add(box, where);
+
+    add(box, el('div', 'muted',
+      'Both balances move. A cash or asset account gets the other half ' +
+      'written for it; a bank is matched against the row it already reported, ' +
+      'or as soon as it does.'));
+
+    return { node: box, value: function () { return where.value; } };
+  }
+
+  /**
+   * Which *kind* of transfer, which is a question the pane never asked.
+   *
+   * `Cash withdrawal` has been in the taxonomy since the seed, written
+   * automatically by MCC 6011 and by the `PRELIEVO` rules — and unreachable by
+   * hand, because `transferSubcategoryFor_` decided from the destination alone.
+   * That guess is right whenever there is a wallet account to withdraw into and
+   * wrong the rest of the time: an ATM withdrawal by someone who does not track
+   * cash goes to "somewhere outside" and files as `Between accounts`, which is
+   * not what happened.
+   *
+   * The options are the children of any category whose kind is `transfer`, from
+   * the list the bootstrap already sends — so a subcategory you add to the
+   * `Transfer` row of `categories` appears here without a change in this file.
+   * The server checks the answer against the same list rather than trusting it.
+   *
+   * Left unset it sends nothing, and the server guesses as it always did. That
+   * matters more than it looks: the guess is right for the common case, and a
+   * picker that forced an answer would make the ordinary move slower to record
+   * than it is now.
+   */
+  function transferKindPicker(record) {
+    var box = el('div');
+    box.style.marginTop = '12px';
+    add(box, el('label', null, 'What kind of move?'));
+
+    var pick = el('select');
+    pick.className = 'field';
+
+    var children = (state.lists.categories.children || [])
+      .filter(function (entry) { return entry.kind === TRANSFER; });
+
+    // Nothing to choose from is a `categories` tab with no transfer children,
+    // which is a book someone has edited down. The server's own default still
+    // applies, so the control simply does not appear.
+    if (!children.length) return { node: box, value: function () { return ''; } };
+
+    children.forEach(function (entry) {
+      var option = el('option', null, withIcon(entry.icon, entry.name));
+      option.value = entry.name;
+      add(pick, option);
+    });
+
+    // Only when it is one of these. Setting `value` to something no option
+    // carries leaves a `<select>` showing nothing at all — `selectedIndex` goes
+    // to -1 — so a row that was `Groceries` a moment ago would open the pane on
+    // a blank control rather than on the first sensible answer.
+    var already = children.filter(function (entry) {
+      return entry.name === record.subcategory;
+    })[0];
+    if (already) pick.value = already.name;
+    add(box, pick);
+
+    return { node: box, value: function () { return pick.value; } };
+  }
+
+  /**
+   * How long a press has to be before it means "rule", not "open".
+   *
+   * 500ms is the platform convention for a long press on both iOS and Android,
+   * so it is the one people already have in their hands.
+   */
+  var LONG_PRESS_MS = 500;
+
+  /**
+   * Long-press a row to turn it into a categorisation rule.
+   *
+   * The gesture exists because the alternative is unusable in practice: you see
+   * the same merchant miscategorised for the fourth time, and the only way to
+   * fix it *permanently* is to open the spreadsheet on a laptop and type a row
+   * on the `rules` tab. Correcting the transaction in front of you does not do
+   * it — that is an override on one row, and `_memory` is rebuilt from confirmed
+   * rows rather than being a rule.
+   *
+   * Cancelled by any movement at all, not by a threshold: a press that has
+   * begun to travel is a scroll or a swipe, and firing a modal into the middle
+   * of either is the worst outcome available. `contextmenu` is suppressed for
+   * the same reason iOS shows one — a long press on a `<button>` is a text
+   * selection gesture there, and the callout would open behind the sheet.
+   */
+  function longPressForRule(button, record) {
+    var timer = null;
+
+    var cancel = function () {
+      if (timer === null) return;
+      clearTimeout(timer);
+      timer = null;
+    };
+
+    button.addEventListener('touchstart', function () {
+      cancel();
+      timer = setTimeout(function () {
+        timer = null;
+        // The press has been claimed, so the `click` that follows the release
+        // must not also open the detail sheet on top of the rule sheet.
+        button.swiped = true;
+        openRuleSheet(record);
+      }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    ['touchmove', 'touchend', 'touchcancel'].forEach(function (name) {
+      button.addEventListener(name, cancel, { passive: true });
+    });
+
+    // Without this, iOS opens its own selection callout mid-press.
+    button.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+  }
+
+  /**
+   * `showModal`, without losing where you were on the page behind it.
+   *
+   * Opening a `<dialog>` on iOS scrolls the document — the browser brings the
+   * focused element into view, and the sheet is fixed to the bottom of the
+   * viewport rather than sitting in the flow, so "into view" means the top. Tap
+   * a transaction four hundred rows down, close the sheet, and you are back at
+   * the newest row with no way to find your place again.
+   *
+   * Pinning the body is the fix that works everywhere: `position: fixed` with a
+   * negative `top` freezes the page exactly where it was, and unpinning it
+   * restores the offset by hand — `scrollTo` because removing `position: fixed`
+   * puts the document back at zero on its own.
+   *
+   * `overflow: hidden` alone is not enough; iOS Safari scrolls the body behind
+   * a fixed element regardless. And the pin is what stops `installPullToRefresh`
+   * arming underneath an open sheet, which it could, being bound to `document`
+   * with `scrollY > 0` as its only guard.
+   */
+  function openWithoutMoving(dialog) {
+    var at = window.scrollY;
+
+    document.body.style.position = 'fixed';
+    document.body.style.top = -at + 'px';
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+
+    // `close` rather than a wrapper around every dismissal: the sheet closes
+    // from the ✕, from a tap on the backdrop, from Escape, and from four
+    // different buttons that act and then close. One listener covers all of
+    // them, and `once` keeps it from accumulating on a reused element.
+    dialog.addEventListener('close', function () {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      window.scrollTo(0, at);
+    }, { once: true });
+
+    dialog.showModal();
+  }
+
+  /**
+   * The rule sheet: prefilled from the row, and every field still editable.
+   *
+   * Prefilled because the whole value of the gesture is not having to think,
+   * and editable because the prefill is a guess about which part of a bank's
+   * description identifies the merchant. `merchantKey` is a good guess — it is
+   * `normalizeMerchant`, the same function the cascade keys on — but a bank
+   * that writes `PAYPAL *STEAM` defeats any general answer, and the fix is one
+   * field the person can widen or narrow rather than a cleverer normaliser.
+   */
+  function openRuleSheet(record) {
+    var dialog = document.getElementById('sheet') || el('dialog');
+    dialog.id = 'sheet';
+    clear(dialog);
+    if (!dialog.isConnected) document.body.appendChild(dialog);
+
+    var close = el('button', 'sheet-close', '\u{2715}');
+    close.type = 'button';
+    close.autofocus = true;
+    close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', function () { dialog.close(); });
+    add(dialog, close);
+
+    var body = el('div', 'sheet-body');
+    add(dialog, body);
+
+    add(body, el('h2', null, 'Always categorise this'));
+    add(body, el('p', 'muted', record.description || '(no description)'));
+
+    add(body, el('label', null, 'When the description contains'));
+    var pattern = el('input');
+    pattern.type = 'text';
+    pattern.className = 'field';
+    pattern.value = record.merchantKey || record.description || '';
+    add(body, pattern);
+
+    add(body, el('label', null, 'Match'));
+    var how = el('select');
+    how.className = 'field';
+    [['contains', 'contains it'], ['equals', 'is exactly it'],
+     ['starts_with', 'starts with it'], ['regex', 'matches it as a pattern']]
+      .forEach(function (pair) {
+        var option = el('option', null, pair[1]);
+        option.value = pair[0];
+        add(how, option);
+      });
+    add(body, how);
+
+    // The same control the confirm sheet uses, for the same reason it exists
+    // there: a flat list of every child suffixed with its parent is the parent
+    // written out three hundred times, and it cannot offer a category on its
+    // own — which `webAppAddRule_` accepts and is the right rule for a merchant
+    // whose subcategory varies. The placeholder is new here: this list used to
+    // preselect its first entry, so saving without touching it wrote a rule
+    // filing every future match under whichever child sorts first.
+    add(body, el('label', null, 'File it under'));
+    var picker = categorySelect({
+      firstLabel: 'Choose a category',
+      category: record.category,
+      subcategory: record.subcategory
+    });
+    add(body, picker.node);
+
+    var save = el('button', 'primary', 'Save rule');
+    save.type = 'button';
+    save.style.marginTop = '16px';
+    save.addEventListener('click', function () {
+      var chosen = picker.chosen();
+      save.disabled = true;
+      save.textContent = 'Saving\u{2026}';
+
+      call('appAddRule', {
+        field: 'description',
+        match_type: how.value,
+        pattern: pattern.value,
+        category: chosen.category,
+        subcategory: chosen.subcategory
+      }).then(function (result) {
+        dialog.close();
+        toast(result.message);
+      }).catch(function (error) {
+        // Kept open on a refusal: every one of them names something on this
+        // sheet that can be corrected, and closing would lose what was typed.
+        save.disabled = false;
+        save.textContent = 'Save rule';
+        toast(error.message);
+      });
+    });
+    add(body, save);
+
+    dialog.onclick = function (event) {
+      if (event.target === dialog) dialog.close();
+    };
+    openWithoutMoving(dialog);
+  }
+
+  /**
+   * The confirm/categorise sheet, from the bottom.
+   *
+   * **It asks what the row *is* before it asks what to file it under**, because
+   * those are different questions and only the first one changes the second.
+   * The tabs across the top are `type` — the column every total in this book
+   * already turns on — and the body below them is whatever that answer makes
+   * relevant: two of the three want a category, the third wants a destination.
+   *
+   * The previous arrangement asked them in the opposite order and in different
+   * registers: two category pickers, a Confirm, and then, underneath all of it,
+   * a link offering to reinterpret the whole thing as a transfer. Everything
+   * below the fold was the control that should have come first.
+   *
+   * Optimistic: the row is redrawn as confirmed before the server answers, and
+   * put back if it refuses. On a phone that is the difference between a list
+   * that responds and one you wait for.
+   */
+  function openSheet(record) {
+    var dialog = document.getElementById('sheet') || el('dialog');
+    dialog.id = 'sheet';
+    clear(dialog);
+    if (!dialog.isConnected) document.body.appendChild(dialog);
+
+    // The close button, first, and both of those words are load-bearing.
+    //
+    // It replaces a "Cancel" link that was at the *bottom*, under two pickers
+    // and a Confirm — the furthest point in the sheet from a thumb, for the
+    // one action you take when you opened it by mistake.
+    //
+    // First in the markup because `showModal` focuses the first focusable
+    // descendant. That used to be the subcategory `<select>`, and iOS opens a
+    // select's wheel picker on focus — so tapping a transaction opened the
+    // sheet *and* the category picker on top of it, every time. Nothing here
+    // asked for focus; taking it deliberately is the only way to stop it
+    // landing somewhere that acts on being focused.
+    var close = el('button', 'sheet-close', '\u{2715}');
+    close.type = 'button';
+    close.autofocus = true;
+    close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', function () { dialog.close(); });
+    add(dialog, close);
+
+    // Everything else goes inside a wrapper, which is what makes the
+    // backdrop test below honest: with the content directly on the dialog,
+    // `event.target === dialog` also fires on the dialog's own 16px of
+    // padding, so a near-miss tap inside the sheet would close it.
+    var body = el('div', 'sheet-body');
+    add(dialog, body);
+
+    add(body, el('h2', null, record.description || '(no description)'));
+    add(body, el('p', 'muted', shortDate(record.date) + ' \u{00b7} ' + record.account +
+      ' \u{00b7} ' + money(record.amount)));
+
+    /**
+     * The description, when it is yours to change.
+     *
+     * Above the tabs because it is a fact about the row rather than about which
+     * of the three kinds it is — a cash entry you mistyped and a transfer leg
+     * this project named for you both want renaming, and they open on different
+     * tabs. Both buttons send it for the same reason.
+     *
+     * **Offered only when the server says so.** A synced row's description is
+     * part of what identifies it — `computeUid` hashes it when the bank sends
+     * no `entry_reference` — so rewriting one can stop a later sync recognising
+     * a transaction already in the book. The page does not work that out; it
+     * reads `editableDescription`, and the server asks the same question again
+     * before writing, because a page can send anything.
+     *
+     * The heading above still shows the original. That is deliberate: it is
+     * what the row is called *now*, and having it beside the field is what
+     * makes an edit look like an edit rather than like a form you must fill in.
+     */
+    var rename = null;
+    if (record.editableDescription) {
+      add(body, el('label', null, 'Description'));
+      rename = el('input');
+      rename.type = 'text';
+      rename.className = 'field';
+      rename.value = record.description || '';
+      add(body, rename);
+    }
+
+    /** What to send, or nothing at all when it was not touched. */
+    var renamedTo = function () {
+      if (!rename) return null;
+      var typed = rename.value.trim();
+      if (!typed || typed === (record.description || '')) return null;
+      return typed;
+    };
+
+    // What the row is now, and what you are proposing it should be. They start
+    // equal and the tabs move the second one only.
+    var was = kindOfRecord(record);
+    var kind = was;
+
+    var tabs = el('div');
+    var pane = el('div');
+    add(body, tabs, pane);
+
+    var drawTabs = function () {
+      clear(tabs);
+      add(tabs, typeTabs(kind, function (picked) {
+        kind = picked;
+        drawTabs();
+        drawPane();
+      }));
+    };
+
+    var drawPane = function () {
+      clear(pane);
+      if (kind === TRANSFER) return drawTransfer();
+      drawCategory();
+    };
+
+    /**
+     * The two kinds that want a category.
+     *
+     * `firstLabel` carries the one piece of state that matters here: whether
+     * leaving the picker alone is a legitimate answer. It is, when the row is
+     * already this kind and you opened the sheet to confirm the guess. It is
+     * not, when you have just moved the row *out* of Transfer — because the
+     * `category_override` saying Transfer is still on the row and still wins,
+     * so "leave as it is" would close the sheet having changed nothing while
+     * the tab said otherwise.
+     */
+    var drawCategory = function () {
+      var moving = was === TRANSFER;
+
+      add(pane, el('p', 'muted', record.category
+        ? 'Currently ' + withIcon(categoryIcon(record.category), record.category) +
+          (record.subcategory
+            ? ' \u{203a} ' + withIcon(subcategoryIcon(record.subcategory), record.subcategory)
+            : '') +
+          (record.source ? ' (' + record.source + ')' : '')
+        : 'Not categorised.'));
+
+      var picker = categoryPicker(record, kind,
+        moving ? 'Pick a category\u{2026}' : 'Leave as it is');
+      add(pane, picker.node);
+
+      var labels = labelChips(record);
+      add(pane, labels.node);
+
+      var confirm = el('button', 'primary', record.confirmed ? 'Save' : 'Confirm');
+      confirm.style.marginTop = '16px';
+      confirm.type = 'button';
+      confirm.addEventListener('click', function () {
+        if (moving && !picker.answered()) {
+          return toast('Pick the category it should be instead.');
+        }
+
+        var decision = picker.chosen();
+        decision.uid = record.uid;
+        decision.confirmed = true;
+        // Always sent, because the chips always show the row's current value —
+        // so "what is ticked" is the answer whether or not you touched them,
+        // and an untouched set writes back what was already there. See the note
+        // on `labels` in `applyReviewDecisions_` for why that is safe.
+        decision.labels = labels.chosen();
+        // Absent unless it actually changed — `applyReviewDecisions_` writes
+        // whatever it is given, and re-sending the same string would report a
+        // rename on every confirm.
+        var renamed = renamedTo();
+        if (renamed) decision.description = renamed;
+
+        dialog.close();
+        sendDecision(record, decision);
+      });
+      add(pane, confirm);
+    };
+
+    /**
+     * The third kind, which wants a destination rather than a category.
+     *
+     * One button, whatever the row was. `webAppLinkTransfer_` writes the
+     * category *and* the counter-leg in one call and is idempotent per
+     * destination — the leg's uid is derived from this row's — so pressing it
+     * on a row that is already a transfer records the other side it never had,
+     * rather than a second copy of it.
+     */
+    var drawTransfer = function () {
+      add(pane, el('p', 'muted',
+        'Money between accounts you own. Not income, not spending, and counted ' +
+        'in neither.'));
+
+      var where = destinationPicker(record);
+      add(pane, where.node);
+
+      var kind = transferKindPicker(record);
+      add(pane, kind.node);
+
+      /*
+        **No label chips here, and that is a rule rather than a tidy-up.**
+
+        A label is the axis a category cannot express — `travel` spanning a
+        flight, a hotel and forty euros of coffee. A transfer is the same money
+        in two places, excluded from every total through `in_reports`, so a
+        label on one builds a filter that can never match what it was set to
+        find. `applyReviewDecisions_` refuses the same write, because a page can
+        send anything.
+
+        Labels already on such a row are left where they are. The sheet still
+        owns that column, and quietly clearing something the moment you opened a
+        pane would be the worse half of the same opinion.
+      */
+      var mark = el('button', 'primary',
+        was === TRANSFER ? 'Save' : 'Mark as a transfer');
+      mark.style.marginTop = '16px';
+      mark.type = 'button';
+      mark.addEventListener('click', function () {
+        var destination = where.value();
+        var subcategory = kind.value();
+        var renamed = renamedTo();
+        dialog.close();
+
+        // Optimistic on the row itself, the way `sendDecision` is: the category
+        // is what makes it a transfer, and the row redraws neutral at once.
+        var before = { category: record.category, subcategory: record.subcategory,
+          type: record.type, inReports: record.inReports,
+          confirmed: record.confirmed };
+
+        record.category = TRANSFER_CATEGORY;
+        record.subcategory = subcategory;
+        record.type = TRANSFER;
+        record.inReports = false;
+        record.confirmed = true;
+        render();
+
+        var request = { uid: record.uid, destination: destination,
+          subcategory: subcategory };
+        if (renamed) request.description = renamed;
+
+        call('appMarkTransfer', request)
+          .then(function (result) {
+            toast(result.message);
+            reloadAfterWrite();
+          }).catch(function (error) {
+            record.category = before.category;
+            record.subcategory = before.subcategory;
+            record.type = before.type;
+            record.inReports = before.inReports;
+            record.confirmed = before.confirmed;
+            toast(error.message);
+            render();
+          });
+      });
+      add(pane, mark);
+    };
+
+    drawTabs();
+    drawPane();
+
+    // Tap outside to dismiss. `<dialog>` does not do this for you — it gives
+    // you Escape, which a phone has no key for. The test is only sound because
+    // everything visible is inside `.sheet-body`; see the note there.
+    //
+    // Rebound on every open rather than once, because `clear()` empties the
+    // dialog but the element itself is reused, so a listener added here would
+    // otherwise accumulate one copy per transaction you ever tapped.
+    dialog.onclick = function (event) {
+      if (event.target === dialog) dialog.close();
+    };
+
+    openWithoutMoving(dialog);
+  }
+
+  /**
+   * A row that has just been confirmed no longer matches "needs review".
+   *
+   * Removed locally rather than by refetching, so the list does not jump back
+   * to its first page — see `reloadAfterWrite`. Returns where it was, because
+   * a refusal has to put it back exactly there: appending it would silently
+   * re-sort someone's list under them, and dropping it for good would hide a
+   * transaction that is still unconfirmed on the server.
+   */
+  function dropIfFiltered(record) {
+    if (!state.filters.records.unconfirmedOnly) return -1;
+
+    var at = state.records.rows.indexOf(record);
+    if (at === -1) return -1;
+
+    state.records.rows.splice(at, 1);
+    if (state.records.total > 0) state.records.total--;
+    return at;
+  }
+
+  function restoreDropped(record, at) {
+    if (at < 0) return;
+    state.records.rows.splice(at, 0, record);
+    state.records.total++;
+  }
+
+  /**
+   * A category's kind, from the list the bootstrap already sends.
+   *
+   * Only used to predict what the sheet is about to derive, so the row can be
+   * redrawn before the server answers. `typeFormula()` is the authority and
+   * this is a guess at what it will say — which is why `reloadAfterWrite`
+   * follows every write and replaces the guess with the answer.
+   */
+  function kindOfCategory(name) {
+    var found = (state.lists.categories.parents || []).filter(function (entry) {
+      return entry.name === name;
+    })[0];
+    return found ? found.kind : '';
+  }
+
+  /**
+   * Replace an optimistic guess with what the server actually says.
+   *
+   * In place rather than by swapping the object: `state.records.rows` holds
+   * these by reference, `dropIfFiltered` remembers an index into that array,
+   * and the sheet that is still open closed over this exact record. Assigning a
+   * new object would leave three of those pointing at the old one.
+   *
+   * Keyed off the server's own shape, so a field added to `recordForPage_`
+   * arrives here without a second list to keep in step.
+   */
+  function patchRecord(record, fresh) {
+    Object.keys(fresh).forEach(function (key) { record[key] = fresh[key]; });
+    render();
+  }
+
+  function sendDecision(record, decision) {
+    // Optimistic, and the local copies are what get redrawn — the server's own
+    // view is refetched afterwards rather than assumed.
+    var was = { confirmed: record.confirmed, category: record.category,
+      subcategory: record.subcategory, labels: record.labels, type: record.type,
+      inReports: record.inReports };
+
+    record.confirmed = true;
+    if (decision.subcategory_override) record.subcategory = decision.subcategory_override;
+    if (decision.category_override) {
+      record.category = decision.category_override;
+      // `type` is derived from the category on the sheet, so predicting it here
+      // is what makes marking a transfer redraw as one immediately rather than
+      // a round trip later. `in_reports` follows it, which is what stops a row
+      // you just excluded from still colouring itself as spending.
+      var kind = kindOfCategory(decision.category_override);
+      if (kind) {
+        record.type = kind;
+        record.inReports = kind !== TRANSFER;
+      }
+    }
+    if (decision.labels !== undefined) record.labels = decision.labels.slice();
+    var droppedAt = dropIfFiltered(record);
+    render();
+
+    // Both failure paths put the row back the way it was, and the soft one
+    // used to forget to redraw — so a refusal left the optimistic row on
+    // screen looking saved until something else happened to call `render`.
+    var refuse = function (message) {
+      toast(message);
+      record.confirmed = was.confirmed;
+      record.category = was.category;
+      record.subcategory = was.subcategory;
+      record.labels = was.labels;
+      record.type = was.type;
+      record.inReports = was.inReports;
+      restoreDropped(record, droppedAt);
+      render();
+    };
+
+    call('appConfirm', [decision]).then(function (result) {
+      var outcome = (result.results || [])[0];
+      if (outcome && !outcome.ok) return refuse('Not saved: ' + outcome.reason);
+
+      /*
+        No toast on success, deliberately.
+
+        The row has already redrawn — it carries a tick, it may have changed
+        category, it may have left the list entirely if you were filtering on
+        unconfirmed. A banner saying "Saved." adds nothing to that and costs
+        four seconds of the screen, every single time, on the action you do most
+        often. A refusal still speaks, because a refusal has nothing else to
+        show for itself: the row goes back to how it was, which looks exactly
+        like a tap that never landed.
+
+        `record` is the row as the sheet describes it *now* — the derived
+        columns are formulas, so what a confirmation means is only knowable by
+        asking, and the optimistic patch above is a guess at what it will say.
+      */
+      if (outcome && outcome.record) patchRecord(record, outcome.record);
+      reloadAfterWrite();
+    }).catch(function (error) { refuse(error.message); });
+  }

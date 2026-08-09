@@ -1,0 +1,375 @@
+  // -------------------------------------------------------------------------
+  // Charts, hand-drawn
+  // -------------------------------------------------------------------------
+
+  function svgNode(tag, attributes) {
+    var node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.keys(attributes || {}).forEach(function (key) {
+      node.setAttribute(key, String(attributes[key]));
+    });
+    return node;
+  }
+
+  /**
+   * A chart and the scale that says what its height is worth.
+   *
+   * Without one a plot with a truncated baseline reads as starting from zero,
+   * which is the single most misleading thing a chart can do quietly: a net
+   * worth that moved 13% over a month drew a line from the floor of the card to
+   * its ceiling, so the shape said "it nearly doubled" and nothing on the card
+   * disagreed. Both ends were captioned with their own value already — that
+   * tells you where the line began and ended and still not what the *slope* is
+   * worth, because the height between them had no stated meaning.
+   *
+   * `marks` are `{y, label}` in viewBox units, and the y-to-pixels conversion is
+   * the one thing tying the two halves together: the SVG is 40 units tall and
+   * `120px` on screen, both stated here rather than measured, because a measure
+   * would have to happen after layout and this runs while building the node.
+   */
+  var PLOT_UNITS = 40;
+  var PLOT_PIXELS = 120;
+
+  function withScale(svg, marks) {
+    var box = el('div', 'plot');
+    add(box, svg);
+
+    var axis = el('div', 'yaxis');
+    marks.forEach(function (mark) {
+      var tick = el('span', 'ytick', mark.label);
+      tick.style.top = ((mark.y / PLOT_UNITS) * PLOT_PIXELS).toFixed(1) + 'px';
+      add(axis, tick);
+    });
+
+    return add(box, axis);
+  }
+
+  /** A gridline at `y`, for the scale beside it to be measured against. */
+  function gridline(y) {
+    return svgNode('line', { x1: 0, y1: y.toFixed(2), x2: 100, y2: y.toFixed(2),
+      class: 'grid', 'vector-effect': 'non-scaling-stroke' });
+  }
+
+  /**
+   * A line, from a series of `{key, value}`.
+   *
+   * Drawn in a fixed 100×40 viewBox with `preserveAspectRatio="none"`, so the
+   * SVG scales to whatever width the card is without any measuring in JS. The
+   * stroke would scale with it and go lozenge-shaped, which is what
+   * `vector-effect="non-scaling-stroke"` is for.
+   *
+   * A flat series is centred rather than drawn at the top: dividing by a zero
+   * range gives Infinity, and a chart of one repeated value is a real answer
+   * (an account nobody has touched all month) rather than an error.
+   */
+  function lineChart(series) {
+    var box = el('div');
+    if (!series || series.length < 2) {
+      return add(box, el('p', 'muted', 'Not enough days to draw a line yet.'));
+    }
+
+    var values = series.map(function (point) { return point.value; });
+    var low = Math.min.apply(null, values);
+    var high = Math.max.apply(null, values);
+    var range = high - low;
+
+    var points = series.map(function (point, i) {
+      var x = (i / (series.length - 1)) * 100;
+      var y = range === 0 ? 20 : 38 - ((point.value - low) / range) * 36;
+      return x.toFixed(2) + ',' + y.toFixed(2);
+    }).join(' ');
+
+    var svg = svgNode('svg', {
+      viewBox: '0 0 100 40', preserveAspectRatio: 'none',
+      role: 'img', 'aria-label': 'Trend from ' + series[0].key + ' to ' + series[series.length - 1].key
+    });
+    svg.style.height = PLOT_PIXELS + 'px';
+
+    // Three, at the two ends of the data and halfway between them — the top and
+    // bottom are the y values `points` above already maps `high` and `low` to,
+    // so the labels sit on the line rather than near it. A flat series gets one
+    // mark at the centre, where the flat line is: three identical figures down
+    // the side would read as a scale that happens to repeat.
+    var marks = range === 0
+      ? [{ y: 20, label: money(low, { whole: true }) }]
+      : [{ y: 2, label: money(high, { whole: true }) },
+         { y: 20, label: money((low + high) / 2, { whole: true }) },
+         { y: 38, label: money(low, { whole: true }) }];
+
+    marks.forEach(function (mark) { add(svg, gridline(mark.y)); });
+    add(svg, svgNode('polyline', { points: points, class: 'line',
+      'vector-effect': 'non-scaling-stroke' }));
+
+    add(box, withScale(svg, marks));
+
+    // Each end labelled with **its own** value. The first draft paired the
+    // first date with `low` and the last with `high`, which is right only for
+    // a line that happens to be rising: a month where the balance fell showed
+    // the starting date next to the lowest figure it reached, which is a
+    // caption that contradicts the line above it.
+    var first = series[0];
+    var last = series[series.length - 1];
+    return add(box, add(el('div', 'row'),
+      el('span', 'muted', shortDate(first.key) + ' · ' + money(first.value, { whole: true })),
+      el('span', 'muted', shortDate(last.key) + ' · ' + money(last.value, { whole: true }))));
+  }
+
+  /**
+   * Cashflow, as bars from a zero line.
+   *
+   * Money out below the line and money in above it, because the shape of a
+   * month is the question and a signed bar answers it at a glance where two
+   * stacked series do not. The zero line moves with the data rather than
+   * sitting in the middle: a month with no income at all should not waste half
+   * the chart on the space where income would have been.
+   */
+  function barChart(buckets) {
+    var box = el('div');
+    if (!buckets || !buckets.length) {
+      return add(box, el('p', 'muted', 'Nothing in this period.'));
+    }
+
+    var high = 0;
+    var low = 0;
+    buckets.forEach(function (bucket) {
+      high = Math.max(high, bucket.income);
+      low = Math.min(low, -bucket.expenses);
+    });
+    var span = high - low || 1;
+
+    // Inset by one unit at each end, where this used to run edge to edge. Two
+    // reasons and the second is the one that forced it: a bar at the maximum
+    // touching the border of the card cannot be told from one clipped by it,
+    // and a label centred on y=0 would hang half outside the gutter.
+    var top = 1;
+    var bottom = PLOT_UNITS - 1;
+    var yOf = function (value) { return bottom - ((value - low) / span) * (bottom - top); };
+    var zero = yOf(0);
+
+    var svg = svgNode('svg', {
+      viewBox: '0 0 100 40', preserveAspectRatio: 'none',
+      role: 'img', 'aria-label': buckets.length + ' periods of income and spending'
+    });
+    svg.style.height = PLOT_PIXELS + 'px';
+
+    var width = 100 / buckets.length;
+    buckets.forEach(function (bucket, i) {
+      [[-bucket.expenses, 'barmark'], [bucket.income, 'barmark up']].forEach(function (pair) {
+        var value = pair[0];
+        if (!value) return;
+        var height = Math.abs(value / span) * (bottom - top);
+        add(svg, svgNode('rect', {
+          x: (i * width + width * 0.15).toFixed(2),
+          y: (value < 0 ? zero : zero - height).toFixed(2),
+          width: (width * 0.7).toFixed(2),
+          height: Math.max(height, 0.4).toFixed(2),
+          class: pair[1]
+        }));
+      });
+    });
+
+    // Zero is always marked and always labelled, because on this chart it is
+    // not a scale reading — it is the line the sign is measured from, and a bar
+    // hanging below an unlabelled edge is only obviously spending if you
+    // already knew that. The other two are added only where they are a
+    // different number: a month with no income at all puts `high` at zero, and
+    // two ticks reading nothing apart is a scale that looks broken.
+    var marks = [{ y: zero, label: money(0, { whole: true }) }];
+    if (high > 0) marks.push({ y: yOf(high), label: money(high, { whole: true }) });
+    if (low < 0) marks.push({ y: yOf(low), label: money(low, { whole: true }) });
+
+    marks.forEach(function (mark) { add(svg, gridline(mark.y)); });
+    add(svg, svgNode('line', { x1: 0, y1: zero.toFixed(2), x2: 100, y2: zero.toFixed(2),
+      class: 'axis', 'vector-effect': 'non-scaling-stroke' }));
+
+    add(box, withScale(svg, marks));
+    return add(box, add(el('div', 'row'),
+      el('span', 'muted', shortDate(buckets[0].key)),
+      el('span', 'muted', shortDate(buckets[buckets.length - 1].key))));
+  }
+
+  /**
+   * A category's icon, from the lists the bootstrap already sends.
+   *
+   * Looked up by name rather than sent per row, because `byCategory` is keyed
+   * by the category name and the icons are a list of about a dozen — joining
+   * them on the server would put the same string in the response once per row
+   * to save one lookup here.
+   */
+  function categoryIcon(name) {
+    var found = state.lists.categories.parents.filter(function (entry) {
+      return entry.name === name;
+    })[0];
+    return found ? found.icon : '';
+  }
+
+  /**
+   * A *sub*category's icon, which is a different question and a separate list.
+   *
+   * This used to be for the detail sheet only. The row avatars deliberately
+   * drew the parent's, on the argument that a dozen parent icons are a
+   * vocabulary you learn where sixty child ones are noise — and the argument is
+   * a reasonable one about a *designed* set of parent icons, which this is not.
+   * `categoryChoices_` has no parent icon to send, because `categories` stores
+   * one icon per row and a row is a subcategory; a parent's is simply **the
+   * first child's, whichever that happens to be**. So a flight drew 🎬, from
+   * `Cinema & Events` being the first row under Entertainment, and the ✈️ sat
+   * unused on the row that meant it. A vocabulary of a dozen arbitrary
+   * inheritances is not one you can learn.
+   *
+   * `children` is the flat list `categoryChoices_` sends, so the names here are
+   * unique by construction: a subcategory that named two parents could not
+   * resolve through `VLOOKUP` either, which is why the seed has none.
+   */
+  function subcategoryIcon(name) {
+    if (!name) return '';
+    var found = state.lists.categories.children.filter(function (entry) {
+      return entry.name === name;
+    })[0];
+    return found ? found.icon : '';
+  }
+
+  /**
+   * `🛒 Groceries`, or just `Groceries` when the icon column is empty.
+   *
+   * A helper rather than a ternary at each call site because the empty case is
+   * the one that goes wrong: `icon + ' ' + name` with no icon is a name with a
+   * leading space, which is invisible in a mockup and shows up as a wobbling
+   * left edge down a list of them. `categories.icon` is a cell the user owns
+   * and may clear.
+   */
+  function withIcon(icon, name) {
+    return icon ? icon + ' ' + name : String(name || '');
+  }
+
+  /**
+   * The category breakdown, as bars.
+   *
+   * The best form on a narrow screen: lengths from a common baseline, read
+   * top to bottom, with the label and the number on the same line as the bar
+   * rather than in a legend you have to look back and forth to.
+   *
+   * **The row opens; the button inside it goes to the transactions.**
+   * The intermediate design put the drill on the bar and the expand on a
+   * chevron, which failed for a reason worth writing down: the two controls
+   * were 300px and 32px wide, and the small one owned the gesture that gets
+   * used — you open a category to see what is in it far more often than you
+   * ask for its full list of rows. Tapping the row anywhere expands it now,
+   * and the drill is a full-width button at the end of what was revealed.
+   *
+   * **Every row expands, including one with no subcategories.** Otherwise the
+   * same gesture means two different things depending on a fact about the data
+   * you cannot see before tapping — the original complaint about the very first
+   * design. A childless category opens onto its drill button alone, which reads
+   * as "nothing underneath this, here are the rows" and keeps the way to the
+   * transactions in exactly one place on the screen.
+   *
+   * A child, having nothing to expand, is a leaf and drills on tap.
+   */
+  function categoryBars(rows) {
+    var box = el('div');
+    if (!rows || !rows.length) {
+      return add(box, el('p', 'muted', 'Nothing spent in this period.'));
+    }
+
+    var biggest = rows[0].total || 1;
+    rows.forEach(function (row) {
+      var children = row.children || [];
+      var open = !!state.expanded[row.name];
+
+      var bar = el('button', 'catrow');
+      bar.type = 'button';
+      bar.setAttribute('aria-expanded', open ? 'true' : 'false');
+      bar.setAttribute('aria-label', row.name + ' ' + money(row.total) + ', ' +
+        (open ? 'collapse' : 'expand'));
+      bar.addEventListener('click', function () {
+        state.expanded[row.name] = !open;
+        render();
+      });
+
+      // The icon comes from the `categories` tab, which has carried one since
+      // the tab was seeded — the page simply never asked for it. A dozen bars
+      // in one colour are told apart by reading every label; with the icon the
+      // one you are looking for is found before you read anything.
+      var label = el('span', 'grow ellipsis');
+      var icon = categoryIcon(row.name);
+      if (icon) add(label, el('span', null, icon + ' '));
+      add(label, document.createTextNode(row.name));
+
+      add(bar, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
+
+      // The same hue the row's disc gets on Records, so a category looks like
+      // itself wherever you meet it. One accent colour for twelve bars meant
+      // the label was the only thing telling them apart, which is the work the
+      // bar was supposed to be doing.
+      var fill = el('div', 'bar-fill');
+      fill.style.background = categoryColor(row.name);
+      fill.style.width = Math.max(2, (row.total / biggest) * 100).toFixed(1) + '%';
+      add(bar, add(el('div', 'bar-track'), fill));
+
+      add(box, bar);
+      if (!open) return;
+
+      // Children are drawn against their *parent's* total, not the biggest
+      // category's. The question a drill-down answers is "what is this category
+      // made of", and a share of the whole screen cannot answer it — every bar
+      // under a small category would be a sliver.
+      var kids = el('div', 'children');
+      children.forEach(function (child) {
+        // Drills with **both** names. A child is unique under its parent and
+        // `(uncategorised)` is not unique at all — every category has one — so
+        // the pair is what addresses a group. `matchesGroup_` is asked twice
+        // on the server for exactly this.
+        var kid = el('button', 'catkid');
+        kid.type = 'button';
+        kid.setAttribute('aria-label', child.name + ' in ' + row.name + ' ' +
+          money(child.total) + ', show these transactions');
+        kid.addEventListener('click', function () {
+          drillToRecords({ spendOnly: true, category: row.name, subcategory: child.name });
+        });
+
+        add(kid, add(el('div', 'row'),
+          add(el('span', 'grow ellipsis'), document.createTextNode(child.name)),
+          el('span', 'num muted', money(child.total))));
+
+        // The parent's hue, not the child's. A subcategory belongs to the
+        // category it is nested under, and giving it a colour of its own would
+        // say the opposite — the `.children` rule fades it instead.
+        var kidFill = el('div', 'bar-fill');
+        kidFill.style.background = categoryColor(row.name);
+        kidFill.style.width =
+          Math.max(2, (child.total / (row.total || 1)) * 100).toFixed(1) + '%';
+        add(kid, add(el('div', 'bar-track'), kidFill));
+        add(kids, kid);
+      });
+
+      // Last, not first. Above the children it would be read as the heading of
+      // the group and tapped by people who meant to open one of them; below
+      // them it is what you reach after the breakdown has failed to answer the
+      // question, which is exactly when you want the rows themselves.
+      var more = el('button', 'link catmore',
+        'All ' + row.name + ' transactions →');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        drillToRecords({ spendOnly: true, category: row.name });
+      });
+      add(kids, more);
+
+      add(box, kids);
+    });
+    return box;
+  }
+
+  /**
+   * A colour for a category, derived rather than stored.
+   *
+   * `categories` carries an icon and no colour, and adding a colour column
+   * would be a migration plus a thing to keep filled in — for something a hash
+   * of the name gives free, stably, and identically on every device. Fixed
+   * saturation and lightness so every disc reads at the same weight in both
+   * themes; only the hue moves.
+   */
+  function categoryColor(name) {
+    var hash = 0;
+    for (var i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % 360;
+    return 'hsl(' + hash + ', 58%, 47%)';
+  }

@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from './harness.mjs';
+import { pageSource } from './page.mjs';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
@@ -1650,7 +1651,7 @@ describe('the page itself', () => {
     // the moment someone taps the thing — with an error a browser writes to a
     // console nobody on a phone can open.
     const c = load();
-    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const page = pageSource();
     const called = [...page.matchAll(/call\('([A-Za-z0-9_]+)'/g)].map((m) => m[1]);
 
     expect(called.length).toBeGreaterThan(0);
@@ -1741,7 +1742,7 @@ describe('what the dashboard reads', () => {
  * renders as an empty screen, not as an error.
  */
 describe('the page and the server agree', () => {
-  const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+  const page = pageSource();
 
   /*
     This is the check that would have caught the change that removed the
@@ -2195,7 +2196,7 @@ describe('the first screen, inlined into the page', () => {
     // The inline path is an optimisation, not a replacement. If the page ever
     // stops being able to fetch `appOpen`, a payload that fails to parse is a
     // blank dashboard with no way back.
-    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const page = pageSource();
 
     expect(page).toContain("call('appOpen')");
     expect(page).toContain("call('appOverview')");
@@ -2213,7 +2214,7 @@ describe('the first screen, inlined into the page', () => {
     server actually uses.
   */
   describe('the query string the page writes', () => {
-    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const page = pageSource();
 
     const written = (() => {
       const block = page.match(/var VIEW_PARAMS = \{([\s\S]*?)\};/);
@@ -2242,7 +2243,11 @@ describe('the first screen, inlined into the page', () => {
     it('reads the view the server templates in, by the id it templates it as', () => {
       expect(page).toContain("document.getElementById('view')");
       expect(page).toContain('id="view"');
-      expect(page).toContain('<?!= view ?>');
+
+      // The one assertion here that wants the *template* rather than the
+      // assembly: `pageSource` fills the scriptlets, which is the whole of what
+      // it is for, so the placeholder it is asked about is gone by then.
+      expect(readFileSync(join(SRC, 'page.html'), 'utf8')).toContain('<?!= view ?>');
     });
 
     it('writes the URL on both of the two ways a view changes', () => {
@@ -2289,7 +2294,7 @@ describe('the first screen, inlined into the page', () => {
     them lands in `state.lists.<name>` and is read by name.
   */
   it('picks up every list the two calls send', () => {
-    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const page = pageSource();
     const c = book([]);
 
     const sent = Object.keys(c.appOpen().lists)
@@ -2302,7 +2307,7 @@ describe('the first screen, inlined into the page', () => {
   });
 
   it('parses as JavaScript', () => {
-    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+    const page = pageSource();
     const script = page.slice(page.lastIndexOf('<script>') + '<script>'.length,
       page.lastIndexOf('</script>'));
 
