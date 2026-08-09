@@ -28,7 +28,7 @@ const SCOPE_FOR = [
   [/\bUrlFetchApp\./, 'script.external_request', 'outbound HTTP'],
   [/\bScriptApp\./, 'script.scriptapp', 'reading the deployment URL and installing triggers'],
   [/\bMailApp\./, 'script.send_mail', 'sending alerts'],
-  [/googleapis\.com\/(upload\/)?drive\/v3\//, 'drive.file', 'CSV snapshots'],
+  [/\bDrive\.Files\./, 'drive.file', 'CSV snapshots'],
   [/\bSession\./, 'userinfo.email', 'knowing where to send an alert'],
   [/\bSpreadsheetApp\./, 'spreadsheets.currentonly', 'reading and writing the sheet']
 ];
@@ -86,12 +86,29 @@ describe('appsscript.json', () => {
     expect(/\bDriveApp\.\w+\s*\(/.test(source)).toBe(false);
   });
 
-  it('signs its Drive calls with the script token, which the scopes bound', () => {
-    // The token ScriptApp mints carries exactly the manifest's scopes, so a
-    // call needing more fails as a 403 from Google. That is what keeps the
-    // scope list the whole truth about what this script can reach — and it
-    // only holds while nothing reaches Drive by some other route.
-    expect(source).toContain('ScriptApp.getOAuthToken()');
+  it('declares the Drive advanced service, which is what enables the API', () => {
+    // A scope is permission to use an API; it does not switch that API on.
+    // They are separate gates and they fail alike — "has not been used in
+    // project 000000000000 before or it is disabled" reads as a permissions
+    // error and sends you to the scope list, which is the one place with
+    // nothing wrong. Declaring the dependency is what opens the second gate:
+    // Apps Script enables the API in a default Cloud project for a script
+    // that depends on it, and a default project is one the Cloud console will
+    // not open, so there is no other route to it from here.
+    const services = manifest.dependencies.enabledAdvancedServices || [];
+    expect(services.map((s) => s.serviceId)).toContain('drive');
+  });
+
+  it('calls Drive by the names the declared version uses', () => {
+    // v2 is `insert` and `delete`; v3 is `create` and `remove`. The manifest
+    // picks the version and the source has to agree with it — disagree and
+    // every call is a TypeError, raised inside a weekly trigger, which is the
+    // one place in this project that can stay broken without anyone noticing.
+    const drive = (manifest.dependencies.enabledAdvancedServices || [])
+      .filter((s) => s.serviceId === 'drive')[0];
+
+    expect(drive.version).toBe('v3');
+    expect(/\bDrive\.Files\.(insert|delete)\b/.test(source)).toBe(false);
   });
 
   it('needs no new scope for the page, since HtmlService asks for none', () => {

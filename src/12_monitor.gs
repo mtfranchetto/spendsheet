@@ -418,12 +418,23 @@ function snapshotToDrive() {
  * had never once been written went on reporting nothing wrong. Two separate
  * fixes, both aimed at the folder, because the error named the folder.
  *
- * The Drive **REST API** is what `drive.file` was defined for — per-file
- * access to files the app itself created. `files.create` is permitted under
- * it, for a folder exactly as much as for a CSV, so the transport changes and
- * every decision below it survives. The cost is ~40 lines of multipart body
- * and an `Authorization` header; the alternative was asking for read access to
- * every file in the Drive in order to write one.
+ * The Drive **API** is what `drive.file` was defined for — per-file access to
+ * files the app itself created. `files.create` is permitted under it, for a
+ * folder exactly as much as for a CSV, so the transport changes and every
+ * decision below it survives.
+ *
+ * Reached through the **advanced service** rather than `UrlFetchApp` against
+ * the same endpoints, which is a distinction with one consequence and it is
+ * not style. A scope is permission to use an API; it does not switch that API
+ * on, and the Drive API is off by default in the Cloud project behind a
+ * script. Both gates fail with messages that read alike, so the second one
+ * cost another round: the REST version passed every test, shipped, and came
+ * back *"Google Drive API has not been used in project 000000000000 before or
+ * it is disabled"*. Google's own error links to the Cloud console, which is a
+ * dead end here — this script uses a **default** Cloud project, and the
+ * console will not open one. Declaring the dependency in `appsscript.json` is
+ * what opens that gate, because Apps Script enables the API in a default
+ * project for a script that depends on it.
  *
  * The folder is still an improvement rather than a requirement. Losing it
  * costs tidiness; refusing to write the backup costs the backup.
@@ -476,10 +487,8 @@ function snapshotFolderId_(name) {
     }
   }
 
-  var created = driveRequest_('https://www.googleapis.com/drive/v3/files?fields=id', {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ name: name, mimeType: DRIVE_FOLDER_MIME })
+  var created = drive_(function () {
+    return Drive.Files.create({ name: name, mimeType: DRIVE_FOLDER_MIME });
   });
 
   properties.setProperty(SNAPSHOT_FOLDER_PROPERTY, created.id);
@@ -488,77 +497,70 @@ function snapshotFolderId_(name) {
 
 /** One file's metadata, by the id we stored when we created it. */
 function driveFile_(id) {
-  return driveRequest_('https://www.googleapis.com/drive/v3/files/' +
-    encodeURIComponent(id) + '?fields=id,trashed', { method: 'get' });
+  return drive_(function () {
+    return Drive.Files.get(id, { fields: 'id,trashed' });
+  });
 }
 
 /**
- * A file with its content, in one request.
- *
- * `uploadType=multipart` is the only single-request form that carries metadata
- * *and* bytes — `media` alone uploads content under the name "Untitled", which
- * is a backup you cannot find, and resumable is two round trips for a file
- * measured in hundreds of kilobytes. The boundary is a UUID because it must
- * not occur in the payload, and the payload is a CSV of whatever the bank put
- * in a description field.
+ * A file with its content.
  *
  * `parents` is omitted rather than sent empty when there is no folder: Drive
  * reads an absent parent as My Drive, and an empty array as an error.
+ *
+ * The blob carries the name too, and it is the *resource* that decides what
+ * the file is called — a blob named differently is not an error and not
+ * visible anywhere, which is a backup filed under the wrong name.
  */
 function driveCreateFile_(name, content, mime, folderId) {
   var metadata = { name: name, mimeType: mime };
   if (folderId) metadata.parents = [folderId];
 
-  var boundary = 'spendsheet-' + Utilities.getUuid();
-  var body = '--' + boundary + '\r\n' +
-    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-    JSON.stringify(metadata) + '\r\n' +
-    '--' + boundary + '\r\n' +
-    'Content-Type: ' + mime + '\r\n\r\n' +
-    content + '\r\n' +
-    '--' + boundary + '--';
+  return drive_(function () {
+    return Drive.Files.create(metadata, Utilities.newBlob(content, mime, name));
+  });
+}
 
-  return driveRequest_(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
-      method: 'post',
-      contentType: 'multipart/related; boundary=' + boundary,
-      payload: body
-    });
+/** Permanently, not to the bin. See `checkSnapshotPermitted_`. */
+function driveDeleteFile_(id) {
+  return drive_(function () { return Drive.Files.remove(id); });
 }
 
 /**
- * The Drive API, signed with this script's own token.
+ * A Drive call, with the one failure that is not about this code translated.
  *
- * `ScriptApp.getOAuthToken()` returns a token for the scopes in the manifest
- * and nothing more, so a call needing something we did not ask for fails as a
- * 403 from Google rather than as a surprise later. That is the property worth
- * having: the scope list stays the whole truth about what this script can
- * reach, which is not true of a service whose scope Apps Script infers.
+ * **The Drive API has to be switched on in the Cloud project behind the
+ * script, and asking for the scope does not switch it on.** Those are two
+ * independent gates and they fail with messages that read alike: a 403 saying
+ * "has not been used in project 000000000000 before or it is disabled" is not
+ * a permissions problem, and the whole scope list is a red herring for it.
  *
- * `muteHttpExceptions` so the body is readable — Drive puts the reason in it,
- * and the default behaviour throws it away and leaves you with a status code
- * to guess from. The one code worth translating is the 403 raised because the
- * Drive API is switched off in the Cloud project behind the script, which
- * reads as a permissions failure and is not one.
+ * Declaring the advanced service in `appsscript.json` is what opens that gate
+ * — Apps Script enables the API in a *default* Cloud project when a script
+ * depends on it, and a default project is one nobody can open in the Cloud
+ * console, so the link in Google's own error message goes nowhere here. That
+ * is the whole reason this is `Drive.Files` rather than `UrlFetchApp` against
+ * the same REST endpoints: the two are equivalent at the call, and only one
+ * of them arranges to be allowed to make it.
+ *
+ * So the message says the thing that actually works, and says it in terms of
+ * the editor rather than a console this project has no project in.
  */
-function driveRequest_(url, params) {
-  params.headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
-  params.muteHttpExceptions = true;
-
-  var response = UrlFetchApp.fetch(url, params);
-  var code = response.getResponseCode();
-  var body = response.getContentText();
-
-  if (code < 200 || code >= 300) {
-    if (code === 403 && body.indexOf('accessNotConfigured') !== -1) {
-      throw new Error('The Drive API is disabled in the Cloud project behind this ' +
-        'script. Apps Script → Project Settings → Google Cloud Platform project, ' +
-        'then enable the Drive API there. (HTTP 403: ' + body.slice(0, 200) + ')');
+function drive_(call) {
+  try {
+    return call();
+  } catch (e) {
+    var message = String(e && e.message || e);
+    if (message.indexOf('has not been used in project') !== -1 ||
+        message.indexOf('accessNotConfigured') !== -1) {
+      throw new Error('The Drive API is switched off in the Cloud project behind this ' +
+        'script, which is not a scope problem and cannot be fixed in the Cloud console — ' +
+        'this script uses a default project, which the console will not open. In the Apps ' +
+        'Script editor: Services (+) → Drive API → v3 → Add. That enables it. (' +
+        message.slice(0, 200) + ')');
     }
-    throw new Error('Drive API ' + code + ': ' + body.slice(0, 300));
+    throw e;
   }
-
-  return body ? JSON.parse(body) : {};
 }
 
 /**
@@ -591,8 +593,7 @@ function checkSnapshotPermitted_() {
   var created = driveCreateFile_(name, 'Written by Spendsheet to check it may ' +
     'write backups. Safe to delete.', MimeType.PLAIN_TEXT, folderId);
 
-  driveRequest_('https://www.googleapis.com/drive/v3/files/' +
-    encodeURIComponent(created.id), { method: 'delete' });
+  driveDeleteFile_(created.id);
 
   return 'wrote and removed a file in ' + where;
 }
