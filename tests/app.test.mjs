@@ -2027,6 +2027,64 @@ describe('the first screen, inlined into the page', () => {
   });
 
   /*
+    The deep link, and the one thing a file test can prove about it.
+
+    The page writes the query string and `20_webapp.gs` reads it back, and there
+    is no handshake between them — a parameter renamed on one side only would
+    keep working for the length of a session and lose the filters on the first
+    refresh, which is precisely the case nobody tries. `page.html` is invisible
+    to the harness, so the names are compared as text against the constants the
+    server actually uses.
+  */
+  describe('the query string the page writes', () => {
+    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
+
+    const written = (() => {
+      const block = page.match(/var VIEW_PARAMS = \{([\s\S]*?)\};/);
+      expect(block, 'page.html no longer declares VIEW_PARAMS').not.toBeNull();
+      return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+    })();
+
+    it('is spelled the same on both sides', () => {
+      const c = load();
+      const read = [c.WEBAPP_VIEW_PARAM, c.WEBAPP_PERIOD_PARAM, c.WEBAPP_FROM_PARAM,
+        c.WEBAPP_TO_PARAM, c.WEBAPP_ACCOUNT_PARAM, c.WEBAPP_LABEL_PARAM,
+        c.WEBAPP_SEARCH_PARAM, c.WEBAPP_UNCONFIRMED_PARAM].sort();
+
+      expect(written).toEqual(read);
+    });
+
+    it('offers the same screens the server will accept', () => {
+      // `NAV` is what the page will restore to and what it will write; anything
+      // outside it is a URL the server answers and the page then ignores.
+      const nav = page.match(/var NAV = \[([^\]]*)\]/);
+      const screens = [...nav[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+
+      expect(screens).toEqual(load().WEBAPP_SCREENS);
+    });
+
+    it('reads the view the server templates in, by the id it templates it as', () => {
+      expect(page).toContain("document.getElementById('view')");
+      expect(page).toContain('id="view"');
+      expect(page).toContain('<?!= view ?>');
+    });
+
+    it('writes the URL on both of the two ways a view changes', () => {
+      // A screen change and a filter change. A URL that is right most of the
+      // time is one you cannot trust enough to bookmark.
+      expect(page).toMatch(/function go\(id\) \{[\s\S]*?rememberView\(\)/);
+      expect(page).toMatch(/function refreshCurrentScreen\(\) \{[\s\S]*?rememberView\(\)/);
+    });
+
+    it('goes through the API that reaches the parent frame', () => {
+      // `window.location` here is the sandboxed `userCodeAppPanel` URL, which
+      // nothing ever reloads. `google.script.history` is the only route to the
+      // `/exec` address a refresh actually re-requests.
+      expect(page).toContain('google.script.history.replace');
+    });
+  });
+
+  /*
     The third thing a *file* test can prove about the page, beside "no string is
     assigned as markup" and "every name it calls exists": that it parses at all.
 
