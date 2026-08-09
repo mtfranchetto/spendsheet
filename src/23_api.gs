@@ -179,9 +179,9 @@ function appInlineBoot_() {
  * this month. Records is the screen you go to *to find something*, and a ledger
  * that searches only the last few days is not a ledger.
  *
- * Records carries the three drill filters at their off values rather than
- * omitting them. Nothing here sets them — they arrive by tapping a number on
- * Charts — but `applyOverview` assigns this object *over* `state.filters.records`
+ * Records carries the drill filters at their off values rather than omitting
+ * them. Nothing here sets them — they arrive by tapping a number on Charts —
+ * but `applyOverview` assigns this object *over* `state.filters.records`
  * wholesale, so a shape short of a key is a shape that can silently drop one.
  */
 function appDefaultFilters_() {
@@ -189,7 +189,7 @@ function appDefaultFilters_() {
     analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
     records: { period: { kind: 'last_12' }, account: 'All', label: 'All',
       search: '', unconfirmedOnly: false,
-      spendOnly: false, category: 'All', subcategory: 'All' }
+      spendOnly: false, incomeOnly: false, category: 'All', subcategory: 'All' }
   };
 }
 
@@ -863,6 +863,15 @@ function appPeriods_(ledger) {
     { id: 'week', kind: 'week', label: 'This week' },
     { id: 'mtd', kind: 'mtd', label: 'This month' },
     { id: 'last_month', kind: 'last_month', label: 'Last month' },
+    // One entry for twelve answers, and that asymmetry is the point. The named
+    // years below need one option each because they are the whole choice; a
+    // month is *two* choices, and spelling out the product of them would put
+    // upwards of a hundred entries in a picker you scroll with a thumb. So this
+    // entry says only "a month", and the page draws the twelve — which it can
+    // do as a row of chips, side by side and one tap each, where a dropdown
+    // costs an open, a scroll and a close. `resolveWindow_` has understood
+    // `{kind: 'month', year, month}` since it was written.
+    { id: 'month', kind: 'month', label: 'A month\u{2026}' },
     { id: 'ytd', kind: 'ytd', label: 'Year to date' },
     { id: 'last_12', kind: 'last_12', label: 'Last 12 months' }
   ];

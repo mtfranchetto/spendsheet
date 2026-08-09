@@ -76,6 +76,27 @@
 
   * { box-sizing: border-box; }
 
+  /*
+    The document, and not only the body, because sideways is a root-level fact.
+
+    This page is served into an iframe on a wrapper page Apps Script owns and
+    styles white, and no rule here can reach that page. So anything that lets
+    our document move sideways under a finger shows white down the edges — and
+    it did, on an ordinary vertical scroll, because the phone treats a mostly-
+    vertical drag as both. Two rules, doing different halves of the job:
+    `overflow-x` removes the width there was to scroll to, and
+    `overscroll-behavior` stops the rubber band when there is none left.
+
+    `clip` rather than `hidden`: `hidden` on the root turns the viewport into a
+    scroll container, which costs momentum scrolling on iOS. `clip` refuses the
+    scroll without becoming one.
+  */
+  html {
+    background: var(--bg);
+    overflow-x: clip;
+    overscroll-behavior: none;
+  }
+
   body {
     margin: 0;
     background: var(--bg);
@@ -143,6 +164,26 @@
 
   svg { display: block; width: 100%; height: auto; overflow: visible; }
   .axis { stroke: var(--line); stroke-width: 1; }
+  /*
+    The scale beside the plot, in its own gutter.
+
+    **The labels are HTML and not `<text>`, and there is no choice about it.**
+    Both charts are drawn in a 100×40 viewBox with `preserveAspectRatio="none"`
+    so they fill the card without anything measuring in JS, which scales x by
+    about 3.5 and y by 3 — `vector-effect` saves the strokes and nothing saves
+    a glyph. Every label would be stretched, by different amounts on each axis.
+
+    A gutter rather than laying them over the plot: the one place a value label
+    is guaranteed to collide with the line is the end of the line, which on a
+    balance chart is the figure you came to read.
+  */
+  .plot { display: flex; align-items: flex-start; gap: 8px; }
+  .plot > svg { flex: 1; min-width: 0; }
+  .yaxis { position: relative; flex: none; width: 74px; height: 120px; }
+  .ytick { position: absolute; right: 0; transform: translateY(-50%);
+           font-size: 10px; line-height: 1; color: var(--muted);
+           white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .grid { stroke: var(--line); stroke-width: 1; opacity: .45; }
   .line { fill: none; stroke: var(--accent); stroke-width: 2;
           stroke-linejoin: round; stroke-linecap: round; }
   .barmark { fill: var(--out); }
@@ -182,6 +223,13 @@
      to shrink below it, pushing its partner off the row this exists to hold. */
   .filters > .range { display: flex; gap: 8px; }
   .filters > .range > * { flex: 1 1 50%; min-width: 0; }
+  /* iOS Safari sizes a date input to its own content and **ignores `width`**
+     while the native appearance is on, so the `width: 100%` above was obeyed by
+     every browser this was built in and silently dropped by the only device it
+     is for. Two of them side by side put the second half off the right edge of
+     the phone, which is the width the whole document was then scrollable by. */
+  input[type="date"] { -webkit-appearance: none; appearance: none;
+                       min-width: 0; text-align: left; }
 
   /*
     Every control says what it filters.
@@ -381,25 +429,27 @@
     Nested, "(uncategorised)" inside Food & Drink explains itself.
   */
   /*
-    The row is a flex container of two buttons: the bar, which opens the
-    transactions, and the chevron, which opens the subcategories. `.catdrill`
-    carries the chrome-stripping the row itself used to carry when it was the
-    button; `.catline` is now only the layout.
+    Every row is one full-width button and nothing sits beside it.
+
+    There was briefly a chevron on the end, so that the bar could open the
+    transactions and the chevron the subcategories. Two controls on one line,
+    and the smaller of them carried the gesture people actually reach for — a
+    32px target beside a 300px one, on the row it is meant to open. The bar is
+    the whole row again, and the way through to the transactions is a button
+    *inside* what it opens, where it is full width and cannot be missed.
   */
-  .catline { display: flex; align-items: center; gap: 4px; width: 100%;
-             margin-bottom: 10px; }
-  .catdrill { display: block; width: 100%; flex: 1; min-width: 0;
-              background: none; border: none; border-radius: 0; padding: 0;
-              min-height: auto; text-align: left; color: inherit; }
-  /* 32px so the chevron is a real touch target beside a bar it must not steal
-     taps from — the bar is the common gesture and gets everything else. */
-  .catchevron { flex: none; width: 32px; min-height: 32px; padding: 0;
-                background: none; border: none; color: var(--muted);
-                font-size: 13px; line-height: 1; }
+  .catrow, .catkid { display: block; width: 100%; background: none;
+                     border: none; border-radius: 0; padding: 0;
+                     min-height: auto; text-align: left; color: inherit;
+                     margin-bottom: 10px; }
   .children { margin: -2px 0 12px 12px; padding-left: 10px;
               border-left: 2px solid var(--line); }
   .children .bar-fill { opacity: .55; }
-  .children .catdrill { margin-bottom: 8px; }
+  .catkid { margin-bottom: 8px; }
+  /* Left-aligned with the bars it follows rather than centred, and full width
+     so the tap target spans the panel — it is the last thing in the group and
+     the only one that leaves the screen. */
+  .catmore { display: block; width: 100%; text-align: left; padding: 2px 0 4px; }
 
   /*
     The stat cards on Charts: a label, the number, and the shape of it.
@@ -663,7 +713,8 @@
                  // No control in the filter bar sets these — the bar is already
                  // five rows tall on a phone, and a filter you can see and
                  // dismiss is the whole of what these need.
-                 spendOnly: false, category: 'All', subcategory: 'All' }
+                 spendOnly: false, incomeOnly: false,
+                 category: 'All', subcategory: 'All' }
     },
     data: {},
 
@@ -760,7 +811,8 @@
   function signature(filters) {
     return JSON.stringify([filters.period, filters.account, filters.label,
       filters.search || '', !!filters.unconfirmedOnly,
-      !!filters.spendOnly, filters.category || 'All', filters.subcategory || 'All']);
+      !!filters.spendOnly, !!filters.incomeOnly,
+      filters.category || 'All', filters.subcategory || 'All']);
   }
 
   // -------------------------------------------------------------------------
@@ -773,6 +825,45 @@
       node.setAttribute(key, String(attributes[key]));
     });
     return node;
+  }
+
+  /**
+   * A chart and the scale that says what its height is worth.
+   *
+   * Without one a plot with a truncated baseline reads as starting from zero,
+   * which is the single most misleading thing a chart can do quietly: a net
+   * worth that moved 13% over a month drew a line from the floor of the card to
+   * its ceiling, so the shape said "it nearly doubled" and nothing on the card
+   * disagreed. Both ends were captioned with their own value already — that
+   * tells you where the line began and ended and still not what the *slope* is
+   * worth, because the height between them had no stated meaning.
+   *
+   * `marks` are `{y, label}` in viewBox units, and the y-to-pixels conversion is
+   * the one thing tying the two halves together: the SVG is 40 units tall and
+   * `120px` on screen, both stated here rather than measured, because a measure
+   * would have to happen after layout and this runs while building the node.
+   */
+  var PLOT_UNITS = 40;
+  var PLOT_PIXELS = 120;
+
+  function withScale(svg, marks) {
+    var box = el('div', 'plot');
+    add(box, svg);
+
+    var axis = el('div', 'yaxis');
+    marks.forEach(function (mark) {
+      var tick = el('span', 'ytick', mark.label);
+      tick.style.top = ((mark.y / PLOT_UNITS) * PLOT_PIXELS).toFixed(1) + 'px';
+      add(axis, tick);
+    });
+
+    return add(box, axis);
+  }
+
+  /** A gridline at `y`, for the scale beside it to be measured against. */
+  function gridline(y) {
+    return svgNode('line', { x1: 0, y1: y.toFixed(2), x2: 100, y2: y.toFixed(2),
+      class: 'grid', 'vector-effect': 'non-scaling-stroke' });
   }
 
   /**
@@ -808,14 +899,24 @@
       viewBox: '0 0 100 40', preserveAspectRatio: 'none',
       role: 'img', 'aria-label': 'Trend from ' + series[0].key + ' to ' + series[series.length - 1].key
     });
-    svg.style.height = '120px';
+    svg.style.height = PLOT_PIXELS + 'px';
 
-    add(svg, svgNode('line', { x1: 0, y1: 39.5, x2: 100, y2: 39.5, class: 'axis',
-      'vector-effect': 'non-scaling-stroke' }));
+    // Three, at the two ends of the data and halfway between them — the top and
+    // bottom are the y values `points` above already maps `high` and `low` to,
+    // so the labels sit on the line rather than near it. A flat series gets one
+    // mark at the centre, where the flat line is: three identical figures down
+    // the side would read as a scale that happens to repeat.
+    var marks = range === 0
+      ? [{ y: 20, label: money(low, { whole: true }) }]
+      : [{ y: 2, label: money(high, { whole: true }) },
+         { y: 20, label: money((low + high) / 2, { whole: true }) },
+         { y: 38, label: money(low, { whole: true }) }];
+
+    marks.forEach(function (mark) { add(svg, gridline(mark.y)); });
     add(svg, svgNode('polyline', { points: points, class: 'line',
       'vector-effect': 'non-scaling-stroke' }));
 
-    add(box, svg);
+    add(box, withScale(svg, marks));
 
     // Each end labelled with **its own** value. The first draft paired the
     // first date with `low` and the last with `high`, which is right only for
@@ -851,20 +952,28 @@
       low = Math.min(low, -bucket.expenses);
     });
     var span = high - low || 1;
-    var zero = (high / span) * 40;
+
+    // Inset by one unit at each end, where this used to run edge to edge. Two
+    // reasons and the second is the one that forced it: a bar at the maximum
+    // touching the border of the card cannot be told from one clipped by it,
+    // and a label centred on y=0 would hang half outside the gutter.
+    var top = 1;
+    var bottom = PLOT_UNITS - 1;
+    var yOf = function (value) { return bottom - ((value - low) / span) * (bottom - top); };
+    var zero = yOf(0);
 
     var svg = svgNode('svg', {
       viewBox: '0 0 100 40', preserveAspectRatio: 'none',
       role: 'img', 'aria-label': buckets.length + ' periods of income and spending'
     });
-    svg.style.height = '120px';
+    svg.style.height = PLOT_PIXELS + 'px';
 
     var width = 100 / buckets.length;
     buckets.forEach(function (bucket, i) {
       [[-bucket.expenses, 'barmark'], [bucket.income, 'barmark up']].forEach(function (pair) {
         var value = pair[0];
         if (!value) return;
-        var height = Math.abs(value / span) * 40;
+        var height = Math.abs(value / span) * (bottom - top);
         add(svg, svgNode('rect', {
           x: (i * width + width * 0.15).toFixed(2),
           y: (value < 0 ? zero : zero - height).toFixed(2),
@@ -874,10 +983,22 @@
         }));
       });
     });
+
+    // Zero is always marked and always labelled, because on this chart it is
+    // not a scale reading — it is the line the sign is measured from, and a bar
+    // hanging below an unlabelled edge is only obviously spending if you
+    // already knew that. The other two are added only where they are a
+    // different number: a month with no income at all puts `high` at zero, and
+    // two ticks reading nothing apart is a scale that looks broken.
+    var marks = [{ y: zero, label: money(0, { whole: true }) }];
+    if (high > 0) marks.push({ y: yOf(high), label: money(high, { whole: true }) });
+    if (low < 0) marks.push({ y: yOf(low), label: money(low, { whole: true }) });
+
+    marks.forEach(function (mark) { add(svg, gridline(mark.y)); });
     add(svg, svgNode('line', { x1: 0, y1: zero.toFixed(2), x2: 100, y2: zero.toFixed(2),
       class: 'axis', 'vector-effect': 'non-scaling-stroke' }));
 
-    add(box, svg);
+    add(box, withScale(svg, marks));
     return add(box, add(el('div', 'row'),
       el('span', 'muted', shortDate(buckets[0].key)),
       el('span', 'muted', shortDate(buckets[buckets.length - 1].key))));
@@ -940,16 +1061,22 @@
    * top to bottom, with the label and the number on the same line as the bar
    * rather than in a legend you have to look back and forth to.
    *
-   * **The bar opens the transactions; the chevron opens the subcategories.**
-   * The bar used to do the expanding, which made the gesture mean two different
-   * things depending on whether a category happened to have children — and left
-   * the commonest question about a number with no way to ask it. One rule now
-   * covers the whole screen: tap a figure, get the rows behind it. Expanding is
-   * a second, smaller control, which is the right weight for it.
+   * **The row opens; the button inside it goes to the transactions.**
+   * The intermediate design put the drill on the bar and the expand on a
+   * chevron, which failed for a reason worth writing down: the two controls
+   * were 300px and 32px wide, and the small one owned the gesture that gets
+   * used — you open a category to see what is in it far more often than you
+   * ask for its full list of rows. Tapping the row anywhere expands it now,
+   * and the drill is a full-width button at the end of what was revealed.
    *
-   * The row is a `div` holding two buttons rather than a button holding one.
-   * Nested buttons are invalid and browsers resolve the click by unnesting them
-   * in whichever direction they please.
+   * **Every row expands, including one with no subcategories.** Otherwise the
+   * same gesture means two different things depending on a fact about the data
+   * you cannot see before tapping — the original complaint about the very first
+   * design. A childless category opens onto its drill button alone, which reads
+   * as "nothing underneath this, here are the rows" and keeps the way to the
+   * transactions in exactly one place on the screen.
+   *
+   * A child, having nothing to expand, is a leaf and drills on tap.
    */
   function categoryBars(rows) {
     var box = el('div');
@@ -960,17 +1087,16 @@
     var biggest = rows[0].total || 1;
     rows.forEach(function (row) {
       var children = row.children || [];
-      var opens = children.length > 0;
-      var open = opens && !!state.expanded[row.name];
+      var open = !!state.expanded[row.name];
 
-      var line = el('div', 'catline');
-
-      var drill = el('button', 'catdrill');
-      drill.type = 'button';
-      drill.setAttribute('aria-label',
-        row.name + ' ' + money(row.total) + ', show these transactions');
-      drill.addEventListener('click', function () {
-        drillToRecords({ spendOnly: true, category: row.name });
+      var bar = el('button', 'catrow');
+      bar.type = 'button';
+      bar.setAttribute('aria-expanded', open ? 'true' : 'false');
+      bar.setAttribute('aria-label', row.name + ' ' + money(row.total) + ', ' +
+        (open ? 'collapse' : 'expand'));
+      bar.addEventListener('click', function () {
+        state.expanded[row.name] = !open;
+        render();
       });
 
       // The icon comes from the `categories` tab, which has carried one since
@@ -982,7 +1108,7 @@
       if (icon) add(label, el('span', null, icon + ' '));
       add(label, document.createTextNode(row.name));
 
-      add(drill, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
+      add(bar, add(el('div', 'row'), label, el('span', 'num', money(row.total))));
 
       // The same hue the row's disc gets on Records, so a category looks like
       // itself wherever you meet it. One accent colour for twelve bars meant
@@ -991,26 +1117,9 @@
       var fill = el('div', 'bar-fill');
       fill.style.background = categoryColor(row.name);
       fill.style.width = Math.max(2, (row.total / biggest) * 100).toFixed(1) + '%';
-      add(drill, add(el('div', 'bar-track'), fill));
+      add(bar, add(el('div', 'bar-track'), fill));
 
-      // A chevron only when there is something to open, for the same reason the
-      // whole row used to be a button only then.
-      if (!opens) {
-        add(box, add(line, drill));
-        return;
-      }
-
-      var chevron = el('button', 'catchevron', open ? '▾' : '▸');
-      chevron.type = 'button';
-      chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-      chevron.setAttribute('aria-label',
-        (open ? 'Hide' : 'Show') + ' subcategories of ' + row.name);
-      chevron.addEventListener('click', function () {
-        state.expanded[row.name] = !open;
-        render();
-      });
-
-      add(box, add(line, drill, chevron));
+      add(box, bar);
       if (!open) return;
 
       // Children are drawn against their *parent's* total, not the biggest
@@ -1023,9 +1132,8 @@
         // `(uncategorised)` is not unique at all — every category has one — so
         // the pair is what addresses a group. `matchesGroup_` is asked twice
         // on the server for exactly this.
-        var kid = el('button', 'catdrill');
+        var kid = el('button', 'catkid');
         kid.type = 'button';
-        kid.style.marginBottom = '8px';
         kid.setAttribute('aria-label', child.name + ' in ' + row.name + ' ' +
           money(child.total) + ', show these transactions');
         kid.addEventListener('click', function () {
@@ -1046,6 +1154,19 @@
         add(kid, add(el('div', 'bar-track'), kidFill));
         add(kids, kid);
       });
+
+      // Last, not first. Above the children it would be read as the heading of
+      // the group and tapped by people who meant to open one of them; below
+      // them it is what you reach after the breakdown has failed to answer the
+      // question, which is exactly when you want the rows themselves.
+      var more = el('button', 'link catmore',
+        'All ' + row.name + ' transactions →');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        drillToRecords({ spendOnly: true, category: row.name });
+      });
+      add(kids, more);
+
       add(box, kids);
     });
     return box;
@@ -1072,8 +1193,11 @@
 
   var SCREENS = [
     { id: 'dashboard', label: 'Home', glyph: '\u{1F3E0}', render: renderDashboard },
-    { id: 'records', label: 'Records', glyph: '\u{1F4C4}', render: renderRecords },
+    // The tab bar draws in *this* order — it filters `SCREENS` by `NAV`
+    // membership rather than mapping over `NAV` — so the two lists have to
+    // agree on order as well as on membership, and this is the one that shows.
     { id: 'analytics', label: 'Charts', glyph: '\u{1F4CA}', render: renderAnalytics },
+    { id: 'records', label: 'Records', glyph: '\u{1F4C4}', render: renderRecords },
     { id: 'add', label: 'Add cash', glyph: '\u{2795}', render: renderAdd },
     // Reached from an asset tile only, like `add` from a cash one.
     { id: 'revalue', label: 'Update balance', glyph: '\u{2195}', render: renderSetValue }
@@ -1089,7 +1213,7 @@
    * stays and the tab goes: `go('add')` still reaches it, from the one place
    * where it is already in context.
    */
-  var NAV = ['dashboard', 'records', 'analytics'];
+  var NAV = ['dashboard', 'analytics', 'records'];
 
   /**
    * The query string, spelled once. `WEBAPP_VIEW_PARAM` and friends in
@@ -1257,6 +1381,17 @@
       if (asked.from && asked.to) {
         filters.period = { kind: 'custom', from: asked.from, to: asked.to };
       }
+    } else if (/^month:\d{4}-\d{2}$/.test(String(asked.period || ''))) {
+      // Its own branch, like `custom`, because a month is the other id the
+      // list cannot resolve: `periods` carries one generic `month` entry and
+      // this names a particular one. Read here rather than looked up, and the
+      // pattern is checked first — `month:` followed by anything else is a
+      // hand-edited URL, and the default is a better answer than a window
+      // assembled out of a NaN.
+      var parts = String(asked.period).slice(6).split('-');
+      filters.period = {
+        kind: 'month', year: Number(parts[0]), month: Number(parts[1])
+      };
     } else if (asked.period) {
       var entry = (state.lists.periods || []).filter(function (option) {
         return option.id === asked.period;
@@ -1908,7 +2043,7 @@
     var category = filters.category && filters.category !== 'All' ? filters.category : '';
     var subcategory =
       filters.subcategory && filters.subcategory !== 'All' ? filters.subcategory : '';
-    if (!filters.spendOnly && !category && !subcategory) return null;
+    if (!filters.spendOnly && !filters.incomeOnly && !category && !subcategory) return null;
 
     var box = el('div', 'chips drills');
     var chip = function (text, clear) {
@@ -1926,6 +2061,9 @@
 
     if (filters.spendOnly) {
       chip('Money out', function () { filters.spendOnly = false; });
+    }
+    if (filters.incomeOnly) {
+      chip('Money in', function () { filters.incomeOnly = false; });
     }
     if (category) {
       chip(withIcon(categoryIcon(category), category), function () {
@@ -1946,6 +2084,7 @@
       all.type = 'button';
       all.addEventListener('click', function () {
         filters.spendOnly = false;
+        filters.incomeOnly = false;
         filters.category = 'All';
         filters.subcategory = 'All';
         refreshCurrentScreen();
@@ -2080,6 +2219,39 @@
     return svg;
   }
 
+  /**
+   * Income, bucket by bucket.
+   *
+   * A donut like Spending's is not available and that is a fact about the data
+   * rather than a shortcut: `aggregate_` groups **only money out** by category,
+   * deliberately, because a refund filed under Groceries would otherwise read
+   * as a category you earned in. So there is nothing to slice, and the question
+   * income actually raises on a phone is *when* rather than *what* — one salary
+   * on the 27th and a month of nothing looks completely unlike four freelance
+   * invoices, and a single total says neither.
+   */
+  function incomeThumb(buckets) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40',
+      preserveAspectRatio: 'none' });
+    var rows = buckets || [];
+    var biggest = rows.reduce(function (top, bucket) {
+      return Math.max(top, bucket.income);
+    }, 0);
+    if (!biggest) return svg;
+
+    var width = 100 / rows.length;
+    rows.forEach(function (bucket, i) {
+      if (!bucket.income) return;
+      var height = (bucket.income / biggest) * 38;
+      add(svg, svgNode('rect', {
+        x: (i * width + width * 0.15).toFixed(2), y: (39 - height).toFixed(2),
+        width: (width * 0.7).toFixed(2), height: Math.max(height, 0.5).toFixed(2),
+        class: 'barmark up'
+      }));
+    });
+    return svg;
+  }
+
   /** In against out, which is the whole of what a cashflow number means. */
   function flowThumb(totals) {
     var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40' });
@@ -2107,12 +2279,17 @@
     // charts are below; these are what you read without scrolling.
     add(root, statCard('Balance', money(data.netWorth.total), sparkline(data.balance)));
 
-    // The one card with a row set behind it. `Balance` is a position rather
-    // than a set of transactions, and `Cash flow` is a net of two directions
-    // that no single list is the answer to — a drill from either would open
-    // rows that do not add up to the number that opened them.
+    // Two cards with a row set behind them, and two without. The rule is
+    // whether one list is the answer to the number: `Spending` and `Income` are
+    // each a total over rows of one sign, so the rows exist and add up.
+    // `Balance` is a position rather than a set of transactions, and `Cash
+    // flow` is the *net* of the two directions — a drill from it would open a
+    // list that sums to neither of the numbers it is made of.
     add(root, statCard('Spending', money(data.totals.expenses), donut(data.byCategory),
       function () { drillToRecords({ spendOnly: true }); }));
+
+    add(root, statCard('Income', money(data.totals.income), incomeThumb(data.cashflow),
+      function () { drillToRecords({ incomeOnly: true }); }));
 
     add(root, statCard('Cash flow', money(data.totals.net), flowThumb(data.totals)));
 
@@ -2153,7 +2330,37 @@
    */
   function periodId(spec) {
     if (!spec) return 'mtd';
-    return spec.kind === 'year' && spec.year ? 'year:' + spec.year : spec.kind;
+    if (spec.kind === 'year' && spec.year) return 'year:' + spec.year;
+    if (spec.kind === 'month' && spec.year && spec.month) {
+      return 'month:' + spec.year + '-' + (spec.month < 10 ? '0' : '') + spec.month;
+    }
+    return spec.kind;
+  }
+
+  /**
+   * The same spec back to the `<option>` that stands for it.
+   *
+   * **Not the same string as `periodId`, and the difference is the whole reason
+   * both exist.** A year is one option per year, so its id and its option are
+   * the same thing. A month is one option for all twelve — the picker says "A
+   * month…" and the chips below say which — so `month:2026-03` has to address
+   * an option called `month`. Everything else is its own kind either way.
+   *
+   * The URL keeps `periodId`, because a bookmark that forgot which month it was
+   * taken in is a bookmark of this month, which is not what was bookmarked.
+   */
+  function periodOptionId(spec) {
+    return spec && spec.kind === 'month' ? 'month' : periodId(spec);
+  }
+
+  /** January…December, in the locale the phone is set to. */
+  function monthNames() {
+    var names = [];
+    for (var month = 0; month < 12; month++) {
+      names.push(new Date(2000, month, 1)
+        .toLocaleDateString(undefined, { month: 'short' }));
+    }
+    return names;
   }
 
   /**
@@ -2227,6 +2434,58 @@
     return box;
   }
 
+  /**
+   * The twelve months, as chips, under "A month…".
+   *
+   * **Chips rather than a second dropdown, and rather than a hundred entries in
+   * the first one.** A month is a year *and* a month, and putting the product
+   * of the two in the period picker would mean scrolling a wheel past several
+   * years of them to reach March. Splitting it in two costs one extra tap and
+   * nothing else: the dropdown answers "what kind of window" and the row below
+   * answers "which one", each with every choice visible at once.
+   *
+   * They wrap rather than scroll sideways. A row you have to swipe hides its
+   * own ends, and hiding December from a month picker in December is the one
+   * failure this cannot have — it is also the direction the whole document was
+   * just stopped from moving in, and a scroller inside it would read as the
+   * bug coming back.
+   *
+   * **Only months that have started are offered**, for the same reason
+   * `ledgerYears_` skips years the ledger has nothing in: a period that is
+   * empty by construction is indistinguishable, on screen, from a filter that
+   * is broken. A month restored from a bookmark taken in an earlier year shows
+   * that year in full, because all twelve of those have happened.
+   */
+  function monthChips(filters) {
+    var now = new Date();
+    var year = Number(filters.period.year) || now.getFullYear();
+    var chosen = Number(filters.period.month) || now.getMonth() + 1;
+    var last = year === now.getFullYear() ? now.getMonth() + 1 : 12;
+    var names = monthNames();
+
+    var box = el('div', 'fld wide');
+    add(box, el('span', 'flabel', year === now.getFullYear() ? 'Month' : 'Month of ' + year));
+
+    var chips = el('div', 'chips');
+    for (var month = 1; month <= last; month++) {
+      (function (value) {
+        var chip = el('button', 'chip', names[value - 1]);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', value === chosen ? 'true' : 'false');
+        chip.setAttribute('aria-label', names[value - 1] + ' ' + year);
+        chip.addEventListener('click', function () {
+          if (value === chosen) return;
+          filters.period = { kind: 'month', year: year, month: value };
+          refreshCurrentScreen();
+        });
+        add(chips, chip);
+      }(month));
+    }
+
+    add(box, chips);
+    return box;
+  }
+
   function filterBar(which, options) {
     var filters = state.filters[which];
     var bar = el('div', 'filters');
@@ -2249,7 +2508,7 @@
     state.lists.periods.forEach(function (entry) {
       var option = el('option', null, entry.label);
       option.value = entry.id;
-      if (entry.id === periodId(filters.period)) option.selected = true;
+      if (entry.id === periodOptionId(filters.period)) option.selected = true;
       add(period, option);
     });
     period.addEventListener('change', function () {
@@ -2257,12 +2516,22 @@
         return entry.id === period.value;
       })[0] || { kind: 'mtd' };
 
+      // `month` lands on *this* month rather than on a spec with no month in
+      // it. `resolveWindow_` would fill both in from today anyway, but only
+      // after a round trip — and the chips below have to draw one as pressed
+      // before that answer comes back, or picking "A month…" shows twelve
+      // chips with none of them on and a screen that has already changed.
+      var now = new Date();
       filters.period = chosen.kind === 'custom'
         ? { kind: 'custom', from: filters.period.from, to: filters.period.to }
-        : { kind: chosen.kind, year: chosen.year };
+        : chosen.kind === 'month'
+          ? { kind: 'month', year: now.getFullYear(), month: now.getMonth() + 1 }
+          : { kind: chosen.kind, year: chosen.year };
       refreshCurrentScreen();
     });
     add(bar, labelled('Period', period));
+
+    if (filters.period.kind === 'month') add(bar, monthChips(filters));
 
     add(bar, accountChips(filters, function () { refreshCurrentScreen(); }));
 
@@ -2488,16 +2757,22 @@
    * would go on winning. Sending both is what lets this sheet move a row out of
    * Transfer at all.
    */
-  function categoryPicker(record, kind, firstLabel) {
-    var lists = state.lists.categories;
-    var box = el('div');
+  function categorySelect(options) {
+    var settings = options || {};
+    var lists = state.lists.categories || {};
 
     var select = el('select');
     select.className = 'field';
 
-    var leave = el('option', null, firstLabel);
-    leave.value = '';
-    add(select, leave);
+    // Only where a site has a meaningful "no answer". Without it the first
+    // entry is preselected and submitting without touching the control files
+    // the row under whatever sorts first, which is the shape of bug this
+    // control exists to remove rather than to relocate.
+    if (settings.firstLabel) {
+      var leave = el('option', null, settings.firstLabel);
+      leave.value = '';
+      add(select, leave);
+    }
 
     var parentOf = {};
     (lists.children || []).forEach(function (entry) { parentOf[entry.name] = entry.parent; });
@@ -2505,22 +2780,23 @@
     (lists.parents || []).forEach(function (parent) {
       // A blank `kind` is a category the user added without saying which half
       // it belongs to. Hiding it would make it unreachable from the app, so it
-      // is offered on both.
-      if (parent.kind && parent.kind !== kind) return;
+      // is offered on both. A blank `settings.kind` asks for all of them,
+      // which is what a rule and a cash entry both want.
+      if (settings.kind && parent.kind && parent.kind !== settings.kind) return;
 
       var group = el('optgroup');
       group.label = withIcon(parent.icon, parent.name);
 
       var whole = el('option', null, 'Anything in ' + parent.name);
       whole.value = 'p:' + parent.name;
-      if (record.category === parent.name && !record.subcategory) whole.selected = true;
+      if (settings.category === parent.name && !settings.subcategory) whole.selected = true;
       add(group, whole);
 
       (lists.children || []).forEach(function (child) {
         if (child.parent !== parent.name) return;
         var option = el('option', null, withIcon(child.icon, child.name));
         option.value = 'c:' + child.name;
-        if (child.name === record.subcategory && child.parent === record.category) {
+        if (child.name === settings.subcategory && child.parent === settings.category) {
           option.selected = true;
         }
         add(group, option);
@@ -2529,19 +2805,53 @@
       add(select, group);
     });
 
-    add(box, select);
-
     return {
-      node: box,
-      /** Whether anything but the first entry is selected. */
-      answered: function () { return select.selectedIndex > 0 && !!select.value; },
+      node: select,
+      /**
+       * Whether a category was chosen at all.
+       *
+       * The value rather than the index, so this reads the same with and
+       * without a placeholder: the placeholder is the only entry whose value
+       * is empty, and where there is none every entry is an answer.
+       */
+      answered: function () { return !!select.value; },
+      /** `{ category, subcategory }`, with the parent always filled in. */
       chosen: function () {
         var value = select.value;
-        if (!value) return {};
-        if (value.indexOf('p:') === 0) return { category_override: value.slice(2) };
+        if (!value) return { category: '', subcategory: '' };
+        if (value.indexOf('p:') === 0) return { category: value.slice(2), subcategory: '' };
 
         var child = value.slice(2);
-        return { subcategory_override: child, category_override: parentOf[child] || '' };
+        return { category: parentOf[child] || '', subcategory: child };
+      }
+    };
+  }
+
+  /**
+   * The same control, answering in the override columns the review sheet writes.
+   *
+   * A thin wrapper and worth its own name: `category_override` and
+   * `subcategory_override` are what a *decision about an existing row* is
+   * written to, and nothing else on this page writes them. A rule and a cash
+   * entry state a plain category, so they take `categorySelect` directly.
+   */
+  function categoryPicker(record, kind, firstLabel) {
+    var picker = categorySelect({
+      kind: kind,
+      firstLabel: firstLabel,
+      category: record.category,
+      subcategory: record.subcategory
+    });
+
+    return {
+      node: add(el('div'), picker.node),
+      answered: picker.answered,
+      chosen: function () {
+        if (!picker.answered()) return {};
+        var choice = picker.chosen();
+        var answer = { category_override: choice.category };
+        if (choice.subcategory) answer.subcategory_override = choice.subcategory;
+        return answer;
       }
     };
   }
@@ -2710,26 +3020,26 @@
       });
     add(body, how);
 
+    // The same control the confirm sheet uses, for the same reason it exists
+    // there: a flat list of every child suffixed with its parent is the parent
+    // written out three hundred times, and it cannot offer a category on its
+    // own — which `webAppAddRule_` accepts and is the right rule for a merchant
+    // whose subcategory varies. The placeholder is new here: this list used to
+    // preselect its first entry, so saving without touching it wrote a rule
+    // filing every future match under whichever child sorts first.
     add(body, el('label', null, 'File it under'));
-    var child = el('select');
-    child.className = 'field';
-    state.lists.categories.children.forEach(function (entry) {
-      var option = el('option', null,
-        withIcon(entry.icon, entry.name) + '  —  ' + entry.parent);
-      option.value = entry.name;
-      option.dataset.parent = entry.parent;
-      if (entry.name === record.subcategory && entry.parent === record.category) {
-        option.selected = true;
-      }
-      add(child, option);
+    var picker = categorySelect({
+      firstLabel: 'Choose a category',
+      category: record.category,
+      subcategory: record.subcategory
     });
-    add(body, child);
+    add(body, picker.node);
 
     var save = el('button', 'primary', 'Save rule');
     save.type = 'button';
     save.style.marginTop = '16px';
     save.addEventListener('click', function () {
-      var chosen = child.options[child.selectedIndex];
+      var chosen = picker.chosen();
       save.disabled = true;
       save.textContent = 'Saving\u{2026}';
 
@@ -2737,8 +3047,8 @@
         field: 'description',
         match_type: how.value,
         pattern: pattern.value,
-        category: chosen ? chosen.dataset.parent : '',
-        subcategory: child.value
+        category: chosen.category,
+        subcategory: chosen.subcategory
       }).then(function (result) {
         dialog.close();
         toast(result.message);
@@ -3159,18 +3469,13 @@
     });
     add(form, account);
 
-    add(form, el('label', null, 'Subcategory'));
-    var category = el('select');
-    category.className = 'field';
-    add(category, el('option', null, 'Uncategorised'));
-    state.lists.categories.children.forEach(function (entry) {
-      var option = el('option', null,
-        (entry.icon ? entry.icon + '  ' : '') + entry.name + '  —  ' + entry.parent);
-      option.value = entry.name;
-      option.dataset.parent = entry.parent;
-      add(category, option);
-    });
-    add(form, category);
+    // "Category" rather than "Subcategory", because this control now offers
+    // both levels. Every `kind` is offered on purpose — the hint above says an
+    // Income or Transfer category flips the sign, which it cannot do if the
+    // list is filtered down to spending.
+    add(form, el('label', null, 'Category'));
+    var picker = categorySelect({ firstLabel: 'Uncategorised' });
+    add(form, picker.node);
 
     add(form, el('label', null, 'Date'));
     var date = el('input');
@@ -3188,15 +3493,15 @@
     var submit = el('button', 'primary', 'Add');
     submit.style.marginTop = '16px';
     submit.addEventListener('click', function () {
-      var chosen = category.options[category.selectedIndex];
+      var chosen = picker.chosen();
       submit.disabled = true;
       submit.textContent = 'Adding…';
 
       call('appAddCash', {
         amount: amount.value.replace(',', '.'),
         account: account.value,
-        subcategory: category.selectedIndex > 0 ? category.value : '',
-        category: category.selectedIndex > 0 ? chosen.dataset.parent : '',
+        subcategory: chosen.subcategory,
+        category: chosen.category,
         date: date.value,
         note: note.value
       }).then(function (result) {
@@ -3595,6 +3900,7 @@
       // Sent from both screens, ignored by `webAppAnalytics_`. Charts never
       // sets them and reading them there would be a filter with no control.
       spendOnly: !!filters.spendOnly,
+      incomeOnly: !!filters.incomeOnly,
       category: filters.category || 'All',
       subcategory: filters.subcategory || 'All'
     };
@@ -3744,6 +4050,7 @@
       search: '',
       unconfirmedOnly: false,
       spendOnly: !!drill.spendOnly,
+      incomeOnly: !!drill.incomeOnly,
       category: drill.category || 'All',
       subcategory: drill.subcategory || 'All'
     };

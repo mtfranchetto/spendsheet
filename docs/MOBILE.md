@@ -9,8 +9,8 @@ It gives you three screens and two forms:
 | | |
 |---|---|
 | **Home** | net worth, the account tiles, holds the bank has not settled, this month against the same point last month, spending by category, and the review backlog |
-| **Records** | the whole ledger, filtered, searched and paged |
 | **Charts** | a date range plus account and label filters, over cashflow, net worth and category breakdowns |
+| **Records** | the whole ledger, filtered, searched and paged |
 | **Add cash** | a cash transaction, landing straight away. Reached from a cash tile |
 | **Update balance** | an asset account's new total. Reached from an asset tile |
 
@@ -62,17 +62,21 @@ An asset — a brokerage account, a car, a property — is a wallet you top up b
 
 ### Filters
 
-**Period** — this week, this month, last month, year to date, last 12 months, one entry per year that has data, or a custom range. The year list is built from your ledger, so it holds no year you have nothing in.
+**Period** — this week, this month, last month, **a month**, year to date, last 12 months, one entry per year that has data, or a custom range. The year list is built from your ledger, so it holds no year you have nothing in.
+
+Picking *A month…* puts a row of month chips under the dropdown, and that split is deliberate: a month is a year *and* a month, so spelling out the pairs would mean scrolling a wheel past a hundred entries to reach March. Only months that have started are offered, for the same reason the year list skips a year with nothing in it — a window that is empty by construction looks exactly like a filter that is broken.
 
 **Account** — chips, and more than one at a time. **Label** and **search** on Records.
 
 ### Drilling from a number to the rows behind it
 
-On Charts, the **Spending** card and every **category bar** open the transactions that make them up. Tapping a bar drills; the small chevron beside it opens that category's subcategories, which drill too.
+On Charts, the **Spending** and **Income** cards open the transactions that make them up. `Balance` and `Cash flow` do not: a balance is a position rather than a set of rows, and cashflow is the *net* of the two directions, so a list from either would sum to neither.
+
+A **category bar** expands on tap, into its subcategories and a full-width **All &lt;category&gt; transactions** button at the end of them. Every row expands, including one with no subcategories — otherwise the same tap means two different things depending on a fact about the data you cannot see before tapping. A subcategory is a leaf and drills straight through.
 
 The list you land on is the rows the number was computed from, not merely the same period. Spending counts money **out** and only rows marked `in_reports`, so the drill carries that restriction with it — a transfer, a refund and a salary are all absent, and the list adds up to the figure you tapped. That is the point of it: a list that came from a total and disagreed with it would leave you with two plausible answers and no way to tell which was wrong.
 
-Records shows what was carried across as chips above the list — **Money out**, the category, the subcategory — and each one clears on tap. Clearing the category clears the subcategory with it, because a subcategory on its own does not name one group: `(uncategorised)` is a bucket every category has.
+Records shows what was carried across as chips above the list — **Money out** or **Money in**, the category, the subcategory — and each one clears on tap. Clearing the category clears the subcategory with it, because a subcategory on its own does not name one group: `(uncategorised)` is a bucket every category has.
 
 The period, accounts and label come across from Charts as they were set. Search and *needs review* are cleared, since either would narrow the list below the number that opened it.
 ### The URL remembers what you were looking at

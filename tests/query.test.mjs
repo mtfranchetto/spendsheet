@@ -818,6 +818,55 @@ describe('a query against a real book', () => {
     expect(drilledTotal(c, { spendOnly: true })).toMatchObject({ total: 5, sum: 150 });
   });
 
+  it('drills the income total to rows that add up to it', () => {
+    // The mirror of the test above, and it earns its place for the same reason:
+    // `incomeOnly` and `aggregate_`'s `else` branch are two rules in two files
+    // over the same rows, and asking both is the only evidence they agree.
+    // The transfer is out on `in_reports` — it is money that came *in* to one
+    // account, so a filter reading the sign alone would list it and break the
+    // sum. The salary is the only row left.
+    const c = mixed();
+    const page = c.webAppRecords_({ ...july, incomeOnly: true }, 0);
+
+    expect(c.webAppAnalytics_(july).totals.income).toBe(2000);
+    expect(page.total).toBe(1);
+    expect(page.rows.map((r) => r.description)).toEqual(['salary']);
+    expect(page.rows.reduce((n, r) => n + r.amount, 0)).toBe(2000);
+  });
+
+  it('leaves a zero-amount row out of income, which cannot change the total', () => {
+    // Where the mirror stops being exact, stated as a test because the comment
+    // saying so is the kind that rots. `aggregate_` sorts a zero into income on
+    // its `else`, contributing nothing; the list keeps only the strictly
+    // positive, so a €0.00 row never appears among money received. Both halves
+    // still report 2000.
+    const c = bookWith([
+      tx({ description: 'salary', amount_base: 2000, category: 'Income',
+           subcategory: 'Salary', type: 'income' }),
+      tx({ description: 'nothing at all', amount_base: 0, category: 'Income',
+           subcategory: 'Salary', type: 'income' })
+    ]);
+    const page = c.webAppRecords_({ ...july, incomeOnly: true }, 0);
+
+    expect(c.webAppAnalytics_(july).totals.income).toBe(2000);
+    expect(page.rows.map((r) => r.description)).toEqual(['salary']);
+  });
+
+  it('never lists a row under both directions', () => {
+    // The two filters partition the rows they admit, so no row can be in both
+    // lists — the failure that would make Spending and Income each look right
+    // while overlapping is a row counted twice, and it has no other symptom.
+    const c = mixed();
+    const names = (drill) =>
+      c.webAppRecords_({ ...july, ...drill }, 0).rows.map((r) => r.description);
+
+    const out = names({ spendOnly: true });
+    const income = names({ incomeOnly: true });
+
+    expect(out.length + income.length).toBeGreaterThan(1);
+    expect(out.filter((name) => income.indexOf(name) !== -1)).toEqual([]);
+  });
+
   it('drills each category bar to rows that add up to that bar', () => {
     const c = mixed();
     const byCategory = c.webAppAnalytics_(july).byCategory;

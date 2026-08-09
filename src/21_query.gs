@@ -1082,10 +1082,19 @@ function matchesRecordFilters_(row, scope, request) {
     if (splitLabels_(row.labels).indexOf(String(scope.label)) === -1) return false;
   }
 
-  if (request.spendOnly) {
+  // The two directions, and they are one rule with the comparison flipped:
+  // `in_reports` first, then the sign that `aggregate_` sorted the row into.
+  // `incomeOnly` keeps the strictly positive rather than the non-negative,
+  // which is where it stops being a mirror of `spendOnly` — `aggregate_` puts
+  // a zero row on the income side of its `else`, so it is counted there and
+  // contributes nothing. Listing it would put a €0.00 row in a list of money
+  // received, and leaving it out cannot make the list disagree with the total.
+  if (request.spendOnly || request.incomeOnly) {
     if (!isTruthyCell_(row.in_reports)) return false;
     var amount = cellNumber_(row.amount_base);
-    if (amount === null || amount >= 0) return false;
+    if (amount === null) return false;
+    if (request.spendOnly && amount >= 0) return false;
+    if (request.incomeOnly && amount <= 0) return false;
   }
 
   if (!matchesGroup_(row.category, request.category)) return false;
@@ -1115,10 +1124,10 @@ function matchesGroup_(value, wanted) {
   return groupKey_(value) === String(wanted);
 }
 
-/** Is any of the three drill filters set? See `webAppRecords_` on `pending`. */
+/** Is any of the drill filters set? See `webAppRecords_` on `pending`. */
 function isDrilled_(request) {
   var want = request || {};
-  return !!want.spendOnly ||
+  return !!want.spendOnly || !!want.incomeOnly ||
     (!!want.category && want.category !== 'All') ||
     (!!want.subcategory && want.subcategory !== 'All');
 }

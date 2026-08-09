@@ -994,6 +994,37 @@ describe('the periods the picker offers', () => {
     });
   });
 
+  it('offers a month as one entry, not as twelve', () => {
+    // The point of the entry, and the one thing about it a test can hold: a
+    // month is a year *and* a month, so spelling out the product would put a
+    // hundred-odd entries in a picker scrolled with a thumb. The page draws the
+    // twelve as chips under this single option — which it can only do while the
+    // id is the bare kind, because that is the string `periodOptionId` maps
+    // every `{kind: 'month', …}` spec back to.
+    const c = book();
+    const list = c.appPeriods_([
+      { booking_date: new Date(2024, 1, 1) },
+      { booking_date: new Date(2023, 1, 1) }
+    ]);
+
+    const months = list.filter((p) => p.kind === 'month');
+    expect(months).toHaveLength(1);
+    expect(months[0].id).toBe('month');
+    expect(months[0].year).toBeUndefined();
+  });
+
+  it('resolves the spec its month entry stands for', () => {
+    // The entry carries no year and no month, so the page fills both in. This
+    // is the pair it sends, checked against the resolver rather than assumed —
+    // the two live in different files and nothing else makes them agree.
+    const c = book();
+    const window = c.resolveWindow_({ kind: 'month', year: 2026, month: 3 },
+      new Date(2026, 7, 9));
+
+    expect([c.dayKey_(window.from), c.dayKey_(window.to)])
+      .toEqual(['2026-03-01', '2026-03-31']);
+  });
+
   it('caps the years, so one corrupt date cannot fill the dropdown', () => {
     const c = book();
     const ledger = [];
