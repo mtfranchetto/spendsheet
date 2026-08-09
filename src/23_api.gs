@@ -157,22 +157,15 @@ function appInlineBoot_() {
   }
 }
 
-/**
- * JSON that is safe to sit inside a `<script>` element.
- *
- * A transaction description containing the closing-tag sequence would end the
- * element early and put a merchant name into the document as markup. Escaping
- * every `<` is the entire fix, and it stays valid JSON because `<` is a
- * legal string escape — so the parse on the other side is unchanged.
- *
- * Deliberately not a filter on the *dangerous* sequence: a rule that matches
- * `</script` has to reason about case, whitespace and `/`, and this project has
- * already learned that the narrow guard is the one that misses. Every `<` costs
- * a few bytes and cannot be wrong.
- */
-function htmlSafeJson_(value) {
-  return JSON.stringify(value).replace(/</g, '\\u003c');
-}
+/*
+  `htmlSafeJson_` used to live here, next to its first caller, and it now has
+  two: this payload and the view on the URL, which is built by `webAppHtml_` in
+  20. A second copy of an escaping rule is the way an escaping rule gets fixed
+  in one place only, so it moved **down** to 20_webapp.gs — the file that owns
+  the page it is escaping for, and the one both callers can reach without
+  `functionExists_`. Nothing higher may be depended on; 20 is lower, so this is
+  the legal direction and the only one available.
+*/
 
 /**
  * The filters each screen opens on, defined once and on the server.

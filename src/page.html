@@ -504,6 +504,18 @@
 -->
 <script type="application/json" id="boot"><?!= boot ?></script>
 
+<!--
+  What this URL asked to see — the screen and the filters it was left on. See
+  `webAppView_`, which owns the parameter names and every default.
+
+  It rides in an element of its own rather than inside the boot payload above,
+  because the two fail independently: `boot` says `null` whenever the inline
+  dashboard could not be built, and a deep link must survive that. Same
+  `application/json` for the same reason — the browser never executes it, and
+  the filter values are the one part of this document that came off the URL.
+-->
+<script type="application/json" id="view"><?!= view ?></script>
+
 <div id="screens"><div class="spinner">Loading…</div></div>
 
 <nav id="tabs"></nav>
@@ -1004,6 +1016,188 @@
    * where it is already in context.
    */
   var NAV = ['dashboard', 'records', 'analytics'];
+
+  /**
+   * The query string, spelled once. `WEBAPP_VIEW_PARAM` and friends in
+   * `20_webapp.gs` are the other half, and the two must agree — this writes
+   * what that reads, with nothing in between to catch a drift.
+   */
+  var VIEW_PARAMS = { view: 'v', period: 'p', from: 'from', to: 'to',
+                      account: 'a', label: 'l', search: 'q', unconfirmed: 'u' };
+
+  /**
+   * What the URL asked for, read once from the document the server built.
+   *
+   * The screen is validated here as well as on the server, and not because the
+   * server's answer is doubted: this reads a DOM element, and the honest
+   * failures are a renamed placeholder printing nothing and a template that was
+   * never filled. Either one produces a `state.screen` that `render()` cannot
+   * find a screen for, which is a blank page rather than a wrong tab.
+   *
+   * The filters are taken as they come. They are bounded server-side and they
+   * are checked against the real lists in `applyUrlFilters`, which is the only
+   * place those lists exist.
+   */
+  function readView() {
+    var fallback = { screen: NAV[0], filters: {} };
+    try {
+      var node = document.getElementById('view');
+      var parsed = JSON.parse(String(node ? node.textContent : '').trim() || 'null');
+      if (!parsed || typeof parsed !== 'object') return fallback;
+
+      return {
+        screen: NAV.indexOf(parsed.screen) === -1 ? NAV[0] : parsed.screen,
+        filters: parsed.filters && typeof parsed.filters === 'object'
+          ? parsed.filters : {}
+      };
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  /** Read at parse, applied at boot, and emptied by `applyUrlFilters` after. */
+  var opened = readView();
+
+  /**
+   * Put the screen and its filters on the URL, so a refresh comes back to them.
+   *
+   * This page is inside Apps Script's sandboxed iframe, and `window.location`
+   * here is a `userCodeAppPanel` URL that nothing ever reloads — a refresh
+   * reloads the *parent*, at `/exec`. `google.script.history` is the one API
+   * that reaches it, and it is why this is a query string rather than a hash: a
+   * parameter comes back through `doGet` and the page is *served* knowing the
+   * answer, where a hash would only be readable after the page had already
+   * drawn the wrong thing.
+   *
+   * `replace` rather than `push`. What was asked for is that a refresh returns
+   * you where you were, and pushing an entry per filter change would make the
+   * phone's back gesture walk every period you had tried instead of leaving the
+   * app — a different feature, and one that needs `setChangeHandler` to be
+   * correct rather than merely present.
+   *
+   * **Only what differs from the default is written.** A URL that spelled out
+   * every filter would freeze today's defaults into every bookmark, so the day
+   * `appDefaultFilters_` changes its mind about what Records opens on, nothing
+   * anyone had saved would hear about it. It also keeps a fresh open at a bare
+   * `?v=dashboard`, which is the address that gets added to a home screen.
+   *
+   * Only the three tab-bar screens, matching `WEBAPP_SCREENS`. `add` and
+   * `revalue` are opened *from an account tile* and carry that account in
+   * memory only, so naming one would restore a form that had forgotten what it
+   * was for. Leaving the URL alone means a refresh from either lands on the
+   * screen you opened it from, which is the way back they already offer.
+   *
+   * Wrapped, because a URL that fails to update is a worse refresh and not a
+   * broken app — `google.script.history` exists only in a deployed web app, so
+   * this is silently a no-op anywhere else.
+   */
+  function rememberView() {
+    if (NAV.indexOf(state.screen) === -1) return;
+
+    var params = {};
+    params[VIEW_PARAMS.view] = state.screen;
+
+    var filters = state.filters[state.screen];
+    if (filters) {
+      var period = filters.period || {};
+      var id = periodId(period);
+      if (id) params[VIEW_PARAMS.period] = id;
+      // Both ends, and only for `custom` — they are the only part of a period
+      // spec that is not recoverable from its id.
+      if (period.kind === 'custom') {
+        if (period.from) params[VIEW_PARAMS.from] = period.from;
+        if (period.to) params[VIEW_PARAMS.to] = period.to;
+      }
+
+      // Repeated rather than joined: the account filter is a set, and a
+      // separator is a bet that no account is ever named with it in it.
+      var accounts = chosenAccounts(filters);
+      if (accounts.length) params[VIEW_PARAMS.account] = accounts;
+
+      if (filters.label && filters.label !== 'All') {
+        params[VIEW_PARAMS.label] = filters.label;
+      }
+      if (filters.search) params[VIEW_PARAMS.search] = filters.search;
+      if (filters.unconfirmedOnly) params[VIEW_PARAMS.unconfirmed] = '1';
+    }
+
+    try {
+      if (window.google && google.script && google.script.history) {
+        google.script.history.replace(null, params);
+      }
+    } catch (e) {
+      // Nothing to say and nowhere to say it — the screen is already drawn.
+    }
+  }
+
+  /**
+   * The account filter as a list, whatever shape it is in.
+   *
+   * It is `'All'`, or one name, or an array of them — `accountChips` writes all
+   * three and has since it replaced the dropdown. Both the URL writer and the
+   * chips need the same normalisation, so it is spelled here once.
+   */
+  function chosenAccounts(filters) {
+    if (Array.isArray(filters.account)) return filters.account.slice();
+    return filters.account && filters.account !== 'All' ? [filters.account] : [];
+  }
+
+  /**
+   * The URL's filters, over the defaults, once there are lists to resolve them.
+   *
+   * Called from `applyOverview` and nowhere else, because that is the moment
+   * `periods` exists: a period id is `mtd` or `year:2024`, and only the list
+   * the server sent says which kind and year that is. Anything it cannot
+   * resolve is left at the default rather than guessed at — a bookmark naming a
+   * period that no longer exists should open on this month, not on a window
+   * assembled out of half an id.
+   *
+   * Returns whether it changed anything, compared through `signature` so that a
+   * URL spelling out the default costs no extra fetch. `opened.filters` is
+   * emptied on the way out: this is the URL *the document was served for*, and
+   * applying it twice would drag you back to it on your second visit to a
+   * screen you had since filtered differently.
+   */
+  function applyUrlFilters() {
+    var screen = opened.screen;
+    var asked = opened.filters || {};
+    var filters = state.filters[screen];
+    opened.filters = {};
+
+    if (!filters) return false;
+    var before = signature(currentFilters(screen));
+
+    if (asked.period === 'custom') {
+      // Both ends or neither. One of them alone resolves to a window whose
+      // other edge is today, which is not the range that was bookmarked.
+      if (asked.from && asked.to) {
+        filters.period = { kind: 'custom', from: asked.from, to: asked.to };
+      }
+    } else if (asked.period) {
+      var entry = (state.lists.periods || []).filter(function (option) {
+        return option.id === asked.period;
+      })[0];
+      // Kept whole, exactly as `filterBar` does: a bare `{kind: 'year'}` with
+      // no year in it resolves to the current year, so 2024 would show 2026.
+      if (entry) filters.period = { kind: entry.kind, year: entry.year };
+    }
+
+    if (asked.accounts && asked.accounts.length) {
+      filters.account = asked.accounts.slice();
+    }
+    if (asked.label) filters.label = asked.label;
+
+    // Records only, and this is not tidiness. Charts draws its filter bar
+    // without a search box or a review toggle, so either one set here would
+    // narrow every total on the screen with no control saying so and no way to
+    // clear it.
+    if (screen === 'records') {
+      if (asked.search) filters.search = asked.search;
+      if (asked.unconfirmed) filters.unconfirmedOnly = true;
+    }
+
+    return signature(currentFilters(screen)) !== before;
+  }
 
   /**
    * Draw what has arrived, rather than nothing until everything has.
@@ -1799,10 +1993,18 @@
    * blank screen that reads as broken.
    */
   function accountChips(filters, onChange) {
-    var names = state.lists.accounts || [];
-    var chosen = Array.isArray(filters.account)
-      ? filters.account.slice()
-      : (filters.account && filters.account !== 'All' ? [filters.account] : []);
+    var chosen = chosenAccounts(filters);
+
+    // A chosen account the `accounts` tab no longer offers still gets a chip,
+    // and it is pressed — same rule as the label chips, and the URL is what
+    // made it matter here. A bookmark can name an account that has since been
+    // renamed, and dropping it would leave the filter *on* with nothing on
+    // screen saying so: no chip pressed, All unpressed, and a list of rows that
+    // reads as an empty ledger rather than as a filter.
+    var names = (state.lists.accounts || []).slice();
+    chosen.forEach(function (name) {
+      if (names.indexOf(name) === -1) names.push(name);
+    });
 
     // Full width: a wrapping row of chips beside a dropdown at 45% would
     // reflow every time you toggled one.
@@ -3215,7 +3417,16 @@
     };
   }
 
+  /**
+   * Every filter change lands here, which is why the URL is written here.
+   *
+   * `go` covers the other half — the screen changing — and between them there
+   * is no way to alter what is on screen without the address bar hearing about
+   * it. That matters more than it looks: a URL that is right most of the time
+   * is one you cannot trust enough to bookmark.
+   */
   function refreshCurrentScreen() {
+    rememberView();
     render();
     if (state.screen === 'analytics') loadAnalytics();
     if (state.screen === 'records') loadRecords();
@@ -3314,10 +3525,30 @@
 
   function go(id) {
     state.screen = id;
+    rememberView();
     render();
-    if (id === 'analytics' && !state.data.analytics) loadAnalytics();
-    if (id === 'records' && !state.records.loaded) loadRecords();
+    loadScreenData();
     window.scrollTo(0, 0);
+  }
+
+  /**
+   * Whatever the screen in front of you still needs, and nothing it has.
+   *
+   * Called by `go` and again once `appOverview` lands, because those are the
+   * two ways a screen becomes the current one: tapped, or asked for by the URL
+   * before there was anything to draw. The guards are what make the second call
+   * free — a deep link to Records finds the rows `appOverview` seeded and asks
+   * for nothing, and a boot onto the dashboard is a pair of no-ops.
+   *
+   * Charts is the one that does cost a round trip on a deep link, and it has to
+   * wait for `appOverview` rather than firing alongside it: **the server owns
+   * the default filters**, `appOverview` is what delivers them, and a fetch
+   * keyed on the page's guess would cache a slice under the wrong signature.
+   * That is the same two-trip cost as opening the app and tapping Charts.
+   */
+  function loadScreenData() {
+    if (state.screen === 'analytics' && !state.data.analytics) loadAnalytics();
+    if (state.screen === 'records' && !state.records.loaded) loadRecords();
   }
 
   function render() {
@@ -3433,6 +3664,12 @@
     }
   }
 
+  // Before the first `render()`, and not through `go()`: there is nothing to
+  // fetch for a screen whose filters have not arrived yet, and nothing to write
+  // back to a URL we are in the middle of reading. `applyOverview` does both,
+  // once the lists it needs are here.
+  state.screen = opened.screen;
+
   var inline = inlinedBoot();
   if (inline) {
     applyOpen(inline.open);
@@ -3465,7 +3702,18 @@
       state.records.loaded = true;
     }
 
+    // Last, over both sets of defaults, because the URL is the most specific
+    // thing anyone said about what this page is for. The prefetch above is for
+    // the server's defaults, so a URL that asked for anything else has just
+    // made those rows the answer to a different question — drop them, and let
+    // `loadScreenData` fetch the slice that was asked for.
+    if (applyUrlFilters() && state.screen === 'records') {
+      state.records = { rows: [], pending: [], offset: 0, hasMore: false,
+                        total: 0, loading: false, loaded: false };
+    }
+
     render();
+    loadScreenData();
   }
 
   // The lower half is always fetched. It was briefly inlined too — see
