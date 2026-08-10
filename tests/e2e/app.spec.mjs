@@ -217,14 +217,23 @@ test.describe('confirming a transaction', () => {
     await expect(page.locator('#sheet')).toBeVisible();
     await page.locator('#sheet button.primary', { hasText: 'Confirm' }).click();
 
-    // The uid never appears on the page — the row is addressed by description —
-    // so this is the only place the two halves of the seam can be checked
-    // against each other: the row that was tapped, and the id that was sent.
-    const sent = await page.evaluate(() =>
-      window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args));
-    expect(sent).toHaveLength(1);
-    expect(sent[0][0][0]).toMatchObject({ confirmed: true });
-    expect(String(sent[0][0][0].uid)).not.toHaveLength(0);
+    /*
+      `appConfirm` takes an array of decisions, so the call's first argument is
+      a list and the row is its first entry. Once each: the retry in
+      `callOrRetry` is for a dropped transport and a second call here would mean
+      the page had decided a refusal was worth repeating.
+
+      The uid is on no part of the page — a row is drawn from its description —
+      so there is nothing in the DOM to compare it against. That it was the
+      *right* row is the assertion below rather than this one.
+    */
+    const [decisions, ...rest] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0]));
+
+    expect(rest, 'appConfirm called more than once').toHaveLength(0);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ confirmed: true });
+    expect(String(decisions[0].uid), 'a decision with no uid on it').not.toHaveLength(0);
 
     /*
       `reloadAfterWrite` is written up at length in `page.boot.html`: clearing
