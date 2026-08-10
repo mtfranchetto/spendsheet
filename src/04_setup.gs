@@ -1615,8 +1615,8 @@ function applySeedDefaults() {
  * `RETIRED_CATEGORIES` in 00_config.gs is keyed on the full category/subcategory
  * pair, which is what makes each move unambiguous. A `category_override` holds
  * a parent alone, so a parent is only rewritten when every one of its retired
- * children agrees on where it went: `Travel` always became `Life & entertainment`,
- * while `Family` split between `Shopping` and `Life & entertainment` and is therefore
+ * children agrees on where it went: `Travel` always became `Life & Entertainment`,
+ * while `Family` split between `Shopping` and `Life & Entertainment` and is therefore
  * reported and left for you.
  */
 function tidyCategories() {

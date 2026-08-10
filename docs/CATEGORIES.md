@@ -218,14 +218,14 @@ The known retirements are the taxonomy shrink from fifteen parents to twelve, an
 | Retired | Became |
 |---|---|
 | `Bills & Utilities / *` | `Housing / *` |
-| `Travel / Flights`, `Accommodation`, `Holiday` | `Life & entertainment / …` |
+| `Travel / Flights`, `Accommodation`, `Holiday` | `Life & Entertainment / …` |
 | `Family / Kids` | `Shopping / Kids` |
-| `Family / Life events` | `Life & entertainment / Life events` |
-| `Entertainment / *` | `Life & entertainment / *` |
+| `Family / Life events` | `Life & Entertainment / Life events` |
+| `Entertainment / *` | `Life & Entertainment / *` |
 | `Insurance / Home` | `Insurance / Home insurance` |
 | `Education / Books` | `Education / Textbooks` |
 
-A `category_override` holds a parent with no subcategory, so a parent is only rewritten when all of its children agree where they went. `Travel` always became `Life & entertainment`; **`Family` split between `Shopping` and `Life & entertainment`**, so rows naming just `Family` are reported and left for you to retype.
+A `category_override` holds a parent with no subcategory, so a parent is only rewritten when all of its children agree where they went. `Travel` always became `Life & Entertainment`; **`Family` split between `Shopping` and `Life & Entertainment`**, so rows naming just `Family` are reported and left for you to retype.
 
 Three of these are renames rather than moves, and they split into two kinds. `Entertainment / *` renames the **parent** and keeps every child name, so all seven children agree and a `category_override` saying `Entertainment` is rewritten without being asked about — the children need nothing, because a cell saying `Streaming` finds its parent through a lookup.
 
