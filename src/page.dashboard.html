@@ -221,7 +221,7 @@
    * reason rather than on the face.** A button is only as big as its box, and
    * this one is not the tile: the tile's 12/14px padding is outside it, a grid
    * row stretches every tile to match its tallest neighbour and the face does
-   * not grow with it, and "+ Add cash" is `align-self: flex-start`, so the
+   * not grow with it, and "+ Add transaction" is `align-self: flex-start`, so
    * space to its right belongs to nothing at all. Four dead strips around a
    * control whose entire job is to be tapped with a thumb.
    *
@@ -270,7 +270,7 @@
     });
 
     if (isCashAccount(account.name)) {
-      var entry = el('button', 'link', '+ Add cash');
+      var entry = el('button', 'link', '+ Add transaction');
       entry.type = 'button';
       entry.addEventListener('click', function () {
         state.addAccount = account.name;

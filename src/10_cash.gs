@@ -87,19 +87,40 @@ function nextCashSequence_() {
  * unprocessed and get picked up whenever they are finished, and the run
  * message says how many are waiting so they cannot sit there unnoticed
  * forever.
+ *
+ * **`known` is a membership test, not the sync's index.** Every uid already in
+ * the ledger, mapped to anything truthy. The sync hands over the `byUid` it
+ * built for the banks; the immediate path hands over `readUidIndex_`, which
+ * fetches one column instead of thirteen because that is the whole question
+ * being asked. `partitionByUid` answers a richer one — which duplicates
+ * conflict on their facts — and this has never read that half of its answer.
+ *
+ * **`categories` is optional and is an already-paid-for read.** The immediate
+ * path reads that tab to refuse a category this book does not have, moments
+ * before this runs; reading it again here is the same three round trips for the
+ * same rows within one request. Nothing on this path writes to `categories`,
+ * so there is no version of it that could have gone stale in between.
+ *
+ * Returns `stamped` — every row on the tab now carrying a `processed` mark,
+ * including any left behind by an earlier drain whose clear did not land. It is
+ * what `clearDrainedCashRows_` would otherwise go back and re-read the tab for.
  */
-function drainCashEntries_(existing, now) {
+function drainCashEntries_(known, now, categories) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CASH_ENTRY);
-  if (!sheet) return { inserted: 0, incomplete: 0 };
+  if (!sheet) return { inserted: 0, incomplete: 0, stamped: [] };
 
   // ANY_COLUMN: on a phone you may fill these cells in any order, and a row
   // whose date you have not typed yet must not be invisible.
-  var entries = readRecords_(sheet, CASH_ENTRY_COLUMNS, ANY_COLUMN)
-    .filter(function (entry) { return !entry.processed; });
-  if (!entries.length) return { inserted: 0, incomplete: 0 };
+  var all = readRecords_(sheet, CASH_ENTRY_COLUMNS, ANY_COLUMN);
+  var stamped = all
+    .filter(function (entry) { return entry.processed; })
+    .map(function (entry) { return entry._row; });
+
+  var entries = all.filter(function (entry) { return !entry.processed; });
+  if (!entries.length) return { inserted: 0, incomplete: 0, stamped: stamped };
 
   var names = cashAccountNames_();
-  var kinds = categoryKinds_();
+  var kinds = (categories || categoryIndex_()).kinds;
   var currency = readConfig_().base_currency || 'EUR';
   var incomplete = 0;
   var records = [];
@@ -139,25 +160,30 @@ function drainCashEntries_(existing, now) {
     records.push(record);
   });
 
-  var partitioned = partitionByUid(records, existing.byUid);
-
-  partitioned.fresh.forEach(function (record) {
-    rows.push(toRow_(TX_COLUMNS_CODE, record));
-    existing.byUid[record.uid] = { amount: record.amount, booking_date: record.booking_date };
+  // Membership, and it doubles as the within-batch guard `partitionByUid`
+  // keeps its own map for: a uid written into `known` is a uid the next record
+  // in this same batch will be refused for.
+  var fresh = records.filter(function (record) {
+    if (known[record.uid]) return false;
+    known[record.uid] = { amount: record.amount, booking_date: record.booking_date };
+    return true;
   });
+
+  fresh.forEach(function (record) { rows.push(toRow_(TX_COLUMNS_CODE, record)); });
 
   if (rows.length) {
     var written = appendRows_(sheetOrThrow_(TABS.TRANSACTIONS), 1, rows);
-    writeCashOverrides_(written.row, partitioned.fresh);
+    writeCashOverrides_(written.row, fresh);
   }
 
   // Marked only after the append has gone in, so a failure halfway leaves the
   // entry unprocessed and it is retried rather than lost.
   records.forEach(function (record) {
     writeCell_(sheet, record._row, CASH_ENTRY_COLUMNS, 'processed', now);
+    stamped.push(record._row);
   });
 
-  return { inserted: rows.length, incomplete: incomplete };
+  return { inserted: rows.length, incomplete: incomplete, stamped: stamped };
 }
 
 /**
@@ -234,16 +260,40 @@ function resolveCashAccount_(value, accounts) {
   return { id: typed, name: typed };
 }
 
+/**
+ * `categories`, in the three shapes the cash path asks it about, from one read.
+ *
+ * `kinds` decides the direction of an entry; the two name sets decide whether
+ * this book has the category you picked at all. Both questions get asked inside
+ * one `appAddCash`, a few lines apart, and `readRecords_` is three round trips
+ * every time it is called — so asking them separately was the same tab fetched
+ * twice in a request somebody is waiting on.
+ *
+ * `present` is not the same as "has any rows", and the difference is the reason
+ * it is here: a book with no `categories` tab can say nothing about whether a
+ * name is known, and a caller that read absence as "unknown" would refuse every
+ * category in the book. A tab that exists and is empty genuinely knows none.
+ */
+function categoryIndex_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
+  var index = { present: false, kinds: {}, categories: {}, subcategories: {} };
+  if (!sheet) return index;
+
+  index.present = true;
+  readRecords_(sheet, CATEGORY_COLUMNS).forEach(function (row) {
+    if (row.category && !index.kinds[row.category]) index.kinds[row.category] = row.kind;
+
+    var category = String(row.category || '').trim();
+    var subcategory = String(row.subcategory || '').trim();
+    if (category) index.categories[category] = true;
+    if (subcategory) index.subcategories[subcategory] = true;
+  });
+  return index;
+}
+
 /** category → kind, which is what decides the direction of a cash entry. */
 function categoryKinds_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
-  var kinds = {};
-  if (!sheet) return kinds;
-
-  readRecords_(sheet, CATEGORY_COLUMNS).forEach(function (row) {
-    if (row.category && !kinds[row.category]) kinds[row.category] = row.kind;
-  });
-  return kinds;
+  return categoryIndex_().kinds;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,10 +351,10 @@ function onCashEntryEdit_(sheet, range) {
 
   try {
     var now = new Date();
-    var result = drainCashEntries_(readExistingIndex_(sheetOrThrow_(TABS.TRANSACTIONS)), now);
+    var result = drainCashEntries_(readUidIndex_(sheetOrThrow_(TABS.TRANSACTIONS)), now);
     if (!result.inserted) return;
 
-    clearDrainedCashRows_(sheet);
+    clearDrainedCashRows_(sheet, result.stamped);
     sheet.getRange(CASH_CONFIRM_CELL).setValue(
       result.inserted + ' added ' + Utilities.formatDate(
         now, readConfig_().timezone || 'Europe/Rome', 'HH:mm') + ' — see recent');
@@ -320,25 +370,40 @@ function onCashEntryEdit_(sheet, range) {
  * last of all. An incomplete row — a date typed, an amount not yet — is
  * someone mid-entry and is left exactly alone.
  *
- * This is the one behaviour the old design had that is genuinely lost: a
- * processed row used to stay on the tab as a record of what you had entered.
- * It is not much of a loss, because that record is `transactions` and it is
- * one tap away on `recent`, and it is what buys the tab being empty and ready
- * every time you open it.
+ * `rows` comes from the drain, which read the whole tab moments ago and knows
+ * every stamp on it — including one left by an earlier drain whose clear did
+ * not land, which is why that list is built before the unprocessed rows are
+ * filtered out rather than from the records this run wrote. Going back to the
+ * sheet for the same column would be two more round trips inside a request the
+ * page is waiting on. Absent, the tab is read for them, which is what a caller
+ * that did not run the drain has to do.
+ *
+ * A processed row does not stay on the tab as a record of what you entered.
+ * That record is `transactions`, and an empty tab ready to type into is what
+ * the clear buys.
  */
-function clearDrainedCashRows_(sheet) {
+function clearDrainedCashRows_(sheet, rows) {
+  var stamped = rows || stampedCashRows_(sheet);
+  stamped.forEach(function (row) {
+    sheet.getRange(row, 1, 1, CASH_ENTRY_COLUMNS.length).clearContent();
+  });
+
+  seedCashEntryDate_(sheet);
+}
+
+/** Which rows carry a `processed` stamp, asked of the sheet rather than the drain. */
+function stampedCashRows_(sheet) {
   var last = sheet.getLastRow();
-  if (last < 2) return;
+  if (last < 2) return [];
 
   var column = colIndex_(CASH_ENTRY_COLUMNS, 'processed');
   var stamps = sheet.getRange(2, column, last - 1, 1).getValues();
 
-  for (var i = stamps.length - 1; i >= 0; i--) {
-    if (isBlankCell_(stamps[i][0])) continue;
-    sheet.getRange(i + 2, 1, 1, CASH_ENTRY_COLUMNS.length).clearContent();
+  var rows = [];
+  for (var i = 0; i < stamps.length; i++) {
+    if (!isBlankCell_(stamps[i][0])) rows.push(i + 2);
   }
-
-  seedCashEntryDate_(sheet);
+  return rows;
 }
 
 /**
