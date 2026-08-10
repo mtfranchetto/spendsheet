@@ -56,6 +56,23 @@
       return;
     }
 
+    // Thirty days of net worth, and the same `lineChart` the Charts screen
+    // draws its own with — including the scale beside it, which is the whole
+    // reason not to hand-roll a smaller one here. A sparkline with no stated
+    // scale reads as starting from zero, and on a net worth that is the most
+    // flattering possible lie: a balance that drifted 2% would draw the same
+    // dramatic climb as one that doubled.
+    //
+    // Below the tiles rather than beside the total. It belongs to net worth and
+    // the obvious place is inside that card, but the card is drawn from the
+    // *other* call, ~1,600ms earlier — putting the chart in it would mean
+    // either holding the total back until the ledger arrives, or growing the
+    // first thing you see after you have already read it.
+    if (data.trend && data.trend.series.length) {
+      add(root, el('h2', null, 'Net worth, last ' + data.trend.days + ' days'));
+      add(root, add(el('div', 'card'), lineChart(data.trend.series)));
+    }
+
     // The one block on this screen that had no heading, which made it read as
     // a caption on the accounts above rather than as the month. It pairs with
     // "This month, by category" below it — same window, one as three numbers

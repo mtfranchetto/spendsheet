@@ -865,6 +865,16 @@ export function createGoogleStubs(options = {}) {
      * call is recorded — `addMetaTag('viewport', …)` is the difference between
      * a page laid out at the phone's width and one pretending to be a 980px
      * desktop, and it is invisible in the content.
+     *
+     * **`getContent` gives markup back, which is not what was put in.** An
+     * `HtmlOutput` holds HTML, so a `<` that opens no tag comes back escaped —
+     * which is fine for the fragments this idiom is documented for and fatal
+     * for a file of bare JavaScript, where the first `<` is a less-than. That
+     * cost this project every screen of the app; `include_` reads through
+     * `getRawContent` for exactly this reason. The fake escapes here so a
+     * return to the documented-looking call fails in the suite rather than on
+     * the phone — the same rule as `XFrameOptionsMode` listing two members: be
+     * no more forgiving than the real thing.
      */
     HtmlService: {
       createHtmlOutput: (html) => htmlOutput(html),
@@ -873,7 +883,8 @@ export function createGoogleStubs(options = {}) {
         if (!existsSync(path)) {
           throw new Error(`No html file named ${name} was found in the script.`);
         }
-        return htmlOutput(readFileSync(path, 'utf8'), name);
+        const source = readFileSync(path, 'utf8');
+        return htmlOutput(source.replace(/<(?![a-zA-Z/!?])/g, '&lt;'), name);
       },
       /**
        * A template, faithful in the one way that matters: it throws.
@@ -921,6 +932,13 @@ export function createGoogleStubs(options = {}) {
 
         const source = readFileSync(path, 'utf8');
         const template = {
+          /**
+           * The file, unprocessed — no scriptlets resolved and no markup made
+           * of it. This is how `include_` reads a partial, and the whole point
+           * is that it is the one reader that does not go through an
+           * `HtmlOutput` and so cannot escape a `<` that opens no tag.
+           */
+          getRawContent() { return source; },
           evaluate() {
             const filled = includes(source, 0).replace(
               /<\?(!?)=\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\?>/g,

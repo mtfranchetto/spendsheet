@@ -140,13 +140,35 @@
     A gutter rather than laying them over the plot: the one place a value label
     is guaranteed to collide with the line is the end of the line, which on a
     balance chart is the figure you came to read.
+
+    **The gutter takes its height from the plot rather than restating it.** It
+    carried `height: 120px`, which was the same number `PLOT_PIXELS` states in
+    `page.charts` — two copies of the one conversion the scale depends on, and
+    changing the plot's height in the file that draws it would have left the
+    gutter behind. `stretch` makes the flex line do it: the SVG has an explicit
+    height, so it sets the line's height and the gutter matches whatever that
+    is. One number, in the file that uses it for the arithmetic.
+
+    The padding is for the outermost ticks. Both charts put a mark on their top
+    and bottom gridlines, and a `.ytick` is centred on its line — so half of the
+    first and last label hangs outside the plot's own box, which is what put
+    them flush against the card above and the caption below.
   */
-  .plot { display: flex; align-items: flex-start; gap: 8px; }
+  .plot { display: flex; align-items: stretch; gap: 12px; padding: 6px 0; }
   .plot > svg { flex: 1; min-width: 0; }
-  .yaxis { position: relative; flex: none; width: 74px; height: 120px; }
+  .yaxis { position: relative; flex: none; width: 78px; }
   .ytick { position: absolute; right: 0; transform: translateY(-50%);
-           font-size: 10px; line-height: 1; color: var(--muted);
+           font-size: 11px; line-height: 1; color: var(--muted);
            white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /*
+    The dates under a plot, and the gap that stops them reading as a gridline
+    label. A caption is a `.row` like any other and inherits nothing that would
+    separate it from the chart it belongs to: at zero distance the left date sat
+    directly beneath the lowest tick, close enough to be read as part of the
+    scale rather than as the axis.
+  */
+  .plot + .row { margin-top: 12px; }
   .grid { stroke: var(--line); stroke-width: 1; opacity: .45; }
   .line { fill: none; stroke: var(--accent); stroke-width: 2;
           stroke-linejoin: round; stroke-linecap: round; }
