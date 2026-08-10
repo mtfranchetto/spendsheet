@@ -287,7 +287,7 @@ describe('the cascade order', () => {
     mccRules: [{ priority: 10, field: 'mcc', match_type: 'equals', pattern: '5411',
       category: 'Food & Drink', subcategory: 'Groceries', enabled: true }],
     textRules: [{ priority: 100, field: 'description', match_type: 'contains', pattern: 'NETFLIX',
-      category: 'Entertainment', subcategory: 'Streaming', enabled: true }],
+      category: 'Life & entertainment', subcategory: 'Streaming', enabled: true }],
     kindByCategory: { Transfer: 'transfer' },
     transferWindowDays: 4
   });
@@ -349,7 +349,7 @@ describe('the cascade order', () => {
     const verdict = ctx.categorizeOne_(
       record({ description: 'NETFLIX.COM', category_override: 'Housing' }), context());
     expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.OVERRIDE);
-    expect(verdict.category).toBe('Entertainment');
+    expect(verdict.category).toBe('Life & entertainment');
   });
 });
 
@@ -447,7 +447,7 @@ describe('running the cascade over the sheet', () => {
     c.recategorizeAll();
 
     const record = c.readRecords_(tx, c.TX_COLUMNS, 1)[0];
-    expect(record.category_auto).toBe('Entertainment');
+    expect(record.category_auto).toBe('Life & entertainment');
     expect(record.subcategory_auto).toBe('Streaming');
     expect(record.category_source).toBe('rule');
     expect(record.category_override).toBe('');
@@ -459,7 +459,7 @@ describe('running the cascade over the sheet', () => {
     const second = c.commitCategorize_(c.planCategorize_());
     expect(second.changed).toBe(0);
     expect(second.writes).toBe(0);
-    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_auto).toBe('Entertainment');
+    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_auto).toBe('Life & entertainment');
   });
 
   it('writes only the rows that moved, in contiguous runs', () => {
@@ -487,7 +487,7 @@ describe('running the cascade over the sheet', () => {
     // would stay blank forever.
     const { c, tx } = book([row(1, { confirmed: true })]);
     c.recategorizeAll();
-    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_auto).toBe('Entertainment');
+    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_auto).toBe('Life & entertainment');
   });
 
   it('recomputes underneath an override, since the override is what shows', () => {
@@ -495,7 +495,7 @@ describe('running the cascade over the sheet', () => {
     c.recategorizeAll();
 
     const record = c.readRecords_(tx, c.TX_COLUMNS, 1)[0];
-    expect(record.category_auto).toBe('Entertainment');
+    expect(record.category_auto).toBe('Life & entertainment');
     expect(record.category_source).toBe('override');
   });
 
@@ -738,12 +738,46 @@ describe('tidying a retired category', () => {
 
   it('resolves a parent only when its children agree where they went', () => {
     const moves = ctx.unambiguousParentMoves_();
-    expect(moves['Travel']).toBe('Entertainment');
+    expect(moves['Travel']).toBe('Life & entertainment');
     expect(moves['Bills & Utilities']).toBe('Housing');
-    // Family split between Shopping and Entertainment, so a row naming only
-    // the parent cannot be resolved without guessing which.
+    // Family split between Shopping and Life & entertainment, so a row naming
+    // only the parent cannot be resolved without guessing which.
     expect(moves['Family']).toBeUndefined();
     expect(ctx.ambiguousParents_()).toEqual(['Family']);
+  });
+
+  it('resolves a renamed parent, and reads no rename into its children', () => {
+    // `Entertainment → Life & entertainment` is the whole of a parent moving
+    // and none of its children: every child keeps its own name, so the entries
+    // are seven only because the list is keyed on the pair. The two halves fail
+    // in opposite directions — a parent nobody rewrites leaves overrides
+    // pointing at a category no report groups by, and a child read as renamed
+    // would rewrite `subcategory_override` cells that were always correct.
+    expect(ctx.unambiguousParentMoves_()['Entertainment']).toBe('Life & entertainment');
+    expect(ctx.ambiguousParents_()).not.toContain('Entertainment');
+
+    const { moves, stranded } = ctx.childRenames_();
+    ['Streaming', 'Hobbies', 'Flights', 'Accommodation', 'Holiday', 'Life events']
+      .forEach((child) => {
+        expect(moves[child], `${child} was read as renamed`).toBeUndefined();
+        expect(stranded).not.toContain(child);
+      });
+  });
+
+  it('points every retirement at a parent no later retirement removes', () => {
+    // The tidy resolves a pair once and does not chase the answer through a
+    // second retirement, so a `to` naming a retired pair sends a book that
+    // never tidied to a category this same list removes. `Travel / Flights` is
+    // one edit away from it: its destination has to follow every parent rename
+    // the list picks up afterwards.
+    const retired = {};
+    ctx.RETIRED_CATEGORIES.forEach((entry) => {
+      retired[ctx.pairKey_(entry.category, entry.subcategory)] = true;
+    });
+    ctx.RETIRED_CATEGORIES.forEach((entry) => {
+      expect(retired[ctx.pairKey_(entry.to[0], entry.to[1])],
+        `${entry.category} / ${entry.subcategory} lands on a retired pair`).toBeUndefined();
+    });
   });
 
   it('does not call a parent retired when only a child of it was renamed', () => {
@@ -848,8 +882,8 @@ describe('tidying a retired category', () => {
     expect(remaining).not.toContain('Travel / Flights');
     expect(remaining).not.toContain('Bills & Utilities / Phone');
 
-    expect(c.readRecords_(map, c.CATEGORY_MAP_COLUMNS, 1)[0].category).toBe('Entertainment');
-    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_override).toBe('Entertainment');
+    expect(c.readRecords_(map, c.CATEGORY_MAP_COLUMNS, 1)[0].category).toBe('Life & entertainment');
+    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[0].category_override).toBe('Life & entertainment');
   });
 
   it('leaves the derived columns to their formulas', () => {

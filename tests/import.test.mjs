@@ -172,7 +172,7 @@ describe('the category map', () => {
     // looked at instead of the label, and Transport/Public transport would
     // have been a defensible, wrong answer nobody would have questioned.
     const map = new Map(preset(ctx.DEFAULT_CATEGORY_MAP).map((r) => [r[1], r.slice(2)]));
-    expect(map.get('Long distance')).toEqual(['Entertainment', 'Flights']);
+    expect(map.get('Long distance')).toEqual(['Life & entertainment', 'Flights']);
   });
 
   it('keeps insurance out of Health', () => {

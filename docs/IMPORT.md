@@ -51,7 +51,7 @@ Two mistakes worth knowing about, because both survived a 20-row sample and both
 
 The taxonomy grew to meet the export rather than the export being squashed into it: `Insurance` as its own parent rather than a child of Health, and income subcategories for rent, gifts and child support. **A distinction you spent a year making in BudgetBakers is data**, and collapsing it on the way in is the one loss the import can't be undone from.
 
-It also shrank where the extra level earned nothing. `Bills & Utilities` folded into `Housing`, because rent, maintenance and the electricity bill are all what the home costs and splitting them meant adding up two figures to get the one worth watching. `Travel` folded into `Entertainment`, and `Family` retired to `Shopping / Kids` and `Entertainment / Life events`. Twelve top-level categories, not fifteen.
+It also shrank where the extra level earned nothing. `Bills & Utilities` folded into `Housing`, because rent, maintenance and the electricity bill are all what the home costs and splitting them meant adding up two figures to get the one worth watching. `Travel` folded into `Life & entertainment`, and `Family` retired to `Shopping / Kids` and `Life & entertainment / Life events`. Twelve top-level categories, not fifteen.
 
 Merging `Travel` costs less than it looks, and only because **labels** exist. "What did the holiday cost" is a question about a trip, not a category — it spans flights, restaurants and a pharmacy, each of which means something ordinary the other fifty weeks of the year. A label answers it across categories; a category never could.
 
