@@ -789,6 +789,10 @@
         record.type = TRANSFER;
         record.inReports = false;
         record.confirmed = true;
+        // Marking a transfer confirms the row, so it leaves the same lists a
+        // confirmation does. Without this it stayed in the review queue wearing
+        // the tick it had just been given.
+        var dropped = dropConfirmed(record);
         render();
 
         var request = { uid: record.uid, destination: destination,
@@ -805,6 +809,7 @@
             record.type = before.type;
             record.inReports = before.inReports;
             record.confirmed = before.confirmed;
+            restoreDropped(record, dropped);
             toast(error.message);
             render();
           });
@@ -830,29 +835,65 @@
   }
 
   /**
-   * A row that has just been confirmed no longer matches "needs review".
+   * A row that has just been confirmed no longer belongs in a list of rows that
+   * have not been.
+   *
+   * Two lists qualify, for different reasons. `state.records.rows` only while it
+   * is filtered to unconfirmed, because otherwise a confirmed row is exactly
+   * what that list is for. The dashboard's queue **always**: it is drawn under a
+   * heading that says "Needs review" and has no filter to turn off, so a ticked
+   * row sitting in it contradicts the only thing the block claims.
    *
    * Removed locally rather than by refetching, so the list does not jump back
-   * to its first page — see `reloadAfterWrite`. Returns where it was, because
-   * a refusal has to put it back exactly there: appending it would silently
-   * re-sort someone's list under them, and dropping it for good would hide a
-   * transaction that is still unconfirmed on the server.
+   * to its first page — see `reloadAfterWrite`. Returns where each row was,
+   * because a refusal has to put it back exactly there: appending it would
+   * silently re-sort someone's list under them, and dropping it for good would
+   * hide a transaction that is still unconfirmed on the server.
+   *
+   * **The lists are searched by identity and the same transaction is a separate
+   * object in each**, because they arrive from separate calls. So exactly one
+   * list ever gives up a row here — whichever one you tapped. The other is
+   * marked stale by `invalidate()` and refetched the next time it is asked for,
+   * which is what stops the two disagreeing.
+   *
+   * The queue holds up to `queueSize_()` and the dashboard draws ten of them, so
+   * removing one does reveal the next. That is the behaviour wanted rather than
+   * a leak: the row you acted on leaves, the "see all" count beside it falls,
+   * and the backlog closes up the way an inbox does.
    */
-  function dropIfFiltered(record) {
-    if (!state.filters.records.unconfirmedOnly) return -1;
+  function dropConfirmed(record) {
+    var dropped = [];
 
-    var at = state.records.rows.indexOf(record);
-    if (at === -1) return -1;
+    var take = function (rows) {
+      var at = (rows || []).indexOf(record);
+      if (at === -1) return false;
 
-    state.records.rows.splice(at, 1);
-    if (state.records.total > 0) state.records.total--;
-    return at;
+      rows.splice(at, 1);
+      dropped.push({ rows: rows, at: at });
+      return true;
+    };
+
+    if (state.filters.records.unconfirmedOnly && take(state.records.rows)) {
+      if (state.records.total > 0) state.records.total--;
+    }
+    take(state.data.overview && state.data.overview.review);
+
+    return dropped;
   }
 
-  function restoreDropped(record, at) {
-    if (at < 0) return;
-    state.records.rows.splice(at, 0, record);
-    state.records.total++;
+  /**
+   * Put back what a refusal did not earn.
+   *
+   * The count follows the array it was counting, by identity rather than by
+   * remembering which branch above ran: a refetch that landed in between
+   * replaces `state.records.rows` wholesale, and restoring into the array it
+   * replaced must not then claim a row on the one now being drawn.
+   */
+  function restoreDropped(record, dropped) {
+    (dropped || []).forEach(function (entry) {
+      entry.rows.splice(entry.at, 0, record);
+      if (entry.rows === state.records.rows) state.records.total++;
+    });
   }
 
   /**
@@ -874,7 +915,7 @@
    * Replace an optimistic guess with what the server actually says.
    *
    * In place rather than by swapping the object: `state.records.rows` holds
-   * these by reference, `dropIfFiltered` remembers an index into that array,
+   * these by reference, `dropConfirmed` remembers an index into that array,
    * and the sheet that is still open closed over this exact record. Assigning a
    * new object would leave three of those pointing at the old one.
    *
@@ -908,7 +949,7 @@
       }
     }
     if (decision.labels !== undefined) record.labels = decision.labels.slice();
-    var droppedAt = dropIfFiltered(record);
+    var dropped = dropConfirmed(record);
     render();
 
     // Both failure paths put the row back the way it was, and the soft one
@@ -922,7 +963,7 @@
       record.labels = was.labels;
       record.type = was.type;
       record.inReports = was.inReports;
-      restoreDropped(record, droppedAt);
+      restoreDropped(record, dropped);
       render();
     };
 

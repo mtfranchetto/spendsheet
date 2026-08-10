@@ -84,6 +84,9 @@ async function open(page, query = '') {
 /** Every name the page has asked the server for, in order. */
 const calls = (page) => page.evaluate(() => window.__calls.map((c) => c.name));
 
+/** The same names, once the answer has been handed to the page and applied. */
+const answered = (page) => page.evaluate(() => window.__answered);
+
 test.describe('opening the app', () => {
   test('boots, draws the first screen, and throws nothing', async ({ page, errors }) => {
     await open(page);
@@ -347,6 +350,67 @@ test.describe('confirming a transaction', () => {
     // And the row it was tapped on stops asking to be reviewed, without a
     // refetch — the optimistic patch, which is the other half of that comment.
     await expect(page.locator(`#screens button[aria-label="${label}"]`)).toHaveCount(0);
+
+    expect(errors).toEqual([]);
+  });
+
+  /**
+   * The same claim on the other screen, where it used to be false.
+   *
+   * `dropConfirmed` removes from whichever list the row came from, and the
+   * dashboard's is the one with no filter to consult — a queue drawn under
+   * "Needs review" has no reading in which a ticked row belongs. It used to keep
+   * it, until the refetch a second or two later replaced the block wholesale, so
+   * one swipe's feedback was nothing, a pause, then the whole screen moving.
+   *
+   * **Read once, without retrying, and inside a window where the refetch cannot
+   * have landed.** Both halves matter. `toHaveCount` polls until it is satisfied,
+   * so it would go green on the refetch alone and pass against the behaviour this
+   * is here to reject — and the refetch is only ~60ms away at the default
+   * latency. Slowing the transport is what separates "the page removed the row"
+   * from "the server said so eventually", which are the two explanations for an
+   * identical screen.
+   */
+  test('a row confirmed on the dashboard leaves the queue at once', async ({ page, errors }) => {
+    await open(page);
+
+    const queue = page.locator('#screens h2:has-text("Needs review") + .card');
+    const rows = queue.locator('button.tap');
+
+    const before = await rows.count();
+    expect(before, 'no backlog on the dashboard to confirm from').toBeGreaterThan(1);
+
+    const first = rows.first();
+    const label = await first.getAttribute('aria-label');
+    expect(label).toMatch(/^Needs review/);
+
+    await first.click();
+    await expect(page.locator('#sheet')).toBeVisible();
+
+    await page.evaluate(() => { window.__latency = 1500; });
+    await page.locator('#sheet button.primary', { hasText: 'Confirm' }).click();
+
+    // Synchronous: the listener mutates the record, drops it and renders before
+    // the click resolves, so this reads the screen the thumb was on.
+    expect(await rows.count(), 'the row is still in the queue, wearing its tick')
+      .toBe(before - 1);
+    await expect(queue.locator(`button[aria-label="${label}"]`)).toHaveCount(0);
+
+    // And the refetch agrees rather than handing it back. Waited on by the
+    // answer rather than the call, or every assertion below is taken on the
+    // screen as it was before the reload — see `answered`. The fake applies the
+    // write to its own table so there is something to agree with, which is the
+    // note on `previewPage`.
+    await expect.poll(() => answered(page), { timeout: 10000 }).toContain('appDashboard');
+    await expect(rows).toHaveCount(before - 1);
+
+    // The rest of the screen survives that refetch. `loadDashboard` distributes
+    // one answer back into the two halves the boot fetched separately, and the
+    // half it rebuilds used to be named field by field — so the trend was drawn
+    // from the boot payload and then dropped by the first write, and confirming
+    // a transaction took the chart off the screen until a reload.
+    await expect(page.locator('#screens h2:has-text("Net worth, last")')).toBeVisible();
+    await expect(page.locator('#screens .ytick').first()).toBeVisible();
 
     expect(errors).toEqual([]);
   });

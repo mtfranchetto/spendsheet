@@ -336,6 +336,20 @@ function appDashboardData_() {
     netWorth: open.netWorth,
     health: overview.health,
     review: overview.review,
+
+    // Computed by the call above whether or not this one passes it on, so
+    // leaving it out bought nothing and cost the chart: this payload *replaces*
+    // the overview on the page, so every field it omits is a block that was on
+    // the screen and now is not. The trend was drawn from the boot and gone
+    // after the first confirmation — a chart deleted by the act of ticking a
+    // row, with every number around it correct, which reads as a rendering bug
+    // three screens away from the code that caused it.
+    //
+    // Same shape as the `assetAccounts` note below, and the second time this
+    // exact omission has been made here. The rule both point at: **a refresh
+    // owes the screen every field the first paint gave it**, and a hand-written
+    // subset of another payload is where that promise gets quietly broken.
+    trend: overview.trend,
     // Pulling to refresh is very often *about* the holds — you tap it because a
     // card payment has not shown up yet. A dashboard that redrew every number
     // except the one you pulled for would be the worst version of this.

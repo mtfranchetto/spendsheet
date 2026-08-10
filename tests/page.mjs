@@ -93,6 +93,16 @@ export function pageScript(values = {}) {
  * failure handler*, which is the behaviour worth reproducing: that is how a
  * missing entry point presents in production.
  *
+ * **A write moves the table the reads come out of.** The answers are captured
+ * one call each, all of them before any of them, so `appDashboard` answers with
+ * the book as it stood at build time however many rows the page has confirmed
+ * since. That is the one way the fake can contradict the server rather than
+ * merely simplify it: the real `appConfirm` bumps the data version, so the very
+ * next read is taken after the write and the row is gone from the queue. Left
+ * alone it makes a page that correctly clears a row look broken, because the
+ * refetch hands the row straight back — which is a fixture disagreeing with
+ * itself, and the kind of red that gets a working change reverted.
+ *
  * `latency` is not decoration. Every ordering bug this page has had came from
  * two requests in flight at once — a late answer overwriting a newer one, a
  * page appended to a different query — and a fake that resolves synchronously
@@ -126,10 +136,38 @@ function shim(table, latency) {
 
   return `<script>
 window.__calls = [];
+
+// The same names again, pushed when the answer reaches the page rather than
+// when the call left it. A test waiting on what a refetch *did* has to wait on
+// this one: a name is in __calls the instant the request is made, so polling
+// that for a reload asserts the screen before it could possibly have changed,
+// and passes against a page that never applied the answer at all.
+window.__answered = [];
 window.__answers = ${data};
 window.__latency = ${latency};
 window.google = { script: { run: (function () {
   var handlers = {};
+
+  // The confirmed rows leave every queue the table hands back, addressed by the
+  // uids the page actually sent rather than by the canned result: the answer to
+  // appConfirm is one captured result and says nothing about which row this was.
+  // A test that has replaced an answer wholesale keeps whatever it set — this
+  // filters what is there and adds nothing.
+  //
+  // No backtick anywhere below, in a comment or otherwise. This whole block is
+  // inside the template literal that builds the tag, so one would end the string
+  // here and leave the rest of the file being parsed as code.
+  var applyConfirm = function (decisions) {
+    var uids = (decisions || []).map(function (decision) { return String(decision.uid); });
+    ['appDashboard', 'appOverview'].forEach(function (name) {
+      var answer = window.__answers[name];
+      if (!answer || !answer.review) return;
+      answer.review = answer.review.filter(function (row) {
+        return uids.indexOf(String(row.uid)) === -1;
+      });
+    });
+  };
+
   var api = new Proxy({}, {
     get: function (target, name) {
       if (name === 'withSuccessHandler') {
@@ -146,6 +184,7 @@ window.google = { script: { run: (function () {
         var fail = handlers.fail;
         handlers = {};
         window.__calls.push({ name: name, args: args });
+        if (name === 'appConfirm') applyConfirm(args[0]);
 
         // Both of these are read *now* rather than when the timer fires, and
         // that is what lets a test arrange an overtaking pair: set a long
@@ -160,6 +199,7 @@ window.google = { script: { run: (function () {
         setTimeout(function () {
           if (!known) return fail && fail(new Error('no canned answer for ' + name));
           ok && ok(JSON.parse(answer));
+          window.__answered.push(name);
         }, wait);
       };
     }
