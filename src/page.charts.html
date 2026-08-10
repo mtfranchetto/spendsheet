@@ -350,6 +350,23 @@
       // in one colour are told apart by reading every label; with the icon the
       // one you are looking for is found before you read anything.
       var label = el('span', 'grow ellipsis');
+
+      // The caret says the row opens, which nothing on it said before: a bar
+      // with a number beside it looks like a readout, and the only way to find
+      // out it was a control was to tap it.
+      //
+      // **It is an indicator and not a control** — no listener, and
+      // `aria-hidden` because the button around it already carries
+      // `aria-expanded` and says "expand"/"collapse" in its label. That is the
+      // whole difference from the chevron this design removed once, which was a
+      // second tap target on the line and took the gesture people actually
+      // reach for into a 32px box beside a 300px one. The row is still the
+      // control, all of it. It turns rather than being swapped for a second
+      // glyph so that the thing that moved is the thing you were looking at.
+      var caret = el('span', 'caret', '›');
+      caret.setAttribute('aria-hidden', 'true');
+      add(label, caret);
+
       var icon = categoryIcon(row.name);
       if (icon) add(label, el('span', null, icon + ' '));
       add(label, document.createTextNode(row.name));

@@ -160,6 +160,55 @@ test.describe('the three screens', () => {
   });
 });
 
+/*
+  The category breakdown, on both screens that draw it.
+
+  It is one function — `categoryBars` — so Home and Charts cannot disagree, and
+  the test runs against Home because that is the copy you meet first.
+
+  Worth a browser rather than a file test for the reason the caret exists: the
+  glyph is drawn by the page and turned by a stylesheet keyed on
+  `aria-expanded`, and nothing outside a browser resolves that pairing. A rule
+  that stopped matching would leave a caret that never moves — an indicator
+  pointing the same way whatever the row is doing, which is worse than none.
+*/
+test.describe('the category rows', () => {
+  test('say they open, and the caret turns when they do', async ({ page, errors }) => {
+    await open(page);
+    await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
+
+    const rows = page.locator('#screens .catrow');
+    const count = await rows.count();
+    expect(count, 'no category rows to look at').toBeGreaterThan(1);
+
+    // One on every row, because every row opens — including a category with no
+    // subcategories, which opens onto its drill button alone. A caret on some
+    // rows would make the same gesture mean two things depending on a fact you
+    // cannot see before tapping.
+    await expect(page.locator('#screens .catrow .caret')).toHaveCount(count);
+
+    const turn = (i) => rows.nth(i).locator('.caret')
+      .evaluate((node) => getComputedStyle(node).transform);
+    const closed = await turn(0);
+
+    await rows.first().click();
+    await expect(rows.first()).toHaveAttribute('aria-expanded', 'true');
+
+    // The one that opened turned; its neighbour did not. Asserting only the
+    // first would pass just as well against a rule that turned every caret on
+    // the screen at once.
+    expect(await turn(0), 'the caret did not turn when the row opened').not.toBe(closed);
+    expect(await turn(1), 'a row that did not open turned its caret').toBe(closed);
+
+    // A child is a leaf — it drills rather than opening — so a caret on one
+    // would promise something that never happens.
+    await expect(page.locator('#screens .catkid')).not.toHaveCount(0);
+    await expect(page.locator('#screens .catkid .caret')).toHaveCount(0);
+
+    expect(errors).toEqual([]);
+  });
+});
+
 test.describe('the charts', () => {
   test('draw something, and carry no glyph inside a stretched viewBox', async ({ page, errors }) => {
     await open(page);

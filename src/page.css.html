@@ -370,6 +370,9 @@
   @keyframes pulse { 50% { opacity: .25; } }
   @media (prefers-reduced-motion: reduce) {
     .spinner::before { animation: pulse 1.4s ease-in-out infinite; }
+    /* The caret still turns — the rotation *is* the state, and a disclosure
+       indicator that cannot show its state is not one. Only the easing goes. */
+    .caret { transition: none; }
   }
 
   /*
@@ -428,6 +431,28 @@
                      border: none; border-radius: 0; padding: 0;
                      min-height: auto; text-align: left; color: inherit;
                      margin-bottom: 10px; }
+
+  /*
+    The caret that says a row opens — and the reason it is not the chevron
+    above coming back. That one was a *control* on the end of the line; this is
+    an indicator at the start of the label, inside the one button, with no
+    listener on it. The row is still the whole target.
+
+    Keyed off `aria-expanded`, which the button already sets, so the glyph
+    cannot disagree with the state it is describing: there is no second class
+    to remember to toggle and nothing to keep in step.
+
+    `inline-block` because a rotated inline box does not rotate; a fixed
+    `width` because the glyph's own advance differs between its two rotations
+    and the labels would step sideways as you opened one. Same reasoning as the
+    pull-to-refresh arrow, including the easing — a state change worth
+    animating, briefly, so the eye follows what moved.
+  */
+  .caret { display: inline-block; width: 12px; margin-right: 4px;
+           color: var(--muted); font-size: 16px; line-height: 1;
+           transition: transform .15s ease; }
+  .catrow[aria-expanded="true"] .caret { transform: rotate(90deg); }
+
   .children { margin: -2px 0 12px 12px; padding-left: 10px;
               border-left: 2px solid var(--line); }
   .children .bar-fill { opacity: .55; }
