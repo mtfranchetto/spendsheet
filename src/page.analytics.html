@@ -1,0 +1,169 @@
+  function statCard(label, value, thumb, onTap) {
+    var card = el('div', 'card');
+    var stat = el(onTap ? 'button' : 'div', 'stat');
+
+    var left = el('div', 'grow');
+    add(left, el('div', 'label', label));
+    add(left, el('div', 'value num', value));
+    add(stat, left);
+    add(stat, thumb);
+
+    if (onTap) {
+      stat.type = 'button';
+      stat.className = 'stat tappable';
+      stat.setAttribute('aria-label', label + ' ' + value + ', show these transactions');
+      add(stat, el('span', 'chev', '›'));
+      stat.addEventListener('click', onTap);
+    }
+
+    return add(card, stat);
+  }
+
+  /** The balance line, small enough that only its direction survives. */
+  function sparkline(series) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40',
+      preserveAspectRatio: 'none' });
+    if (!series || series.length < 2) return svg;
+
+    var values = series.map(function (point) { return point.value; });
+    var low = Math.min.apply(null, values);
+    var span = (Math.max.apply(null, values) - low) || 1;
+
+    add(svg, svgNode('polyline', {
+      fill: 'none', class: 'spark', 'vector-effect': 'non-scaling-stroke',
+      points: series.map(function (point, i) {
+        return ((i / (series.length - 1)) * 100).toFixed(1) + ',' +
+          (38 - ((point.value - low) / span) * 36).toFixed(1);
+      }).join(' ')
+    }));
+    return svg;
+  }
+
+  /**
+   * Spending split by category, as a ring.
+   *
+   * A radius of 15.915 gives a circumference of almost exactly 100, so a
+   * slice's share *is* its `stroke-dasharray` — no arc paths and no
+   * trigonometry. Five slices, because a ring 62 pixels wide cannot show more
+   * than that as anything but a texture.
+   */
+  function donut(rows) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 42 42' });
+    var slices = (rows || []).slice(0, 5);
+    var total = slices.reduce(function (sum, row) { return sum + row.total; }, 0);
+    if (!total) return svg;
+
+    var offset = 0;
+    slices.forEach(function (row) {
+      var share = (row.total / total) * 100;
+      add(svg, svgNode('circle', {
+        cx: 21, cy: 21, r: 15.915, fill: 'none', 'stroke-width': 6,
+        stroke: categoryColor(row.name),
+        'stroke-dasharray': share.toFixed(2) + ' ' + (100 - share).toFixed(2),
+        'stroke-dashoffset': (25 - offset).toFixed(2)
+      }));
+      offset += share;
+    });
+    return svg;
+  }
+
+  /**
+   * Income, bucket by bucket.
+   *
+   * A donut like Spending's is not available and that is a fact about the data
+   * rather than a shortcut: `aggregate_` groups **only money out** by category,
+   * deliberately, because a refund filed under Groceries would otherwise read
+   * as a category you earned in. So there is nothing to slice, and the question
+   * income actually raises on a phone is *when* rather than *what* — one salary
+   * on the 27th and a month of nothing looks completely unlike four freelance
+   * invoices, and a single total says neither.
+   */
+  function incomeThumb(buckets) {
+    var svg = svgNode('svg', { class: 'thumb', viewBox: '0 0 100 40',
+      preserveAspectRatio: 'none' });
+    var rows = buckets || [];
+    var biggest = rows.reduce(function (top, bucket) {
+      return Math.max(top, bucket.income);
+    }, 0);
+    if (!biggest) return svg;
+
+    var width = 100 / rows.length;
+    rows.forEach(function (bucket, i) {
+      if (!bucket.income) return;
+      var height = (bucket.income / biggest) * 38;
+      add(svg, svgNode('rect', {
+        x: (i * width + width * 0.15).toFixed(2), y: (39 - height).toFixed(2),
+        width: (width * 0.7).toFixed(2), height: Math.max(height, 0.5).toFixed(2),
+        class: 'barmark up'
+      }));
+    });
+    return svg;
+  }
+
+  function renderAnalytics(root) {
+    add(root, el('h1', null, 'Charts'));
+    add(root, filterBar('analytics', {}));
+
+    var data = state.data.analytics;
+    if (!data) return add(root, spinner());
+
+    add(root, el('div', 'muted',
+      shortDate(data.window.from) + ' — ' + shortDate(data.window.to)));
+
+    // Three answers, biggest first, each with its shape next to it. The full
+    // charts are below; these are what you read without scrolling.
+    add(root, statCard('Balance', money(data.netWorth.total), sparkline(data.balance)));
+
+    /*
+      Two cards with a row set behind them, and one without. The rule is whether
+      one list is the answer to the number: `Spending` and `Income` are each a
+      total over rows of one sign, so the rows exist and add up. `Balance` is a
+      position rather than a set of transactions, and a drill from it would open
+      a list that sums to something else.
+
+      Net is deliberately not a card. The Cashflow section below is the same
+      quantity over the same window and says more about it — a period's net is
+      one figure, where the chart shows when the money moved. Two readings of one
+      number on one screen is a thing to reconcile rather than to skim.
+    */
+    add(root, statCard('Spending', money(data.totals.expenses), donut(data.byCategory),
+      function () { drillToRecords({ spendOnly: true }); }));
+
+    add(root, statCard('Income', money(data.totals.income), incomeThumb(data.cashflow),
+      function () { drillToRecords({ incomeOnly: true }); }));
+
+    if (data.totals.unconvertible) {
+      add(root, add(el('div', 'card'), el('div', 'muted', data.totals.unconvertible +
+        ' row(s) left out — no ' + data.currency + ' amount for them.')));
+    }
+
+    add(root, el('h2', null, 'Cashflow'));
+    add(root, add(el('div', 'card'), barChart(data.cashflow)));
+
+    add(root, el('h2', null, 'Net worth'));
+    add(root, add(el('div', 'card'), lineChart(data.balance)));
+
+    // One list, not two. `bySubcategory` is still sent and still ranks
+    // globally, but showing it beside its parent invited the comparison it
+    // cannot survive — see `nestedTotals_` for why the two disagree.
+    add(root, el('h2', null, 'By category'));
+    add(root, add(el('div', 'card'), categoryBars(data.byCategory)));
+  }
+
+  /**
+   * The filter bar, shared by Records and Charts.
+   *
+   * Applied on change rather than per keystroke — a request per character
+   * typed into the search box is a queue of responses arriving out of order,
+   * and the last one to land wins whether or not it is the one you asked for.
+   * The search box therefore fires on `change`, which on a phone is when the
+   * keyboard is dismissed.
+   */
+  /**
+   * A period spec back to the `id` the server gave it.
+   *
+   * The two have to agree or the dropdown opens on the wrong entry, so the rule
+   * is written once here rather than at each comparison: a named year is
+   * `year:2024`, everything else is its kind. `appPeriods_` builds the same
+   * string from the other direction.
+   */

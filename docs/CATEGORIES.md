@@ -97,6 +97,8 @@ The leg carries `source = transfer-leg` and its uid is derived from the row it c
 
 `Between accounts` and `Cash withdrawal` are what they say. **`Valuation change`** is the odd one: it is how an asset account's value moves, written by the phone's **Update balance** screen as the difference between what the account said and what you tell it it says now.
 
+Which of the three a marked transfer gets used to be inferred from the destination alone — cash out of a bank meant `Cash withdrawal`, everything else meant `Between accounts`. That is right when you have a wallet account to withdraw into and wrong when you do not, so the phone now asks, defaulting to the same guess. A fourth subcategory added to the `Transfer` rows of `categories` appears in that dropdown on its own.
+
 It sits under `Transfer` because of `kind`. A €1,500 market gain must not appear in *income this month* — it is not money you received — while still moving net worth, and `kind: transfer` is exactly the switch that does both. See [`docs/MOBILE.md`](MOBILE.md#asset-accounts-without-a-balance-history-tab).
 
 ---
@@ -145,6 +147,8 @@ Categories answer *what did I buy*. Labels answer *what was this for* — `kids`
 Type them comma-separated into `transactions.labels`. Many per row is normal and is the reason this isn't a second category field. The `labels` tab holds the set and reports transactions and total per label.
 
 Labels never affect a category, a `type` or any total. And the cascade never guesses one: merchant → category is a stable relationship worth learning, merchant → label is not. The same supermarket is `kids` one week and nothing the next.
+
+**Not on a transfer.** The phone will not set one there and the server refuses the write, because a label is an axis over *spending* and a transfer is the same money in two places, excluded from every total through `in_reports` — so a label on one is a filter that can never match what it was set to find. The tab itself is not policed: a label typed straight into `transactions.labels` on a transfer row stays where you put it.
 
 ### Adding a label
 

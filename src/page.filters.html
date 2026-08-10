@@ -1,0 +1,286 @@
+  function periodId(spec) {
+    if (!spec) return 'mtd';
+    if (spec.kind === 'year' && spec.year) return 'year:' + spec.year;
+    if (spec.kind === 'month' && spec.year && spec.month) {
+      return 'month:' + spec.year + '-' + (spec.month < 10 ? '0' : '') + spec.month;
+    }
+    return spec.kind;
+  }
+
+  /**
+   * The same spec back to the `<option>` that stands for it.
+   *
+   * **Not the same string as `periodId`, and the difference is the whole reason
+   * both exist.** A year is one option per year, so its id and its option are
+   * the same thing. A month is one option for all twelve — the picker says "A
+   * month…" and the chips below say which — so `month:2026-03` has to address
+   * an option called `month`. Everything else is its own kind either way.
+   *
+   * The URL keeps `periodId`, because a bookmark that forgot which month it was
+   * taken in is a bookmark of this month, which is not what was bookmarked.
+   */
+  function periodOptionId(spec) {
+    return spec && spec.kind === 'month' ? 'month' : periodId(spec);
+  }
+
+  /** January…December, in the locale the phone is set to. */
+  function monthNames() {
+    var names = [];
+    for (var month = 0; month < 12; month++) {
+      names.push(new Date(2000, month, 1)
+        .toLocaleDateString(undefined, { month: 'short' }));
+    }
+    return names;
+  }
+
+  /**
+   * The account filter, as chips, several at a time.
+   *
+   * `<select multiple>` is the control this ought to be and is unusable on a
+   * phone: iOS draws it as a scroll box with no visible way to add to a
+   * selection, so tapping a second account silently replaces the first. Chips
+   * show what is on without being opened, which is the only job a filter has.
+   *
+   * `All` is a chip rather than an absence, because "nothing selected" and
+   * "everything selected" look identical otherwise and mean the same thing —
+   * `matchesAccount_` treats an empty list as All for exactly that reason.
+   * Turning the last account off therefore lands back on All rather than on a
+   * blank screen that reads as broken.
+   */
+  function accountChips(filters, onChange) {
+    var chosen = chosenAccounts(filters);
+
+    // A chosen account the `accounts` tab no longer offers still gets a chip,
+    // and it is pressed — same rule as the label chips, and the URL is what
+    // made it matter here. A bookmark can name an account that has since been
+    // renamed, and dropping it would leave the filter *on* with nothing on
+    // screen saying so: no chip pressed, All unpressed, and a list of rows that
+    // reads as an empty ledger rather than as a filter.
+    var names = (state.lists.accounts || []).slice();
+    chosen.forEach(function (name) {
+      if (names.indexOf(name) === -1) names.push(name);
+    });
+
+    // Full width: a wrapping row of chips beside a dropdown at 45% would
+    // reflow every time you toggled one.
+    var box = el('div', 'fld wide');
+    add(box, el('span', 'flabel', 'Account'));
+
+    var chips = el('div', 'chips');
+    var draw = function () {
+      clear(chips);
+
+      var all = el('button', 'chip', 'All');
+      all.type = 'button';
+      all.setAttribute('aria-pressed', chosen.length ? 'false' : 'true');
+      all.addEventListener('click', function () {
+        if (!chosen.length) return;
+        chosen = [];
+        filters.account = 'All';
+        onChange();
+      });
+      add(chips, all);
+
+      names.forEach(function (name) {
+        var on = chosen.indexOf(name) !== -1;
+        var chip = el('button', 'chip', name);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        chip.addEventListener('click', function () {
+          if (on) chosen.splice(chosen.indexOf(name), 1);
+          else chosen.push(name);
+
+          // Sorted before it leaves, so picking A then B and B then A are one
+          // cached question rather than two — `signature` stringifies this.
+          filters.account = chosen.length ? chosen.slice().sort() : 'All';
+          onChange();
+        });
+        add(chips, chip);
+      });
+    };
+    draw();
+
+    add(box, chips);
+    return box;
+  }
+
+  /**
+   * The twelve months, as chips, under "A month…".
+   *
+   * **Chips rather than a second dropdown, and rather than a hundred entries in
+   * the first one.** A month is a year *and* a month, and putting the product
+   * of the two in the period picker would mean scrolling a wheel past several
+   * years of them to reach March. Splitting it in two costs one extra tap and
+   * nothing else: the dropdown answers "what kind of window" and the row below
+   * answers "which one", each with every choice visible at once.
+   *
+   * They wrap rather than scroll sideways. A row you have to swipe hides its
+   * own ends, and hiding December from a month picker in December is the one
+   * failure this cannot have — it is also the direction the whole document was
+   * just stopped from moving in, and a scroller inside it would read as the
+   * bug coming back.
+   *
+   * **Only months that have started are offered**, for the same reason
+   * `ledgerYears_` skips years the ledger has nothing in: a period that is
+   * empty by construction is indistinguishable, on screen, from a filter that
+   * is broken. A month restored from a bookmark taken in an earlier year shows
+   * that year in full, because all twelve of those have happened.
+   */
+  function monthChips(filters) {
+    var now = new Date();
+    var year = Number(filters.period.year) || now.getFullYear();
+    var chosen = Number(filters.period.month) || now.getMonth() + 1;
+    var last = year === now.getFullYear() ? now.getMonth() + 1 : 12;
+    var names = monthNames();
+
+    var box = el('div', 'fld wide');
+    add(box, el('span', 'flabel', year === now.getFullYear() ? 'Month' : 'Month of ' + year));
+
+    var chips = el('div', 'chips');
+    for (var month = 1; month <= last; month++) {
+      (function (value) {
+        var chip = el('button', 'chip', names[value - 1]);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', value === chosen ? 'true' : 'false');
+        chip.setAttribute('aria-label', names[value - 1] + ' ' + year);
+        chip.addEventListener('click', function () {
+          if (value === chosen) return;
+          filters.period = { kind: 'month', year: year, month: value };
+          refreshCurrentScreen();
+        });
+        add(chips, chip);
+      }(month));
+    }
+
+    add(box, chips);
+    return box;
+  }
+
+  function filterBar(which, options) {
+    var filters = state.filters[which];
+    var bar = el('div', 'filters');
+
+    /*
+      Matched on `id`, not on `kind`.
+
+      The named years the server now offers are every one of them `kind:
+      'year'`, differing only in their `year`. Comparing on kind would mark all
+      of them selected at once and, worse, send back `{kind: 'year'}` with no
+      year in it — which `resolveWindow_` resolves to the current year, so
+      picking 2024 would silently show you 2026.
+
+      The whole entry is kept rather than rebuilt from the option's value, so
+      the spec that goes to the server is the one the server described. Only
+      `custom` is assembled here, because only its dates live on this side.
+    */
+    var period = el('select');
+    period.setAttribute('aria-label', 'Period');
+    state.lists.periods.forEach(function (entry) {
+      var option = el('option', null, entry.label);
+      option.value = entry.id;
+      if (entry.id === periodOptionId(filters.period)) option.selected = true;
+      add(period, option);
+    });
+    period.addEventListener('change', function () {
+      var chosen = state.lists.periods.filter(function (entry) {
+        return entry.id === period.value;
+      })[0] || { kind: 'mtd' };
+
+      // `month` lands on *this* month rather than on a spec with no month in
+      // it. `resolveWindow_` would fill both in from today anyway, but only
+      // after a round trip — and the chips below have to draw one as pressed
+      // before that answer comes back, or picking "A month…" shows twelve
+      // chips with none of them on and a screen that has already changed.
+      var now = new Date();
+      filters.period = chosen.kind === 'custom'
+        ? { kind: 'custom', from: filters.period.from, to: filters.period.to }
+        : chosen.kind === 'month'
+          ? { kind: 'month', year: now.getFullYear(), month: now.getMonth() + 1 }
+          : { kind: chosen.kind, year: chosen.year };
+      refreshCurrentScreen();
+    });
+    add(bar, labelled('Period', period));
+
+    if (filters.period.kind === 'month') add(bar, monthChips(filters));
+
+    add(bar, accountChips(filters, function () { refreshCurrentScreen(); }));
+
+    add(bar, pickList('Label', state.lists.labels, filters.label, function (value) {
+      filters.label = value;
+      refreshCurrentScreen();
+    }));
+
+    if (filters.period.kind === 'custom') {
+      // The two ends of one range, in one full-width box of their own.
+      //
+      // Added straight to the bar they were two independent 45% children of a
+      // wrapping flex row, so what they paired with depended on how many
+      // filters the screen happened to show: on Charts, `From` sat beside
+      // `Label` and `To` wrapped onto a line by itself. A range read down a
+      // corner is not a range. Grouping them makes the pairing a property of
+      // what they are rather than of how many neighbours they have.
+      var range = el('div', 'wide range');
+      ['from', 'to'].forEach(function (edge) {
+        var input = el('input');
+        input.type = 'date';
+        input.className = 'field';
+        input.setAttribute('aria-label', 'Custom ' + edge);
+        input.value = filters.period[edge] || '';
+        input.addEventListener('change', function () {
+          filters.period[edge] = input.value;
+          refreshCurrentScreen();
+        });
+        add(range, labelled(edge === 'from' ? 'From' : 'To', input));
+      });
+      add(bar, range);
+    }
+
+    if (options.search) {
+      var search = el('input');
+      search.type = 'search';
+      search.className = 'field';
+      search.placeholder = 'Search';
+      search.setAttribute('aria-label', 'Search descriptions');
+      search.value = filters.search || '';
+      search.addEventListener('change', function () {
+        filters.search = search.value;
+        refreshCurrentScreen();
+      });
+      add(bar, labelled('Search', search));
+    }
+
+    if (options.unconfirmed) {
+      var toggle = el('button', null,
+        filters.unconfirmedOnly ? 'Showing: needs review' : 'Showing: everything');
+      toggle.addEventListener('click', function () {
+        filters.unconfirmedOnly = !filters.unconfirmedOnly;
+        refreshCurrentScreen();
+      });
+      add(bar, toggle);
+    }
+
+    return bar;
+  }
+
+  /** A `<select>` with `All` on top, which is the default and the common answer. */
+  /** A control with its name above it. */
+  function labelled(text, control) {
+    var field = el('div', 'fld');
+    add(field, el('span', 'flabel', text));
+    add(field, control);
+    return field;
+  }
+
+  function pickList(label, values, chosen, onChange) {
+    var select = el('select');
+    select.setAttribute('aria-label', label);
+
+    ['All'].concat(values).forEach(function (value) {
+      var option = el('option', null, value);
+      option.value = value;
+      if (value === chosen) option.selected = true;
+      add(select, option);
+    });
+    select.addEventListener('change', function () { onChange(select.value); });
+    return labelled(label, select);
+  }

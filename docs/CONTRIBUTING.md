@@ -4,8 +4,15 @@
 
 ```bash
 npm install
-npm test
+npm test           # the logic, in node:vm against faked Google services
 npm run test:watch
+```
+
+The page has a suite of its own, in a browser, and it is a separate command:
+
+```bash
+npx playwright install webkit    # once
+npm run test:e2e
 ```
 
 ## How the tests work, and why it matters
@@ -55,9 +62,37 @@ Sheets in a decimal-comma locale — Italian, German, French, Spanish and others
 
 The consequence for you: never call `range.setFormula()` directly, and never hand-write semicolons. Both work locally and break for half the world.
 
+## Opening the app without deploying it
+
+```
+npm run preview
+```
+
+Serves the phone app on `http://localhost:4321` with a fake `google.script.run` behind it. There is no second copy of the page: `tests/page.mjs` resolves the same `include_` and `boot` scriptlets the server resolves, so what loads is the document Apps Script builds. The answers behind it come from running the real `21`–`23` against the in-memory book in `tests/book.mjs`, so the shapes are the server's — a column added to `recordForPage_` shows up here on the next run rather than needing a fixture updated.
+
+The book carries one of each thing the page draws differently: a transfer with both legs, a €0.00 pre-authorisation, labelled rows, an unconfirmed row, a hold, a foreign-currency row with no rate, a cash account and an asset account. A preview full of ordinary expenses would exercise none of the cases this page has been wrong about.
+
+Point a browser or Playwright at it. **This is the only way to check anything about layout, a natively-rendered control, or a gesture** — the vitest suite can prove a CSS rule is written and cannot prove it is honoured, and the two have disagreed here before on the one device the app is for.
+
+`npm run preview -- --out=/tmp/page.html` writes the file instead, and `--port=` moves it. `?answers=cold` serves the page with no boot payload and `?answers=broken` withholds an answer the first screen needs — the two states the page has to survive and that nobody opens the preview to look at.
+
+## The browser suite
+
+`npm run test:e2e` runs `tests/e2e/` under Playwright, against a preview server it starts itself. It is a second runner rather than more vitest files, because vitest cannot host a browser and `npm test` should stay under two seconds.
+
+**WebKit only, at an iPhone viewport.** The app is opened on a phone; a Chromium pass would be exercising an engine nothing points at it. `hasTouch` from the device descriptor is what makes the `touchstart` listeners reachable — without it, swipe-to-confirm is code no test can enter.
+
+What it proves that nothing else does: the page *boots* (every other guard reads the file or compiles it without running a line), each screen draws, no screen is wider than the phone, a tap reaches the entry point it claims to, a write invalidates what it should, and a slow answer overtaken by a fast one loses.
+
+What it does not prove: **WebKit is not iOS Safari.** It will not reproduce how the phone sizes a native `input[type="date"]`, which is precisely the bug that shipped here once. Say whether you checked on the device or in a browser; they answer different questions.
+
+Before keeping a browser test, break the thing it covers and watch it go red. A test that cannot fail is worse than no test, because it is counted.
+
 ## What can't be tested here
 
 JWT signing against a real key, actual Sheet reads and writes, and the live API client need the Google runtime. Those get a `runSmokeTests()` menu item that writes pass/fail to the `_tests` tab. They are not unit tests, they do not run in CI, and the README says so rather than implying coverage that doesn't exist.
+
+The preview above narrows this but does not close it: it runs the page in a real browser against a fake server, so it proves the drawing and proves nothing about Sheets. A formula that a decimal-comma locale rejects still passes everything here.
 
 ## Style
 

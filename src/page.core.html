@@ -1,0 +1,201 @@
+  // -------------------------------------------------------------------------
+  // Making nodes
+  // -------------------------------------------------------------------------
+
+  /**
+   * `TX_TYPE.TRANSFER`, spelled once.
+   *
+   * The server sends `type` on every record and four places here now branch on
+   * it. A literal at each of those is four chances to type `transfers` and get
+   * a comparison that is silently always false — which would present as
+   * transfers drawn in red again, indistinguishable from this never having
+   * been built.
+   */
+  var TRANSFER = 'transfer';
+
+  /**
+   * The subcategory a transfer gets when you mark one from the app.
+   *
+   * `Transfer` is a real category with `kind: transfer` on the `categories`
+   * tab, and `typeFormula()` resolves a row's type by looking its category up
+   * there — so setting the category *is* setting the type. There is no
+   * separate flag to write and deliberately so: a stored type could disagree
+   * with the category, and `in_reports` would have to pick one of them.
+   */
+  var TRANSFER_CATEGORY = 'Transfer';
+  var TRANSFER_SUBCATEGORY = 'Between accounts';
+
+  /**
+   * What an asset account's value moving is filed as.
+   *
+   * Under `Transfer` on purpose, so `in_reports` keeps a market gain out of
+   * "income this month" while the balance formula's SUMIF and the net-worth
+   * curve both still see it. See `renderSetValue`.
+   */
+  var VALUATION_SUBCATEGORY = 'Valuation change';
+
+  /**
+   * "It went somewhere this book does not track."
+   *
+   * A sentinel and not a blank, because a blank is what an unanswered form
+   * looks like and the two mean opposite things — see `TRANSFER_OUTSIDE` on the
+   * server, which refuses the blank rather than guessing.
+   */
+  var TRANSFER_OUTSIDE = '__outside__';
+
+  /**
+   * The one way anything gets onto this page.
+   *
+   * `textContent` for every string, without exception. A bank's description
+   * field arrives here unaltered and this page runs on a Google origin, where
+   * markup that executes can reach `google.script.run` and call this project's
+   * functions as the account holding the bank credentials. Structural beats
+   * careful: there is no escaping helper to remember to call, because there is
+   * no path that would need one.
+   */
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  function add(parent) {
+    for (var i = 1; i < arguments.length; i++) {
+      if (arguments[i]) parent.appendChild(arguments[i]);
+    }
+    return parent;
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+    return node;
+  }
+
+  /** The waiting state, everywhere. The animation is in `.spinner::before`. */
+  function spinner(message) {
+    return el('div', 'spinner', message || 'Loading…');
+  }
+
+  // -------------------------------------------------------------------------
+  // Formatting
+  // -------------------------------------------------------------------------
+
+  var state = {
+    screen: 'dashboard',
+    currency: 'EUR',
+    lists: { accounts: [], cashAccounts: [], assetAccounts: [], labels: [],
+             categories: { parents: [], children: [] }, periods: [] },
+
+    /*
+      One filter set per screen, and they open on different periods on purpose.
+      Charts answers "how is this month going", so it opens on this month.
+      Records is the screen you go to *to find something*, and a ledger that
+      searches only the last five days is not a ledger — a search for a shop
+      you remember from March returning nothing is worse than slow, because it
+      reads as the transaction not being there.
+
+      Both are overwritten wholesale by `appDefaultFilters_` when the bootstrap
+      lands, so these are the shape rather than the decision. They are kept in
+      step with it anyway: a page that flashed a different period for one paint
+      is a page that has two answers to the same question.
+    */
+    filters: {
+      analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
+      records: { period: { kind: 'ytd' }, account: 'All', label: 'All',
+                 search: '', unconfirmedOnly: false,
+                 // Set only by `drillToRecords`, cleared only by `drillChips`.
+                 // No control in the filter bar sets these — the bar is already
+                 // five rows tall on a phone, and a filter you can see and
+                 // dismiss is the whole of what these need.
+                 spendOnly: false, incomeOnly: false,
+                 category: 'All', subcategory: 'All' }
+    },
+    data: {},
+
+    // Keyed by the filter signature, so going back to a slice you have already
+    // looked at is instant and costs no request.
+    cache: {},
+    // `loaded` rather than counting rows. Records is fetched on first
+    // navigation now that the bootstrap no longer prefetches it, and a filter
+    // that legitimately matches nothing would otherwise look exactly like a
+    // screen that has never been opened — so every visit would re-fetch it.
+    records: { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
+               loading: false, loaded: false },
+
+    /*
+      A counter per screen, stamped on each request and checked on arrival.
+
+      Nothing was tracking requests at all, and both loaders assigned their
+      result wholesale — so of two overlapping fetches the *last to land* won
+      rather than the last requested. Change a filter twice quickly on a slow
+      connection and the screen settles on whichever answer the server happened
+      to finish second, with the filter bar showing the other one.
+
+      A counter rather than an abort: `google.script.run` has no cancel, so the
+      request is going to complete either way. What can be controlled is whether
+      its answer is allowed to land.
+    */
+    requests: { records: 0, analytics: 0 },
+
+    // One dashboard refresh at a time, plus a note that another was asked for
+    // while it ran. See `loadDashboard`.
+    dashboard: { inFlight: false, again: false, fresh: false },
+
+    // Which account a cash entry is being added to, set by the tile that
+    // opened the form and read back by it as the default.
+    addAccount: '',
+    // Which categories are showing their subcategories. Keyed by name rather
+    // than by position, so it survives the list re-ranking under a new filter.
+    expanded: {}
+  };
+
+  /**
+   * Money, in the book's own currency.
+   *
+   * `Intl` rather than a hand-rolled formatter, because the separator and the
+   * symbol's side are locale questions and this page is opened in it-IT. The
+   * fallback matters: `Intl` will throw on a currency code it does not know,
+   * and `base_currency` is a cell somebody can type into.
+   */
+  function money(value, options) {
+    var opts = options || {};
+    if (value === null || value === undefined || value === '') return '—';
+
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: state.currency,
+        // Stated, because the default is `"min2"` in it-IT and friends: a
+        // thousands separator appears at five digits and is suppressed at
+        // four. So the account tiles put `14.500,00 €` beside `8920,40 €` and
+        // Charts puts `26.249,82 €` directly above `2988,34 €`. Every amount
+        // in this app is set in tabular figures and right-aligned to a common
+        // edge, which is a column being lined up digit by digit — and none of
+        // that survives separators that come and go with the magnitude.
+        useGrouping: true,
+        maximumFractionDigits: opts.whole ? 0 : 2,
+        minimumFractionDigits: opts.whole ? 0 : 2
+      }).format(value);
+    } catch (e) {
+      return Number(value).toFixed(opts.whole ? 0 : 2) + ' ' + state.currency;
+    }
+  }
+
+  /** `2026-08-06` as `6 Aug`, because the year is almost never the question. */
+  function shortDate(key) {
+    if (!key) return '';
+    var parts = String(key).split('-');
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var month = months[Number(parts[1]) - 1] || parts[1];
+    return parts.length > 2 ? Number(parts[2]) + ' ' + month : month + ' ' + parts[0];
+  }
+
+  function toast(message) {
+    var node = document.getElementById('toast');
+    node.textContent = message;
+    node.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { node.hidden = true; }, 4000);
+  }

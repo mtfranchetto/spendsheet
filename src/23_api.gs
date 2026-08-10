@@ -179,6 +179,13 @@ function appInlineBoot_() {
  * this month. Records is the screen you go to *to find something*, and a ledger
  * that searches only the last few days is not a ledger.
  *
+ * Records opens on the **year to date** rather than the trailing twelve months.
+ * Both are reaches wide enough to find things in, and the difference is that one
+ * of them has an edge you can name: "this year" is the period a person is
+ * already thinking in, and a total over it means something. `last_12` is a
+ * window that moves under you — the same search run in January and in February
+ * covers different months, and neither is a period anyone has an opinion about.
+ *
  * Records carries the drill filters at their off values rather than omitting
  * them. Nothing here sets them — they arrive by tapping a number on Charts —
  * but `applyOverview` assigns this object *over* `state.filters.records`
@@ -187,7 +194,7 @@ function appInlineBoot_() {
 function appDefaultFilters_() {
   return {
     analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
-    records: { period: { kind: 'last_12' }, account: 'All', label: 'All',
+    records: { period: { kind: 'ytd' }, account: 'All', label: 'All',
       search: '', unconfirmedOnly: false,
       spendOnly: false, incomeOnly: false, category: 'All', subcategory: 'All' }
   };
@@ -218,17 +225,29 @@ function appRecords(filters, offset) {
 }
 
 /**
- * The dashboard on its own, for a pull-to-refresh.
+ * The dashboard on its own — for a pull-to-refresh, and after every write.
  *
- * Forgets the cache first, because this is the one call whose entire meaning is
- * "I do not believe what is on screen". Serving it from a cache would answer a
- * request for fresh data with the same stale answer, and there would be no
- * second thing to try — this *is* the retry.
+ * `fresh` is the difference between those two callers and it is not a
+ * micro-optimisation. A pull-to-refresh means "I do not believe what is on
+ * screen": serving it from a cache would answer a request for fresh data with
+ * the same stale answer, and there is no second thing to try, because this *is*
+ * the retry. So it passes `true` and the cache goes.
+ *
+ * A write means nothing of the kind, and this call forgetting the cache on that
+ * path was a real bug with a confusing symptom. Confirming a transaction
+ * threw away the compacted ledger and rebuilt it from four and a half thousand
+ * sheet rows — and confirming three in a row queued three multi-second
+ * executions behind each other, which the client bridge eventually gives up on
+ * with `http connection failure 0`, an error about the transport that says
+ * nothing about the cause. **A write already bumps `transactions_version`**
+ * through `writeCell_` and `appendRows_`, which invalidates the cache by
+ * construction and cannot be forgotten by a caller. The forget was never doing
+ * anything on that path except the expensive part.
  */
-function appDashboard() {
+function appDashboard(fresh) {
   return withReadCache_(function () {
     requireOwner_();
-    forgetLedgerCache_();
+    if (fresh) forgetLedgerCache_();
     return appDashboardData_();
   });
 }
@@ -621,13 +640,15 @@ function appHealth_(rowCount) {
  * live.
  */
 function appReviewQueue_(ledger) {
+  var peers = transferPeers_(ledger);
+
   return ledger
     .filter(function (row) { return !isConfirmedRow_(row); })
     .sort(function (a, b) {
       return dateOrder_(a.booking_date) - dateOrder_(b.booking_date);
     })
     .slice(0, queueSize_())
-    .map(recordForPage_);
+    .map(function (row) { return recordForPage_(row, peers); });
 }
 
 // ---------------------------------------------------------------------------
@@ -871,7 +892,12 @@ function appPeriods_(ledger) {
     // do as a row of chips, side by side and one tap each, where a dropdown
     // costs an open, a scroll and a close. `resolveWindow_` has understood
     // `{kind: 'month', year, month}` since it was written.
-    { id: 'month', kind: 'month', label: 'A month\u{2026}' },
+    //
+    // The label carried an ellipsis, the convention for "this opens something
+    // further" — which it does, and which the chips make visible the instant
+    // the option is chosen. In a list where every other entry names a period
+    // outright it read as an unfinished word rather than as a promise.
+    { id: 'month', kind: 'month', label: 'A month' },
     { id: 'ytd', kind: 'ytd', label: 'Year to date' },
     { id: 'last_12', kind: 'last_12', label: 'Last 12 months' }
   ];

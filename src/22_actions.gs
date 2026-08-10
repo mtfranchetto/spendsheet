@@ -123,6 +123,7 @@ function applyReviewDecisions_(decisions) {
   if (!tx) throw new Error('No "' + TABS.TRANSACTIONS + '" tab. Run Spendsheet → Setup sheet first.');
 
   var index = uidIndex_(tx);
+  var kinds = lazyCategoryKinds_();
 
   requested.forEach(function (decision) {
     var uid = String((decision && decision.uid) || '');
@@ -135,6 +136,7 @@ function applyReviewDecisions_(decisions) {
     }
 
     var wrote = [];
+    var refused = [];
 
     if (!isBlankCell_(decision.category_override)) {
       writeCell_(tx, row, TX_COLUMNS, 'category_override', decision.category_override);
@@ -150,12 +152,33 @@ function applyReviewDecisions_(decisions) {
       writeCell_(tx, row, TX_COLUMNS, 'confirmed', isTruthyCell_(decision.confirmed));
       wrote.push('confirmed');
     }
-    // Same test as `confirmed` and not the one the overrides use — see the
-    // header. An empty string here is "I removed the last label", which is a
-    // thing a person does and has to be able to do.
+    /*
+      Same test as `confirmed` and not the one the overrides use — see the
+      header. An empty string here is "I removed the last label", which is a
+      thing a person does and has to be able to do.
+
+      **Not on a transfer.** A label is a cross-cutting axis over spending — the
+      thing a category cannot express, which is why `travel` can span a flight,
+      a hotel and forty euros of coffee. A transfer is not spending: it is the
+      same money in two places, counted in neither direction, and every report
+      excludes it through `in_reports`. So a label on one is a filter that can
+      never match anything it was set to find, and the honest place to say so is
+      before it is written rather than in a total that quietly omits it.
+
+      Asked here as well as on the page, for the reason `descriptionIsEditable_`
+      is asked twice: the page decides what to offer and this decides what is
+      true, and a browser can send whatever it likes. Refused rather than fatal —
+      the rest of the decision is perfectly valid, and a swipe that confirms a
+      transfer must not fail because a stale page sent an empty label list with
+      it.
+    */
     if (decision.labels !== undefined && decision.labels !== null) {
-      writeCell_(tx, row, TX_COLUMNS, 'labels', normalizeLabels_(decision.labels));
-      wrote.push('labels');
+      if (resolvesToTransfer_(tx, row, decision, kinds)) {
+        refused.push('labels');
+      } else {
+        writeCell_(tx, row, TX_COLUMNS, 'labels', normalizeLabels_(decision.labels));
+        wrote.push('labels');
+      }
     }
 
     /*
@@ -197,15 +220,87 @@ function applyReviewDecisions_(decisions) {
 
     if (!wrote.length) {
       result.skipped++;
-      result.results.push({ uid: uid, ok: false, reason: 'nothing to write' });
+      result.results.push({ uid: uid, ok: false,
+        reason: refused.length ? 'a transfer takes no labels' : 'nothing to write' });
       return;
     }
 
     result.written++;
-    result.results.push({ uid: uid, ok: true, wrote: wrote });
+    result.results.push({ uid: uid, ok: true, wrote: wrote, refused: refused, _row: row });
+  });
+
+  return withFreshRecords_(tx, result);
+}
+
+/**
+ * Hand each written row back the way `recordForPage_` would describe it now.
+ *
+ * The page patches its own copy optimistically before this call and has to,
+ * because a phone that waits three seconds to redraw a row you just tapped
+ * feels broken. But the patch is a *guess*: `type`, `category`, `subcategory`
+ * and `in_reports` are all formulas, so what a confirmation means is only
+ * knowable by asking the sheet. The guess was previously left standing until
+ * something else happened to refetch — which for the Records screen was the
+ * next filter change or tab switch, and could be never.
+ *
+ * `flush()` is what makes this worth doing at all. Without it the derived
+ * columns still hold what they held before the write and this would confidently
+ * hand back the stale row it exists to replace.
+ *
+ * One row at a time rather than one read of the tab: `appConfirm` is one call
+ * per gesture by design, so the batch is almost always one, and a single narrow
+ * read costs less than re-reading four thousand rows to answer about one of
+ * them. `_row` is dropped on the way out — it is an address in a sheet the page
+ * cannot see, and the uid is the whole of the addressing.
+ */
+function withFreshRecords_(tx, result) {
+  var written = result.results.filter(function (entry) { return entry.ok; });
+  if (!written.length) return result;
+
+  SpreadsheetApp.flush();
+
+  written.forEach(function (entry) {
+    var values = tx.getRange(entry._row, 1, 1, TX_COLUMNS.length).getValues()[0];
+    var record = {};
+    TX_COLUMNS.forEach(function (name, at) { record[name] = values[at]; });
+
+    entry.record = recordForPage_(record);
+    delete entry._row;
   });
 
   return result;
+}
+
+/**
+ * Would this decision leave the row a transfer?
+ *
+ * The question is about the row *after* the write, not before it — marking
+ * something a transfer and labelling it arrive in the same request, and reading
+ * the current category would let the labels through on the way past. So an
+ * override in hand is answered from the taxonomy, and only a decision that
+ * changes nothing about the category falls back to what column W already says.
+ *
+ * `kinds` is a memo the caller owns and passes in, so the `categories` tab is
+ * read once per batch rather than once per decision — and not at all when no
+ * decision carries labels, which is most of them. Deliberately *not* a global:
+ * a module-level memo would outlive the request in any runtime that reuses the
+ * context, and the answer it caches is a tab the owner edits.
+ */
+function resolvesToTransfer_(tx, row, decision, kinds) {
+  if (!isBlankCell_(decision.category_override)) {
+    return String(kinds.of()[String(decision.category_override)]) === TX_TYPE.TRANSFER;
+  }
+
+  return String(readCell_(tx, row, TX_COLUMNS, 'type')) === TX_TYPE.TRANSFER;
+}
+
+/** A `categoryKinds_()` that is only paid for if something asks. */
+function lazyCategoryKinds_() {
+  var kinds = null;
+  return { of: function () {
+    if (!kinds) kinds = categoryKinds_();
+    return kinds;
+  } };
 }
 
 /**
@@ -323,21 +418,18 @@ function webAppLinkTransfer_(request) {
   // over it — so this is the same write `applyReviewDecisions_` would make.
   writeCell_(tx, row, TX_COLUMNS, 'category_override', TRANSFER_CATEGORY_NAME);
   writeCell_(tx, row, TX_COLUMNS, 'subcategory_override',
-    transferSubcategoryFor_(target, source));
+    transferSubcategoryFor_(target, source, want.subcategory));
   writeCell_(tx, row, TX_COLUMNS, 'confirmed', true);
 
-  // Labels, when the page sent them — which it does whenever the sheet was
-  // open, because the chips always show the row's current set.
-  //
-  // The alternative was two round trips, `appConfirm` for the labels and then
-  // this. At ~2,700ms of fixed overhead each that is a five-second wait to save
-  // the word `travel`, and the sheet closes between them so a failure on the
-  // second has nothing left to report against. The same rule as
-  // `applyReviewDecisions_`: present-and-empty is a deliberate clear, absent is
-  // untouched — which is why this tests the key rather than the value.
-  if (want.labels !== undefined && want.labels !== null) {
-    writeCell_(tx, row, TX_COLUMNS, 'labels', normalizeLabels_(want.labels));
-  }
+  // **No labels here.** This used to accept them, to save a round trip: the
+  // sheet's chips always showed the row's current set, and at ~2,700ms of fixed
+  // overhead per call a second request to save the word `travel` was a
+  // five-second wait for nothing. Sound reasoning about the cost, and about a
+  // write this no longer makes — a label is an axis over *spending*, and a
+  // transfer is the same money in two places, excluded from every total by
+  // `in_reports`. Labelling one produces a filter that can never match what it
+  // was set to find. `applyReviewDecisions_` refuses the same write for the same
+  // reason; the page no longer offers the chips on this pane.
 
   // Same rule as `applyReviewDecisions_`, asked here rather than shared through
   // it, because these are two entry points and only one of them can be reached
@@ -534,19 +626,51 @@ function findCounterLeg_(source, target, windowDays) {
 }
 
 /**
- * `Cash withdrawal` when cash is involved, `Between accounts` otherwise.
+ * `Cash withdrawal` when cash is involved, `Between accounts` otherwise — or
+ * whatever you said, if you said anything.
  *
- * Both are seeded subcategories of `Transfer`, so both resolve to `kind:
- * transfer` and neither counts anywhere. The distinction is only for reading
- * the ledger later — and it matches what the seed rules already write for
- * `PRELIEVO` and MCC 6011, so a withdrawal the cascade found and one you
+ * Both defaults are seeded subcategories of `Transfer`, so both resolve to
+ * `kind: transfer` and neither counts anywhere. The distinction is only for
+ * reading the ledger later — and it matches what the seed rules already write
+ * for `PRELIEVO` and MCC 6011, so a withdrawal the cascade found and one you
  * marked by hand are filed identically.
+ *
+ * The guess is right whenever a wallet account exists to withdraw into and
+ * wrong the rest of the time: an ATM withdrawal from someone who does not track
+ * cash at all goes to `Somewhere outside Spendsheet` and files as `Between
+ * accounts`, which is not what happened. So `chosen` overrides it, and is
+ * checked against the taxonomy rather than trusted — a browser can send
+ * anything, and a subcategory that is not a child of `Transfer` would resolve
+ * through `VLOOKUP` to a *different parent's* kind and quietly put the row back
+ * into spending.
  */
-function transferSubcategoryFor_(target, source) {
+function transferSubcategoryFor_(target, source, chosen) {
+  var wanted = String(chosen === null || chosen === undefined ? '' : chosen).trim();
+  if (wanted && transferSubcategories_().indexOf(wanted) !== -1) return wanted;
+
   if (target && String(target.kind) === ACCOUNT_KIND.CASH && Number(source.amount) < 0) {
     return 'Cash withdrawal';
   }
   return 'Between accounts';
+}
+
+/** Every child of a category whose kind is `transfer`, in seed order. */
+function transferSubcategories_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
+  if (!sheet) return [];
+
+  var kinds = categoryKinds_();
+  var names = [];
+
+  readRecords_(sheet, CATEGORY_COLUMNS).forEach(function (row) {
+    if (!row.category || !row.subcategory) return;
+    if (String(kinds[row.category]) !== TX_TYPE.TRANSFER) return;
+
+    var name = String(row.subcategory);
+    if (names.indexOf(name) === -1) names.push(name);
+  });
+
+  return names;
 }
 
 /**

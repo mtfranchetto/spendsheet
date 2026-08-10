@@ -474,6 +474,7 @@ var DEFAULT_CONFIG = [
   ['import_preset', 'budgetbakers', 'Which _import_map and _category_map rows to use.'],
   ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
+  ['duplicate_window_days', 3, 'How far apart an imported row and a synced one may be booked and still be the same transaction.'],
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
   // `cashflow_horizon_days` and `trend_days` went from here with the two files
   // that read them — the cashflow projection in `15_recurring.gs` and the net

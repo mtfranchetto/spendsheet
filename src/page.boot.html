@@ -1,0 +1,472 @@
+  // -------------------------------------------------------------------------
+  // Loading and drawing
+  // -------------------------------------------------------------------------
+
+  /**
+   * Everything the client holds is now a claim about the past.
+   *
+   * Clearing `state.cache` alone was the bug, and it looked like it worked.
+   * That object holds analytics payloads and nothing else, keyed by filter
+   * signature — but `go()` only re-enters a loader when `state.data.analytics`
+   * is null or `state.records.loaded` is false, and neither was touched. So
+   * the cleared entry was never consulted, because the code that would have
+   * read it was never reached. A confirmation moved the number on the server,
+   * the server was right, and the phone went on drawing the number it already
+   * had until the tab was killed and reloaded.
+   *
+   * This *marks* rather than fetches. The screen you are looking at is the
+   * caller's problem — see `reloadAfterWrite` — and the other two are picked
+   * up by `go()` the next time you visit them, which costs nothing until then.
+   */
+  function invalidate() {
+    state.cache = {};
+    state.data.analytics = null;
+    state.records.loaded = false;
+  }
+
+  /**
+   * What to re-read after the app has written something.
+   *
+   * The dashboard always, because every write moves a number on it and it is
+   * the screen you land back on. Beyond that this deliberately **does not**
+   * refetch Records, even though Records is now marked stale: `loadRecords`
+   * starts again from offset zero, so someone who had paged four hundred rows
+   * deep to find one transaction would be thrown back to the first hundred by
+   * the act of confirming it. The local row was already patched optimistically
+   * and that patch is correct; the stale mark is what makes the next filter
+   * change or tab switch fetch the truth.
+   *
+   * `refreshCurrentScreen` covers the one case where the screen in front of
+   * you is genuinely wrong rather than merely old — Charts, whose totals just
+   * changed and which holds no per-row state to lose.
+   */
+  function reloadAfterWrite() {
+    invalidate();
+    loadDashboard();
+    if (state.screen === 'analytics') loadAnalytics();
+  }
+
+  function currentFilters(which) {
+    var filters = state.filters[which];
+    return {
+      period: filters.period,
+      account: filters.account,
+      label: filters.label,
+      search: filters.search || '',
+      unconfirmedOnly: !!filters.unconfirmedOnly,
+      // Sent from both screens, ignored by `webAppAnalytics_`. Charts never
+      // sets them and reading them there would be a filter with no control.
+      spendOnly: !!filters.spendOnly,
+      incomeOnly: !!filters.incomeOnly,
+      category: filters.category || 'All',
+      subcategory: filters.subcategory || 'All'
+    };
+  }
+
+  /**
+   * Every filter change lands here, which is why the URL is written here.
+   *
+   * `go` covers the other half — the screen changing — and between them there
+   * is no way to alter what is on screen without the address bar hearing about
+   * it. That matters more than it looks: a URL that is right most of the time
+   * is one you cannot trust enough to bookmark.
+   */
+  function refreshCurrentScreen() {
+    rememberView();
+    render();
+    if (state.screen === 'analytics') loadAnalytics();
+    if (state.screen === 'records') loadRecords();
+  }
+
+  function loadAnalytics() {
+    var filters = currentFilters('analytics');
+    var key = 'analytics:' + signature(filters);
+    if (state.cache[key]) {
+      state.data.analytics = state.cache[key];
+      return render();
+    }
+
+    state.data.analytics = null;
+    render();
+
+    var stamp = ++state.requests.analytics;
+    callOrRetry('appAnalytics', filters).then(function (result) {
+      state.cache[key] = result;
+      if (stamp !== state.requests.analytics) return;
+
+      state.data.analytics = result;
+      render();
+    }).catch(fail);
+  }
+
+  function loadRecords() {
+    // Clear the rows, not just set the flag. This is a fresh query from offset
+    // zero, so what is on screen belongs to the *previous* filter — and the
+    // spinner only shows on an empty list, so leaving them there meant a filter
+    // change repainted the old answer with no sign anything was happening.
+    // `loadMoreRecords` is the one that must keep them: it appends.
+    state.records = { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
+      loading: true, loaded: false };
+    render();
+
+    var stamp = ++state.requests.records;
+    callOrRetry('appRecords', currentFilters('records'), 0).then(function (result) {
+      if (stamp !== state.requests.records) return;
+
+      state.records = { rows: result.rows, pending: result.pending || [],
+        offset: result.rows.length,
+        hasMore: result.hasMore, total: result.total, loading: false, loaded: true };
+      render();
+    }).catch(fail);
+  }
+
+  function loadMoreRecords() {
+    state.records.loading = true;
+    render();
+
+    // Stamped like the others, and this is the one where a late answer does
+    // visible damage rather than merely being stale: it *appends*. A page
+    // fetched under the old filters, arriving after you changed them, would
+    // concatenate rows from a different question onto the list — plausible
+    // rows, in the right shape, in the wrong query.
+    var stamp = ++state.requests.records;
+    callOrRetry('appRecords', currentFilters('records'), state.records.offset)
+      .then(function (result) {
+        if (stamp !== state.requests.records) return;
+
+        state.records.rows = state.records.rows.concat(result.rows);
+        state.records.offset += result.rows.length;
+        state.records.hasMore = result.hasMore;
+        state.records.total = result.total;
+        state.records.loading = false;
+        render();
+      }).catch(fail);
+  }
+
+  /**
+   * Re-read the dashboard, after a write or after a pull.
+   *
+   * One call rather than the two the boot makes: this runs after you have
+   * already been looking at the screen, so there is no first paint left to
+   * win. The result is the union of both halves, distributed back into them.
+   *
+   * `fresh` is passed straight to `appDashboard` and decides whether the ledger
+   * cache is thrown away first. Only a pull-to-refresh says yes — see the note
+   * there. A write does not need it and must not ask for it: this used to be
+   * called with no argument from a server that always forgot, so every single
+   * confirmation rebuilt the ledger from the sheet.
+   *
+   * **One in flight at a time, with a trailing re-run.** Confirming three rows
+   * in a row fired three of these, which on Apps Script queue rather than
+   * overlap — so the third answer arrived seconds after the third tap, and the
+   * two before it were thrown away on arrival having cost the same. The trailing
+   * flag is what keeps the last write's numbers from being the ones missed.
+   */
+  function loadDashboard(fresh) {
+    if (state.dashboard.inFlight) {
+      state.dashboard.again = true;
+      state.dashboard.fresh = state.dashboard.fresh || !!fresh;
+      return;
+    }
+
+    state.dashboard.inFlight = true;
+    var settle = function () {
+      state.dashboard.inFlight = false;
+      if (!state.dashboard.again) return;
+
+      var wanted = state.dashboard.fresh;
+      state.dashboard.again = false;
+      state.dashboard.fresh = false;
+      loadDashboard(wanted);
+    };
+
+    callOrRetry('appDashboard', !!fresh).then(function (result) {
+      // `assetAccounts` carries balances rather than names, so it is refetched
+      // with them rather than kept — see the note on `lists` in appDashboard.
+      state.lists.accounts = result.lists.accounts;
+      state.lists.cashAccounts = result.lists.cashAccounts;
+      state.lists.assetAccounts = result.lists.assetAccounts || [];
+
+      state.data.open = {
+        currency: result.currency,
+        netWorth: result.netWorth,
+        accounts: result.accounts,
+        lists: result.lists,
+        generatedAt: state.data.generatedAt
+      };
+      state.data.overview = {
+        month: result.month,
+        health: result.health,
+        review: result.review,
+        pending: result.pending || [],
+        lists: state.data.overview ? state.data.overview.lists : state.lists
+      };
+      state.overviewError = '';
+      render();
+      settle();
+    }).catch(function (error) {
+      settle();
+      fail(error);
+    });
+  }
+
+  function fail(error) {
+    state.records.loading = false;
+    toast(error.message);
+    render();
+  }
+
+  function go(id) {
+    state.screen = id;
+    rememberView();
+    render();
+    loadScreenData();
+    window.scrollTo(0, 0);
+  }
+
+  /**
+   * A number on Charts, opened as the rows behind it.
+   *
+   * **Records' filters are replaced, not merged into.** Whatever was set there
+   * belongs to a different question — a search you typed last week, `needs
+   * review` left on — and any of it surviving would produce a list that no
+   * longer sums to the figure you tapped. That reconciliation is the entire
+   * point of the drill, so everything the server can filter on is stated here
+   * rather than inherited: the three period/account/label answers copied from
+   * Charts, the drill itself, and the other two explicitly off.
+   *
+   * `period` is copied by reference, which is safe because `filterBar` replaces
+   * the object rather than mutating it — except for `custom`, where the two date
+   * inputs write into `filters.period[edge]`. Cloned for that one case, so
+   * editing the range on Records cannot reach back into Charts.
+   *
+   * `loaded` is cleared before `go`, because `go` fetches only when it is false
+   * and the rows on screen belong to the old filters.
+   */
+  function drillToRecords(drill) {
+    var from = state.filters.analytics;
+    state.filters.records = {
+      period: from.period && from.period.kind === 'custom'
+        ? { kind: 'custom', from: from.period.from, to: from.period.to }
+        : from.period,
+      account: from.account,
+      label: from.label,
+      search: '',
+      unconfirmedOnly: false,
+      spendOnly: !!drill.spendOnly,
+      incomeOnly: !!drill.incomeOnly,
+      category: drill.category || 'All',
+      subcategory: drill.subcategory || 'All'
+    };
+
+    state.records.loaded = false;
+    go('records');
+  }
+
+  /**
+   * Whatever the screen in front of you still needs, and nothing it has.
+   *
+   * Called by `go` and again once `appOverview` lands, because those are the
+   * two ways a screen becomes the current one: tapped, or asked for by the URL
+   * before there was anything to draw. The guards are what make the second call
+   * free — a deep link to Records finds the rows `appOverview` seeded and asks
+   * for nothing, and a boot onto the dashboard is a pair of no-ops.
+   *
+   * Charts is the one that does cost a round trip on a deep link, and it has to
+   * wait for `appOverview` rather than firing alongside it: **the server owns
+   * the default filters**, `appOverview` is what delivers them, and a fetch
+   * keyed on the page's guess would cache a slice under the wrong signature.
+   * That is the same two-trip cost as opening the app and tapping Charts.
+   */
+  function loadScreenData() {
+    if (state.screen === 'analytics' && !state.data.analytics) loadAnalytics();
+    if (state.screen === 'records' && !state.records.loaded) loadRecords();
+  }
+
+  /**
+   * Redraw the whole screen, and stay where you were while doing it.
+   *
+   * This clears `#screens` and rebuilds it, which is fine on a screen change and
+   * costly in the middle of a list: confirming a row four hundred deep tears the
+   * document down and puts it back, and for the instant it is empty the browser
+   * clamps `scrollY` to a page one row tall. Rebuilding restores the height and
+   * not the position.
+   *
+   * Restored synchronously, in the same frame as the rebuild, so nothing is
+   * painted at the wrong offset. Only when it actually moved — an unconditional
+   * `scrollTo` would fight `go()`, which deliberately sends you to the top.
+   */
+  function render() {
+    var at = window.scrollY;
+    var root = clear(document.getElementById('screens'));
+    var screen = SCREENS.filter(function (entry) { return entry.id === state.screen; })[0];
+    screen.render(root);
+    if (at && window.scrollY !== at) window.scrollTo(0, at);
+
+    var tabs = clear(document.getElementById('tabs'));
+    SCREENS.filter(function (entry) {
+      return NAV.indexOf(entry.id) !== -1;
+    }).forEach(function (entry) {
+      var button = el('button');
+      button.type = 'button';
+      if (entry.id === state.screen) button.setAttribute('aria-current', 'page');
+      add(button, el('span', 'glyph', entry.glyph));
+      add(button, document.createTextNode(entry.label));
+      button.addEventListener('click', function () { go(entry.id); });
+      add(tabs, button);
+    });
+  }
+
+  /**
+   * Two calls, fired together, drawn as they land.
+   *
+   * This was one call, and before that one call carrying Charts and Records
+   * too — a boot that read the ledger three times for screens you might never
+   * open. Removing the prefetch was right and it was not enough: the remaining
+   * call still bundled the cheap half of the dashboard with the expensive one,
+   * so net worth and the tiles waited ~1,600ms on a ledger they do not use.
+   *
+   * In parallel, and that was settled by measuring rather than by reasoning.
+   *
+   * They were briefly made sequential, on the theory that two executions
+   * reading the same spreadsheet contend and the cheap call would not finish
+   * first anyway. The evidence for it was "the whole screen arrives at once" —
+   * observed on a deployment that turned out to predate the split entirely and
+   * was making a single call. An inference drawn from a build that could not
+   * have staged anything.
+   *
+   * Measured against the live app, in one session, both orders back to back:
+   *
+   *     sequential ... first paint 3,206ms, everything 7,710ms
+   *     parallel ..... first paint 3,588ms, everything 3,916ms
+   *
+   * They do not contend — `appOverview` came back *sooner* running alongside
+   * `appOpen` (3,916ms) than after it (4,504ms). Sequential nearly doubles the
+   * total and buys nothing.
+   *
+   * The reason the two are so close is the finding under all of this: a
+   * `google.script.run` round trip costs about **2,700ms before any of our
+   * code runs** — `appOpen` does ~800ms of work on the server and takes
+   * ~3,500ms from here, twice in a row, within 10ms of itself. Overlapping
+   * that fixed cost is worth far more than removing server work from either
+   * call.
+   *
+   * A failure before `appOpen` lands is fatal — it carries the gate's verdict
+   * and there is nothing to draw without it. A failure after it is not: what
+   * is on screen is still true.
+   */
+  var fatal = function (error) {
+    // Which half failed decides what this means, and `state.data.open` is how
+    // you tell. Before it lands there is nothing on screen and nothing to say
+    // but the error — it carries the gate's verdict, so "Not available" is the
+    // likely one. After it lands, net worth and the balances are up and still
+    // true, and replacing a working screen with an error would be a lie about
+    // what is known.
+    if (state.data.open) {
+      state.overviewError = error.message;
+      return render();
+    }
+
+    var root = clear(document.getElementById('screens'));
+    add(root, el('h1', null, 'Spendsheet'));
+    add(root, add(el('div', 'banner bad'), el('div', null, error.message)));
+    add(root, el('p', 'muted',
+      'If this says "Not available", you are signed in as a different Google account. ' +
+      'Switch accounts and reload.'));
+  };
+
+  function applyOpen(result) {
+    state.currency = result.currency;
+    state.lists.accounts = result.lists.accounts;
+    state.lists.cashAccounts = result.lists.cashAccounts;
+    state.lists.assetAccounts = result.lists.assetAccounts || [];
+    state.data.open = result;
+    state.data.generatedAt = result.generatedAt;
+    render();
+  }
+
+  /**
+   * The first screen, if the server sent it with the page.
+   *
+   * Every failure here returns null and the fetch below happens instead — a
+   * missing element, `null` because the server could not build it, or JSON that
+   * will not parse. There is no case where a broken payload is worth more than
+   * a round trip.
+   */
+  function inlinedBoot() {
+    try {
+      var node = document.getElementById('boot');
+      var raw = node ? String(node.textContent || '').trim() : '';
+      if (!raw || raw === 'null') return null;
+
+      var parsed = JSON.parse(raw);
+      // `open` is the half that is always there; `overview` rides along only
+      // when the ledger was already cached. A payload missing the fields the
+      // tiles are built from is treated as absent — a broken screen is worse
+      // than a slow one.
+      if (!parsed || !parsed.open || !parsed.open.lists || !parsed.open.accounts) return null;
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Before the first `render()`, and not through `go()`: there is nothing to
+  // fetch for a screen whose filters have not arrived yet, and nothing to write
+  // back to a URL we are in the middle of reading. `applyOverview` does both,
+  // once the lists it needs are here.
+  state.screen = opened.screen;
+
+  var inline = inlinedBoot();
+  if (inline) {
+    applyOpen(inline.open);
+  } else {
+    call('appOpen').then(applyOpen).catch(fatal);
+  }
+
+  function applyOverview(result) {
+    state.lists.labels = result.lists.labels;
+    state.lists.categories = result.lists.categories;
+    state.lists.periods = result.lists.periods;
+    state.data.overview = result;
+
+    // The first view of the other two screens, computed on the server from
+    // rows it already had. Seeded through the same cache a fetch would fill,
+    // and keyed on the server's own defaults — so `go()` finds them present
+    // and asks for nothing, and a filter change still fetches.
+    if (result.screens) {
+      // Both defaults, because the server owns them — but only Records comes
+      // with data. Charts costs ~800ms to precompute and is not opened every
+      // time; see the note on `screens` in 23_api.gs.
+      state.filters.analytics = result.screens.filters.analytics;
+      state.filters.records = result.screens.filters.records;
+
+      state.records.rows = result.screens.records.rows;
+      state.records.pending = result.screens.records.pending || [];
+      state.records.offset = result.screens.records.rows.length;
+      state.records.hasMore = result.screens.records.hasMore;
+      state.records.total = result.screens.records.total;
+      state.records.loaded = true;
+    }
+
+    // Last, over both sets of defaults, because the URL is the most specific
+    // thing anyone said about what this page is for. The prefetch above is for
+    // the server's defaults, so a URL that asked for anything else has just
+    // made those rows the answer to a different question — drop them, and let
+    // `loadScreenData` fetch the slice that was asked for.
+    if (applyUrlFilters() && state.screen === 'records') {
+      state.records = { rows: [], pending: [], offset: 0, hasMore: false,
+                        total: 0, loading: false, loaded: false };
+    }
+
+    render();
+    loadScreenData();
+  }
+
+  // The lower half is always fetched. It was briefly inlined too — see
+  // `appInlineBoot_`, which has the measurement that took it back out.
+  call('appOverview').then(applyOverview).catch(fatal);
+
+  // Bound once to the document, so it survives every `render()` — which wipes
+  // `#screens` wholesale and would take any listener attached inside it.
+  installPullToRefresh();

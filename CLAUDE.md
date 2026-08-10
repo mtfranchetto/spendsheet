@@ -35,7 +35,7 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `12_monitor.gs` | the six failure detectors, alerting, Drive snapshots. |
 | `13_import.gs` | formula builders for `_import_staged`. No importer — see the governing rule. |
 | `14_categorize.gs` | the cascade: merchant keys, learned memory, transfer pairing, confirming. |
-| *(15 is free)* | `15_recurring.gs` held cadence detection and a 90-day cashflow projection. Both were removed — the most machinery in the project per question answered, and the question is one `reports` reaches directly. `git log -- src/15_recurring.gs`. |
+| `15_duplicates.gs` | one transaction, two rows, two sources. The only code in the project that deletes a row of history. (`15_recurring.gs` held cadence detection and a 90-day cashflow projection; both were removed as the most machinery in the project per question answered, and the question is one `reports` reaches directly. `git log -- src/15_recurring.gs`.) |
 | *(16 is free)* | `16_dashboard.gs` built the `dashboard` and `recent` tabs. Both were removed once the mobile app answered the same questions better: between them they were ~1,300 lines and about fifty `ARRAYFORMULA` anchors, which is the single largest source of the failures listed below. Its addressing helpers — `columnIndexOf_`, `nextColumn_`, `sheetRange_`, `txRange_`, `txQueryRange_`, `q_` — moved to `03_sheets.gs`, where the reports tab and the review tab were already using them. `git log -- src/16_dashboard.gs`. |
 | `17_analytics.gs` | period arithmetic, the `reports` tab, and every chart in the book. |
 | `17_review.gs` | the review queue and the `onEdit` write-back. |
@@ -45,7 +45,8 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `21_query.gs` | the ledger asked a question. Pure aggregation, and **no writes**. |
 | `22_actions.gs` | the four things the app writes: a confirmation, a transfer link, a rule, a cash entry. |
 | `23_api.gs` | every function a page may call by name, each one gated. |
-| `page.html` | the app itself. The only `.html` here, and the only file the harness cannot load. |
+| `page.html` | the document, and the order its parts load in. A shell of `include_` scriptlets. |
+| `page.*.html` | the app itself, in a dozen partials — `page.css`, `page.core`, `page.api`, `page.charts`, `page.view`, `page.dashboard`, `page.records`, `page.analytics`, `page.filters`, `page.sheet`, `page.add`, `page.gestures`, `page.boot`, in that load order. |
 
 **19 is no longer last, and that is fine** — it names its items as strings and filters them through `functionExists_`, so load order was never what made it work. What it does mean is that a menu item for something in 20–23 appears by itself, exactly as every earlier phase's did.
 
@@ -61,7 +62,7 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 
 ## After pushing code
 
-`npm test` → `npx clasp push --force` → **say whether a redeploy is needed.**
+`npm test` → `npm run test:e2e` if `src/page*.html` changed → `npx clasp push --force` → **say whether a redeploy is needed.**
 
 `clasp push` updates the Apps Script project, so menu items and anything run from the sheet pick it up at once. It does **not** update a live `/exec` deployment, which serves a frozen version. Anything touching `doGet`, `src/page.html` or `20`–`23` needs:
 
@@ -131,7 +132,20 @@ Tests go in the **same phase as the code they cover**, never batched at the end.
 
 `setup()` must stay idempotent, and must not discard user customisations — see `tests/customization.test.mjs` for the boundary.
 
-**`src/page.html` is invisible to the harness**, because `node:vm` runs the `.gs` files and nothing inside an HTML file reaches it. That is not a gap to work around — it is the reason the aggregation lives on the server at all, and the reason to keep pushing decisions out of the page. What is left there is drawing, and the two things a *file* test can still prove about it are in `tests/manifest.test.mjs` and `tests/app.test.mjs`: that no string is assigned as markup, and that every name the page calls is a function that exists.
+**`src/page*.html` is not run by the harness**, because `node:vm` runs the `.gs` files and nothing inside an HTML file reaches it. That is not a gap to work around — it is the reason the aggregation lives on the server at all, and the reason to keep pushing decisions out of the page. What is left there is drawing, and the things a *file* test can prove about it are in `tests/manifest.test.mjs` and `tests/app.test.mjs`: that no string is assigned as markup, and that every name the page calls is a function that exists.
+
+**The page is a template, and that is what makes it reachable.** `webAppHtml_` runs `page.html` through `createTemplateFromFile`, resolving `boot`, `view` and one `include_` per partial. `tests/page.mjs` resolves the same scriptlets in Node — so `pageSource()` gives a file test the whole page rather than the shell, and `npm run preview` serves the assembled document with a fake `google.script.run` in front of the real `21`–`23` output. **A browser is the only thing that can answer whether the page runs**, and this project has twice shipped a page-level failure that no file test could see. Point Playwright at `http://localhost:4321` for anything about layout, a native control, or a gesture — and say whether you checked in a browser or only read the CSS, because those prove different things.
+
+Two consequences of the split worth holding on to. **A partial is a fragment of one closure, not a file**, so an unbalanced brace is a syntax error in the *assembled* document — `tests/page.test.mjs` compiles it for that reason and is the only guard that the page parses at all. And **a partial is served through `createHtmlOutputFromFile`, which does not evaluate it**, so a scriptlet in one is markup on the page rather than a feature that fails.
+
+**There are two suites and two runners, and `npm test` is only the first.** `npm run test:e2e` drives the preview with Playwright — `playwright.config.mjs`, `tests/e2e/`. Four things about it:
+
+- **It runs WebKit and nothing else**, because the app is opened on a phone and a Chromium pass would be testing an engine nobody points at it. The device descriptor is load-bearing beyond the width: `hasTouch` is what makes the `touchstart` listeners in `page.gestures.html` and `page.records.html` reachable, and without it swipe-to-confirm is dead code no test can enter. WebKit's touch APIs are the old ones — `new Touch` is an illegal constructor there and `TouchEvent` refuses a plain array — so a synthesised gesture goes through `document.createTouch`/`createTouchList`.
+- **WebKit is still not iOS Safari.** It will not reproduce how the phone sizes a native `input[type="date"]`, which is exactly the bug that shipped once. The rule stands unchanged: say whether you checked on the device or only in a browser.
+- **`?answers=` picks what the fake server hands back** — `full`, `cold` (a document served with no boot payload), `broken` (a call with no answer behind it). The last two are the states the page is required to survive and that nobody opens the preview to look at.
+- **Vitest claims `*.spec.*` as well as `*.test.*`**, so `vitest.config.mjs` excludes `tests/e2e/` — by directory, since a name protects one file. The same config excludes `.claude/`, which holds worktree checkouts of this repo whose copies of every suite were being collected and counted as passes.
+
+A browser test is worth writing when it can go red. Break the thing on purpose and watch it fail before you keep it: the ordering test earns its place because deleting the stamp guard in `loadRecords` really does put the stale answer on the screen.
 
 ## Never
 

@@ -21,3 +21,12 @@ coverage/
 # them as embedded repositories and `npm test` collects their copy of every
 # test file — 3,583 tests over four checkouts, of which 899 are this one.
 .claude/worktrees/
+
+# Playwright MCP scratch (snapshots, screenshots) — never part of the repo
+.playwright-mcp/
+
+# What a failed `npm run test:e2e` leaves behind: traces, screenshots and the
+# HTML report. Every one of them is a recording of the app with this book's
+# numbers on the screen, which is the same reason `*.csv` is above.
+test-results/
+playwright-report/
