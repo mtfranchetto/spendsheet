@@ -123,15 +123,19 @@ describe('the gate on every entry point', () => {
     // makes 23 the only way in rather than the intended way in. A missing
     // underscore in 21 or 22 is an endpoint with no gate on it at all.
     //
-    // `describeQueryCost` is the one exception and is a menu item, listed in
-    // DIAGNOSTIC_ITEMS: it reports a row count and two timings to somebody who
-    // already has edit access to the Sheet.
+    // 21 and 22 are held to *no* exceptions, which is the whole strength of
+    // the claim: a diagnostic that only reports timings still reads the ledger,
+    // and "it just returns numbers" is a judgement about one function rather
+    // than a property of the file. Anything worth reaching from a browser goes
+    // in 23 behind `requireOwner_()`; anything worth reaching from the menu can
+    // live in a file that is not the query layer.
+    //
     // `openWebApp` is a menu item and menu items are called by name, so it
     // cannot take the underscore. It returns nothing, and the only thing it
     // reads is a URL it then puts in a dialog — `SpreadsheetApp.getUi()`
     // throws outside a container, so reaching it from a browser gets an error
     // rather than an answer.
-    const ALLOWED = { '21_query.gs': ['describeQueryCost'], '22_actions.gs': [],
+    const ALLOWED = { '21_query.gs': [], '22_actions.gs': [],
       '20_webapp.gs': ['openWebApp'] };
 
     Object.keys(ALLOWED).forEach((file) => {

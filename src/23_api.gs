@@ -735,13 +735,13 @@ function labelNames_() {
 /**
  * Where the seconds go when the app opens, measured part by part in one run.
  *
- * `describeQueryCost` answered a different question — what one *ledger read*
- * costs — and answered it well enough that the cache got built on it. It cannot
- * answer this one: the dashboard reads `transactions` once and then reads
- * `_config`, `accounts`, `_status`, `_runs`, `categories` and `labels` a dozen
- * more times between them, and none of those go through the ledger cache. A
- * cache that works perfectly and a dashboard that is still slow are entirely
- * compatible, and telling them apart needs the parts named.
+ * **Timing the ledger read alone cannot answer this**, and it is the tempting
+ * thing to time because it is the biggest single read. The dashboard reads
+ * `transactions` once and then reads `_config`, `accounts`, `_status`, `_runs`,
+ * `categories` and `labels` a dozen more times between them, and none of those
+ * go through the ledger cache. A cache that works perfectly and a dashboard
+ * that is still slow are entirely compatible, and telling them apart needs the
+ * parts named.
  *
  * Two rules are baked into the shape of this:
  *

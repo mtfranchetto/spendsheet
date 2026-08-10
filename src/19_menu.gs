@@ -92,7 +92,6 @@ var DIAGNOSTIC_ITEMS = [
   { name: 'Run smoke tests', fn: 'runSmokeTests' },
   { name: 'Check web app access', fn: 'describeWebAppContext' },
   { separator: true },
-  { name: 'Time a web app query', fn: 'describeQueryCost' },
   { name: 'Time the app dashboard', fn: 'describeDashboardCost' },
   { separator: true },
   { name: 'Inspect session', fn: 'inspectSession' },
