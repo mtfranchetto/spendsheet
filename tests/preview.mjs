@@ -29,6 +29,13 @@
  * It rebuilds on every request, so editing the page and reloading is the whole
  * of the cycle — the book is built once, since it is the slow half and nothing
  * about it changes while you are working on the drawing.
+ *
+ * `?answers=` picks which set the fake hands back. The healthy book is the
+ * default and the two others are the states nobody opens the preview to look
+ * at and the page is still required to survive: a document served with no boot
+ * payload, and a call the server has no answer for. Both are described in
+ * `page.mjs` as cases the page must handle, and neither was reachable from a
+ * browser while the server held exactly one document.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -43,24 +50,61 @@ const argument = (name, fallback) => {
 };
 
 const answers = previewAnswers();
+
+/**
+ * The three answer sets, derived from the one book rather than written out.
+ *
+ * `cold` drops the inline payload the document is normally served with, which
+ * is what a browser gets when `appInlineBoot_` threw — the page has to fall
+ * back to fetching. `broken` withholds the answer to the call that draws the
+ * lower half of the first screen, which is how a missing or renamed entry point
+ * presents: not an error page, a screen that has to say so.
+ */
+const SETS = {
+  full: () => answers,
+  cold: () => ({ ...answers, __boot: undefined, __view: undefined }),
+  broken: () => {
+    const table = { ...answers };
+    delete table.appOverview;
+    return table;
+  }
+};
+
 const out = argument('out', '');
 
 if (out) {
-  writeFileSync(out, previewPage(answers), 'utf8');
+  writeFileSync(out, previewPage(SETS[argument('answers', 'full')]()), 'utf8');
   process.stdout.write(out + '\n');
 } else {
   const port = Number(argument('port', 4321));
 
   createServer((request, response) => {
-    if (request.url !== '/' && request.url !== '/index.html') {
+    const url = new URL(request.url, 'http://localhost');
+
+    // Answered rather than 404'd, because a browser asks for it unprompted and
+    // the miss lands in the console as an error — where `tests/e2e` asserts
+    // there are none, and a favicon is not the kind it is looking for.
+    if (url.pathname === '/favicon.ico') {
+      response.writeHead(204).end();
+      return;
+    }
+
+    if (url.pathname !== '/' && url.pathname !== '/index.html') {
       response.writeHead(404).end('Only / is served here.');
       return;
     }
+
+    const set = SETS[url.searchParams.get('answers') || 'full'];
+    if (!set) {
+      response.writeHead(404).end('No such answer set. One of: ' + Object.keys(SETS).join(', '));
+      return;
+    }
+
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store'
     });
-    response.end(previewPage(answers));
+    response.end(previewPage(set()));
   }).listen(port, () => {
     process.stdout.write('http://localhost:' + port + '\n');
     if (process.argv.includes('--open')) execFileSync('open', ['http://localhost:' + port]);

@@ -97,7 +97,9 @@ export function pageScript(values = {}) {
  * two requests in flight at once — a late answer overwriting a newer one, a
  * page appended to a different query — and a fake that resolves synchronously
  * cannot produce one. The default is small enough to keep a run quick and large
- * enough that promises actually interleave.
+ * enough that promises actually interleave. It is the *starting* value:
+ * `window.__latency` is live, so a test can slow one call down and speed the
+ * next one up, which is the only way to make a stale answer arrive last.
  */
 export function previewPage(answers, options = {}) {
   const latency = options.latency === undefined ? 60 : options.latency;
@@ -125,6 +127,7 @@ function shim(table, latency) {
   return `<script>
 window.__calls = [];
 window.__answers = ${data};
+window.__latency = ${latency};
 window.google = { script: { run: (function () {
   var handlers = {};
   var api = new Proxy({}, {
@@ -144,12 +147,20 @@ window.google = { script: { run: (function () {
         handlers = {};
         window.__calls.push({ name: name, args: args });
 
+        // Both of these are read *now* rather than when the timer fires, and
+        // that is what lets a test arrange an overtaking pair: set a long
+        // latency and an answer, call, then set a short one and a different
+        // answer and call again. Reading either at resolve time would give
+        // both calls the same answer at whichever delay was set last, which is
+        // the one arrangement in which an ordering bug cannot happen.
+        var known = Object.prototype.hasOwnProperty.call(window.__answers, name);
+        var answer = known ? JSON.stringify(window.__answers[name]) : null;
+        var wait = typeof window.__latency === 'number' ? window.__latency : ${latency};
+
         setTimeout(function () {
-          if (!Object.prototype.hasOwnProperty.call(window.__answers, name)) {
-            return fail && fail(new Error('no canned answer for ' + name));
-          }
-          ok && ok(JSON.parse(JSON.stringify(window.__answers[name])));
-        }, ${latency});
+          if (!known) return fail && fail(new Error('no canned answer for ' + name));
+          ok && ok(JSON.parse(answer));
+        }, wait);
       };
     }
   });

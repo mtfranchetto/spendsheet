@@ -59,3 +59,62 @@ jobs:
             echo "::error::A line of base64 key material is tracked in git."
             exit 1
           fi
+
+  # A job of its own rather than a step on the one above, for two reasons. The
+  # two suites are independent — nothing in `npm test` produces anything the
+  # browser run consumes — so as separate jobs they run at the same time and the
+  # wall clock is the slower of the two rather than their sum. And they fail for
+  # different reasons: a red `test` is the logic, a red `e2e` is the page, and a
+  # combined job would report both as one line saying neither.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The browser is ~90MB and the download is most of this job, so it is
+      # cached — keyed on the Playwright version, which is what decides the
+      # browser revision. Read from the lockfile rather than written here: a key
+      # naming a version by hand goes stale on the upgrade that most needs a
+      # fresh browser, and does it by serving a hit.
+      - name: Resolve the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: browser
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-webkit-${{ steps.playwright.outputs.version }}
+
+      # WebKit only — see `playwright.config.mjs`. Installing all three would
+      # triple both the download and the cache for two engines nothing points at.
+      - name: Install WebKit
+        if: steps.browser.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps webkit
+
+      # The cache holds the browser; the apt packages it links against live in
+      # the image and are not part of it. So a hit still needs this, and
+      # skipping it produces a browser that is present and will not start.
+      - name: Install the system libraries WebKit links against
+        if: steps.browser.outputs.cache-hit == 'true'
+        run: npx playwright install-deps webkit
+
+      - run: npm run test:e2e
+
+      # Only on a failure, and this is the one thing that makes a red run here
+      # readable: `trace: 'retain-on-failure'` records the DOM at every step, so
+      # `npx playwright show-trace` gives you the page as it was rather than a
+      # line number. A screenshotless CI failure on a *drawing* bug is a guess.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() && failure() }}
+        with:
+          name: playwright-trace
+          path: test-results/
+          retention-days: 7

@@ -11,7 +11,8 @@
     "push": "clasp push",
     "push:watch": "clasp push --watch",
     "pull": "clasp pull",
-    "status": "clasp status"
+    "status": "clasp status",
+    "test:e2e": "playwright test"
   },
   "keywords": [
     "open-banking",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@google/clasp": "^3.3.0",
+    "@playwright/test": "^1.62.1",
     "vitest": "^3.2.4"
   },
   "engines": {
