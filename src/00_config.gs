@@ -563,14 +563,32 @@ var RETIRED_CATEGORIES = [
   { category: 'Bills & Utilities', subcategory: 'Subscriptions', to: ['Housing', 'Subscriptions'] },
   { category: 'Bills & Utilities', subcategory: 'Other bills', to: ['Housing', 'Other bills'] },
   { category: 'Family', subcategory: 'Kids', to: ['Shopping', 'Kids'] },
-  { category: 'Family', subcategory: 'Life events', to: ['Entertainment', 'Life events'] },
-  { category: 'Travel', subcategory: 'Flights', to: ['Entertainment', 'Flights'] },
-  { category: 'Travel', subcategory: 'Accommodation', to: ['Entertainment', 'Accommodation'] },
-  { category: 'Travel', subcategory: 'Holiday', to: ['Entertainment', 'Holiday'] },
+  { category: 'Family', subcategory: 'Life events', to: ['Life & Entertainment', 'Life events'] },
+  { category: 'Travel', subcategory: 'Flights', to: ['Life & Entertainment', 'Flights'] },
+  { category: 'Travel', subcategory: 'Accommodation', to: ['Life & Entertainment', 'Accommodation'] },
+  { category: 'Travel', subcategory: 'Holiday', to: ['Life & Entertainment', 'Holiday'] },
   // Renames, not moves: the parent is staying exactly where it is. Both existed
   // only to stop a child name naming two parents.
   { category: 'Insurance', subcategory: 'Home', to: ['Insurance', 'Home insurance'] },
-  { category: 'Education', subcategory: 'Books', to: ['Education', 'Textbooks'] }
+  { category: 'Education', subcategory: 'Books', to: ['Education', 'Textbooks'] },
+  // Renaming a *parent* is written out one child at a time, because the list is
+  // keyed on the pair and there is nowhere else to say it. Every child keeps its
+  // own name, so `childRenames_` correctly finds nothing new here — the only
+  // thing that moved is the parent, and `retiredParents_` picks it up because
+  // `Entertainment` has left DEFAULT_CATEGORIES. All seven agree, so a bare
+  // `category_override` saying `Entertainment` is rewritten without asking.
+  //
+  // The `Travel` and `Family / Life events` rows above point at the new name
+  // rather than at `Entertainment`, and have to: the tidy resolves a pair once
+  // and does not chase the answer through a second retirement, so a book that
+  // never tidied would otherwise land on a parent this list has just retired.
+  { category: 'Entertainment', subcategory: 'Cinema & Events', to: ['Life & Entertainment', 'Cinema & Events'] },
+  { category: 'Entertainment', subcategory: 'Hobbies', to: ['Life & Entertainment', 'Hobbies'] },
+  { category: 'Entertainment', subcategory: 'Streaming', to: ['Life & Entertainment', 'Streaming'] },
+  { category: 'Entertainment', subcategory: 'Life events', to: ['Life & Entertainment', 'Life events'] },
+  { category: 'Entertainment', subcategory: 'Flights', to: ['Life & Entertainment', 'Flights'] },
+  { category: 'Entertainment', subcategory: 'Accommodation', to: ['Life & Entertainment', 'Accommodation'] },
+  { category: 'Entertainment', subcategory: 'Holiday', to: ['Life & Entertainment', 'Holiday'] }
 ];
 
 /**
@@ -629,13 +647,13 @@ var DEFAULT_CATEGORIES = [
   // leisure, a life event is leisure, and children's spending is shopping.
   // The `labels` column is what recovers a cross-cutting view of a trip —
   // that is the axis a category cannot express, which is why it exists.
-  ['Entertainment', 'Cinema & Events', 'expense', '🎬'],
-  ['Entertainment', 'Hobbies', 'expense', '🎨'],
-  ['Entertainment', 'Streaming', 'expense', '📺'],
-  ['Entertainment', 'Life events', 'expense', '🎉'],
-  ['Entertainment', 'Flights', 'expense', '✈️'],
-  ['Entertainment', 'Accommodation', 'expense', '🏨'],
-  ['Entertainment', 'Holiday', 'expense', '🏖️'],
+  ['Life & Entertainment', 'Cinema & Events', 'expense', '🎬'],
+  ['Life & Entertainment', 'Hobbies', 'expense', '🎨'],
+  ['Life & Entertainment', 'Streaming', 'expense', '📺'],
+  ['Life & Entertainment', 'Life events', 'expense', '🎉'],
+  ['Life & Entertainment', 'Flights', 'expense', '✈️'],
+  ['Life & Entertainment', 'Accommodation', 'expense', '🏨'],
+  ['Life & Entertainment', 'Holiday', 'expense', '🏖️'],
   ['Education', 'Courses', 'expense', '🎓'],
   ['Education', 'Textbooks', 'expense', '📖'],
   // Insurance is its own parent rather than a child of Health. Home and
@@ -689,9 +707,9 @@ var DEFAULT_RULES = [
   [23, 'mcc', 'equals', '4131', '', 'Transport', 'Public transport', 'expense', true],
   [24, 'mcc', 'equals', '4121', '', 'Transport', 'Taxi', 'expense', true],
   [25, 'mcc', 'equals', '7523', '', 'Transport', 'Tolls & Parking', 'expense', true],
-  [30, 'mcc', 'equals', '4511', '', 'Entertainment', 'Flights', 'expense', true],
-  [31, 'mcc', 'equals', '7011', '', 'Entertainment', 'Accommodation', 'expense', true],
-  [32, 'mcc', 'equals', '4722', '', 'Entertainment', 'Holiday', 'expense', true],
+  [30, 'mcc', 'equals', '4511', '', 'Life & Entertainment', 'Flights', 'expense', true],
+  [31, 'mcc', 'equals', '7011', '', 'Life & Entertainment', 'Accommodation', 'expense', true],
+  [32, 'mcc', 'equals', '4722', '', 'Life & Entertainment', 'Holiday', 'expense', true],
   [40, 'mcc', 'equals', '5912', '', 'Health', 'Pharmacy', 'expense', true],
   [41, 'mcc', 'equals', '8011', '', 'Health', 'Doctor', 'expense', true],
   [42, 'mcc', 'equals', '8062', '', 'Health', 'Doctor', 'expense', true],
@@ -702,10 +720,10 @@ var DEFAULT_RULES = [
   [52, 'mcc', 'equals', '5732', '', 'Shopping', 'Electronics', 'expense', true],
   [53, 'mcc', 'equals', '5045', '', 'Shopping', 'Electronics', 'expense', true],
   [54, 'mcc', 'equals', '5942', '', 'Shopping', 'Books', 'expense', true],
-  [55, 'mcc', 'equals', '5941', '', 'Entertainment', 'Hobbies', 'expense', true],
+  [55, 'mcc', 'equals', '5941', '', 'Life & Entertainment', 'Hobbies', 'expense', true],
   [56, 'mcc', 'equals', '7230', '', 'Health', 'Fitness', 'expense', true],
-  [60, 'mcc', 'equals', '7832', '', 'Entertainment', 'Cinema & Events', 'expense', true],
-  [61, 'mcc', 'equals', '7922', '', 'Entertainment', 'Cinema & Events', 'expense', true],
+  [60, 'mcc', 'equals', '7832', '', 'Life & Entertainment', 'Cinema & Events', 'expense', true],
+  [61, 'mcc', 'equals', '7922', '', 'Life & Entertainment', 'Cinema & Events', 'expense', true],
   [70, 'mcc', 'equals', '4814', '', 'Housing', 'Phone', 'expense', true],
   [71, 'mcc', 'equals', '4899', '', 'Housing', 'Internet', 'expense', true],
   [72, 'mcc', 'equals', '4900', '', 'Housing', 'Electricity', 'expense', true],
@@ -756,9 +774,9 @@ var DEFAULT_RULES = [
   [234, 'description', 'contains', 'TIM S.P.A', '', 'Housing', 'Phone', 'expense', true],
 
   // ---- Merchants: subscriptions ----
-  [240, 'description', 'contains', 'NETFLIX', '', 'Entertainment', 'Streaming', 'expense', true],
-  [241, 'description', 'contains', 'SPOTIFY', '', 'Entertainment', 'Streaming', 'expense', true],
-  [242, 'description', 'contains', 'DISNEY', '', 'Entertainment', 'Streaming', 'expense', true],
+  [240, 'description', 'contains', 'NETFLIX', '', 'Life & Entertainment', 'Streaming', 'expense', true],
+  [241, 'description', 'contains', 'SPOTIFY', '', 'Life & Entertainment', 'Streaming', 'expense', true],
+  [242, 'description', 'contains', 'DISNEY', '', 'Life & Entertainment', 'Streaming', 'expense', true],
   [243, 'description', 'contains', 'APPLE.COM/BILL', '', 'Housing', 'Subscriptions', 'expense', true],
   [244, 'description', 'contains', 'GOOGLE *', '', 'Housing', 'Subscriptions', 'expense', true],
   [245, 'description', 'contains', 'AMAZON PRIME', '', 'Housing', 'Subscriptions', 'expense', true],
@@ -772,10 +790,10 @@ var DEFAULT_RULES = [
   [255, 'description', 'contains', 'TAMOIL', '', 'Transport', 'Fuel', 'expense', true],
   [256, 'description', 'contains', 'UBER', '', 'Transport', 'Taxi', 'expense', true],
   [257, 'description', 'contains', 'FREENOW', '', 'Transport', 'Taxi', 'expense', true],
-  [260, 'description', 'contains', 'RYANAIR', '', 'Entertainment', 'Flights', 'expense', true],
-  [261, 'description', 'contains', 'EASYJET', '', 'Entertainment', 'Flights', 'expense', true],
-  [262, 'description', 'contains', 'BOOKING.COM', '', 'Entertainment', 'Accommodation', 'expense', true],
-  [263, 'description', 'contains', 'AIRBNB', '', 'Entertainment', 'Accommodation', 'expense', true],
+  [260, 'description', 'contains', 'RYANAIR', '', 'Life & Entertainment', 'Flights', 'expense', true],
+  [261, 'description', 'contains', 'EASYJET', '', 'Life & Entertainment', 'Flights', 'expense', true],
+  [262, 'description', 'contains', 'BOOKING.COM', '', 'Life & Entertainment', 'Accommodation', 'expense', true],
+  [263, 'description', 'contains', 'AIRBNB', '', 'Life & Entertainment', 'Accommodation', 'expense', true],
 
   // ---- Merchants: food delivery & retail ----
   [270, 'description', 'contains', 'GLOVO', '', 'Food & Drink', 'Delivery', 'expense', true],
@@ -785,7 +803,7 @@ var DEFAULT_RULES = [
   [274, 'description', 'contains', 'STARBUCKS', '', 'Food & Drink', 'Bars & Cafes', 'expense', true],
   [280, 'description', 'contains', 'AMAZON', '', 'Shopping', 'Home', 'expense', true],
   [281, 'description', 'contains', 'ZALANDO', '', 'Shopping', 'Clothing', 'expense', true],
-  [282, 'description', 'contains', 'DECATHLON', '', 'Entertainment', 'Hobbies', 'expense', true],
+  [282, 'description', 'contains', 'DECATHLON', '', 'Life & Entertainment', 'Hobbies', 'expense', true],
   [283, 'description', 'contains', 'IKEA', '', 'Shopping', 'Home', 'expense', true],
   [284, 'description', 'contains', 'MEDIAWORLD', '', 'Shopping', 'Electronics', 'expense', true],
   [285, 'description', 'contains', 'UNIEURO', '', 'Shopping', 'Electronics', 'expense', true],
@@ -895,7 +913,7 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Cleaning', 'Housing', 'Maintenance'],
   ['budgetbakers', 'Clothes & Footwear', 'Shopping', 'Clothing'],
   ['budgetbakers', 'Communication, PC', 'Housing', 'Other bills'],
-  ['budgetbakers', 'Culture, sport events', 'Entertainment', 'Cinema & Events'],
+  ['budgetbakers', 'Culture, sport events', 'Life & Entertainment', 'Cinema & Events'],
   ['budgetbakers', 'Drug-store, chemist', 'Health', 'Pharmacy'],
   ['budgetbakers', 'Education, development', 'Education', 'Courses'],
   ['budgetbakers', 'Electronics, accessories', 'Shopping', 'Electronics'],
@@ -909,8 +927,8 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Groceries', 'Food & Drink', 'Groceries'],
   ['budgetbakers', 'Health and beauty', 'Health', 'Personal care'],
   ['budgetbakers', 'Health care, doctor', 'Health', 'Doctor'],
-  ['budgetbakers', 'Hobbies', 'Entertainment', 'Hobbies'],
-  ['budgetbakers', 'Holiday, trips, hotels', 'Entertainment', 'Holiday'],
+  ['budgetbakers', 'Hobbies', 'Life & Entertainment', 'Hobbies'],
+  ['budgetbakers', 'Holiday, trips, hotels', 'Life & Entertainment', 'Holiday'],
   ['budgetbakers', 'Home, garden', 'Shopping', 'Home'],
   ['budgetbakers', 'Housing', 'Housing', 'Other housing'],
   ['budgetbakers', 'Income', 'Income', 'Other income'],
@@ -919,11 +937,15 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Internet', 'Housing', 'Internet'],
   ['budgetbakers', 'Jewels, accessories', 'Shopping', 'Clothing'],
   ['budgetbakers', 'Kids', 'Shopping', 'Kids'],
-  ['budgetbakers', 'Leisure time', 'Entertainment', 'Hobbies'],
-  ['budgetbakers', 'Life & Entertainment', 'Entertainment', 'Hobbies'],
-  ['budgetbakers', 'Life events', 'Entertainment', 'Life events'],
-  ['budgetbakers', 'Long distance', 'Entertainment', 'Flights'],
-  ['budgetbakers', 'Lottery, gambling', 'Entertainment', 'Hobbies'],
+  ['budgetbakers', 'Leisure time', 'Life & Entertainment', 'Hobbies'],
+  // The two middle strings are the same and mean different things: column 2 is
+  // BudgetBakers' own parent-level label, column 3 is the category here. They
+  // agree by coincidence of naming, not by construction, and this row maps a
+  // parent-level source the same way every other one does.
+  ['budgetbakers', 'Life & Entertainment', 'Life & Entertainment', 'Hobbies'],
+  ['budgetbakers', 'Life events', 'Life & Entertainment', 'Life events'],
+  ['budgetbakers', 'Long distance', 'Life & Entertainment', 'Flights'],
+  ['budgetbakers', 'Lottery, gambling', 'Life & Entertainment', 'Hobbies'],
   ['budgetbakers', 'Maintenance, repairs', 'Housing', 'Maintenance'],
   ['budgetbakers', 'Missing', 'Other', 'Uncategorised'],
   ['budgetbakers', 'Mortgage', 'Housing', 'Mortgage'],
@@ -940,7 +962,7 @@ var DEFAULT_CATEGORY_MAP = [
   ['budgetbakers', 'Shopping', 'Shopping', 'Other shopping'],
   ['budgetbakers', 'Software, apps, games', 'Housing', 'Subscriptions'],
   ['budgetbakers', 'Stationery, tools', 'Shopping', 'Home'],
-  ['budgetbakers', 'TV, Streaming', 'Entertainment', 'Streaming'],
+  ['budgetbakers', 'TV, Streaming', 'Life & Entertainment', 'Streaming'],
   ['budgetbakers', 'Taxes', 'Fees & Taxes', 'Taxes'],
   ['budgetbakers', 'Telephony, mobile phone', 'Housing', 'Phone'],
   ['budgetbakers', 'Transfer, withdraw', 'Transfer', 'Between accounts'],

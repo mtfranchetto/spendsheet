@@ -213,22 +213,25 @@ Removing it isn't enough on its own, either. A `_category_map` row, a `rules` ro
 
 **Spendsheet → Set up and maintain → Tidy retired categories** does both, in that order: repoints everything that pointed at a retired category, then removes it. It names every change before making any of them.
 
-The known retirements are the taxonomy shrink from fifteen parents to twelve:
+The known retirements are the taxonomy shrink from fifteen parents to twelve, and one parent renamed:
 
 | Retired | Became |
 |---|---|
 | `Bills & Utilities / *` | `Housing / *` |
-| `Travel / Flights`, `Accommodation`, `Holiday` | `Entertainment / …` |
+| `Travel / Flights`, `Accommodation`, `Holiday` | `Life & Entertainment / …` |
 | `Family / Kids` | `Shopping / Kids` |
-| `Family / Life events` | `Entertainment / Life events` |
+| `Family / Life events` | `Life & Entertainment / Life events` |
+| `Entertainment / *` | `Life & Entertainment / *` |
 | `Insurance / Home` | `Insurance / Home insurance` |
 | `Education / Books` | `Education / Textbooks` |
 
-A `category_override` holds a parent with no subcategory, so a parent is only rewritten when all of its children agree where they went. `Travel` always became `Entertainment`; **`Family` split between `Shopping` and `Entertainment`**, so rows naming just `Family` are reported and left for you to retype.
+A `category_override` holds a parent with no subcategory, so a parent is only rewritten when all of its children agree where they went. `Travel` always became `Life & Entertainment`; **`Family` split between `Shopping` and `Life & Entertainment`**, so rows naming just `Family` are reported and left for you to retype.
 
-The last two are renames rather than moves — `Home` named both a Shopping and an Insurance subcategory, and `Books` both a Shopping and an Education one, which made the dropdown entry for each ambiguous. The parent is unchanged, so nothing about `Insurance` or `Education` is retired.
+Three of these are renames rather than moves, and they split into two kinds. `Entertainment / *` renames the **parent** and keeps every child name, so all seven children agree and a `category_override` saying `Entertainment` is rewritten without being asked about — the children need nothing, because a cell saying `Streaming` finds its parent through a lookup.
 
-A rename is also the one case the tidy can't finish for you. `subcategory_override` holds a bare child name, and `Home` is still a Shopping subcategory, so a row saying `Home` keeps resolving to Shopping — which is what it already did, since the lookup has always taken the first match. Those rows are counted and named in the dialog and left untouched. **If one of them was your home insurance, it is yours to retype**; the review queue's subcategory picker now offers `Home insurance` as a distinct entry.
+The other two rename a **child**: `Home` named both a Shopping and an Insurance subcategory, and `Books` both a Shopping and an Education one, which made the dropdown entry for each ambiguous. The parent is unchanged, so nothing about `Insurance` or `Education` is retired.
+
+A child rename is also the one case the tidy can't finish for you. `subcategory_override` holds a bare child name, and `Home` is still a Shopping subcategory, so a row saying `Home` keeps resolving to Shopping — which is what it already did, since the lookup has always taken the first match. Those rows are counted and named in the dialog and left untouched. **If one of them was your home insurance, it is yours to retype**; the review queue's subcategory picker now offers `Home insurance` as a distinct entry.
 
 ---
 
