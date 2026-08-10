@@ -52,7 +52,7 @@ IBAN. Anything descriptive requires a second call.
 
 | Field | Value | Note |
 |---|---|---|
-| `name` | `Mattia Franchetto` | the holder — not the account name |
+| `name` | the account holder's own name | the holder — not the account name |
 | `product` | `null` | where a bank would normally put a label |
 | `details` | `null` | |
 | `currency` | `EUR` | usable |
@@ -84,14 +84,17 @@ Appears as **FinecoBank**. Reachable directly; no CBI Globe intermediary was inv
 
 The headline finding, and it settles the open non-EUR question — for Fineco rather than Revolut, which is not where it was expected:
 
+Identifiers below are redacted — they are one book's account resources, and what
+matters here is their shape rather than their value.
+
 | `account_id` | currency | IBAN |
 |---|---|---|
-| `00000000-0000-4000-8000-000000000001` | EUR | `IT60…3456` |
-| `00000000-0000-4000-8000-000000000002` | CHF | `IT60…3456` |
-| `00000000-0000-4000-8000-000000000003` | GBP | `IT60…3456` |
-| `00000000-0000-4000-8000-000000000004` | USD | `IT60…3456` |
+| a UUID | EUR | one IBAN, `IT…` |
+| a different UUID | CHF | the same IBAN |
+| a different UUID | GBP | the same IBAN |
+| a different UUID | USD | the same IBAN |
 
-Fineco exposes each currency pocket as its own account resource. **All four share one IBAN and all four are named `ROSSI MARIO`** — the holder, not the account — so neither `name` nor `iban_masked` distinguishes them. `currency` is the only field that does.
+Fineco exposes each currency pocket as its own account resource. **All four share one IBAN and all four carry the account holder's own name** — the holder, not the account — so neither `name` nor `iban_masked` distinguishes them. `currency` is the only field that does.
 
 Two consequences worth knowing before you connect it:
 

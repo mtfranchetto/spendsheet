@@ -686,19 +686,6 @@ function baseCurrency_() {
 // ---------------------------------------------------------------------------
 
 /**
- * Read `transactions` once.
- *
- * The whole cost of a query is this call — roughly 4,600 rows by thirty
- * columns. The loops over it are microseconds. Quotas were checked rather than
- * assumed: Apps Script meters *runtime*, not rows, and the Sheets REST API's
- * 60-reads-a-minute limit does not apply to `SpreadsheetApp`.
- *
- * If this ever stops being fast enough, the remedy is a read-through cache in
- * `CacheService` keyed on the transaction row count — written when a
- * measurement calls for it, not before. `describeQueryCost()` is what takes
- * that measurement.
- */
-/**
  * Chunk size, comfortably under the 100KB a single cache key accepts.
  *
  * `putAll` does not fail loudly on an oversized value — it declines to store
@@ -747,8 +734,8 @@ var LEDGER_CACHE_SECONDS = 21600;
  * not apply to `SpreadsheetApp`.
  *
  * The cache is a second copy of the ledger, which this project spent a long
- * time refusing to keep on a guess. It is no longer a guess: every screen paid
- * two seconds for the same rows, and `describeQueryCost` is what said so.
+ * time refusing to keep on a guess. It is no longer a guess: measured on the
+ * live book, every screen paid those two seconds over again for the same rows.
  *
  * **The uncached path returns the parse of what it just stored, deliberately.**
  * A cache hit comes back through JSON, where a `Date` is an ISO string; a miss
@@ -1358,107 +1345,4 @@ function transferPeers_(ledger) {
  */
 function descriptionIsEditable_(source) {
   return String(source === null || source === undefined ? '' : source) !== TX_SOURCE_API;
-}
-
-// ---------------------------------------------------------------------------
-// What it costs
-// ---------------------------------------------------------------------------
-
-/**
- * Time the read on the live book, rather than assuming it.
- *
- * The design above rests on one measurement — that reading the ledger is fast
- * enough to do on every filter change — and that measurement cannot be taken
- * in the harness, which has no spreadsheet behind it. So it is taken here, on
- * the book that matters, with the row count next to it so the answer means
- * something as the book grows.
- *
- * If `readMs` goes much past a second, the remedy is a read-through cache: the
- * compacted ledger in `CacheService`, chunked at 100KB a key and invalidated on
- * the row count, so only the first query after a sync pays for the read. Not
- * written yet, deliberately — it is a second copy of the ledger, and this
- * project does not keep one of those on a guess.
- */
-function describeQueryCost() {
-  var startedRead = Date.now();
-  var ledger = readLedger_();
-  var readMs = Date.now() - startedRead;
-
-  var startedQuery = Date.now();
-  var analytics = webAppAnalytics_({ period: { kind: 'mtd' } });
-  var queryMs = Date.now() - startedQuery;
-
-  // Where a cache miss actually goes.
-  //
-  // The miss got 4.6x more expensive than the plain read it replaced — 2,025ms
-  // to 9,418ms — and "the cache write is slow" is not a finding, it is four
-  // candidates wearing one number: reading the sheet, serialising 4,600
-  // records, handing ~1.4MB to CacheService in chunks, and parsing it back.
-  // Guessing which one has already cost this project two reverts, so each is
-  // timed separately and the answer is read rather than assumed.
-  var probe = 'probe-' + Date.now();
-  var sheetStart = Date.now();
-  var probeSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
-  var records = probeSheet
-    ? readRecords_(probeSheet, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'))
-    : [];
-  var sheetMs = Date.now() - sheetStart;
-
-  var serialiseStart = Date.now();
-  var text = JSON.stringify(records);
-  var serialiseMs = Date.now() - serialiseStart;
-
-  var storeStart = Date.now();
-  cacheLedger_(probe, text);
-  var storeMs = Date.now() - storeStart;
-
-  var parseStart = Date.now();
-  JSON.parse(text);
-  var parseMs = Date.now() - parseStart;
-
-  var fetchStart = Date.now();
-  cachedLedger_(probe);
-  var fetchMs = Date.now() - fetchStart;
-
-  // The probe is a second 3.7MB copy of the ledger and it must not outlive the
-  // measurement. At the old five-minute TTL it aged out before it mattered; at
-  // six hours, three runs of this diagnostic would leave 11MB of unreachable
-  // ledger in a cache that evicts under pressure — and the thing it would
-  // evict is the real one. Measuring a cache must not be what breaks it.
-  forgetLedgerCache_(probe);
-
-  var report = {
-    rows: ledger.length,
-    readMs: readMs,
-    fullQueryMs: queryMs,
-    matchedThisMonth: analytics.totals.count,
-    unconvertible: analytics.totals.unconvertible,
-
-    cachedBytes: text.length,
-    chunks: Math.ceil(text.length / LEDGER_CACHE_CHUNK),
-    sheetMs: sheetMs,
-    serialiseMs: serialiseMs,
-    storeMs: storeMs,
-    parseMs: parseMs,
-    fetchMs: fetchMs,
-    missMs: sheetMs + serialiseMs + storeMs + parseMs,
-
-    // What the cache costs to fill, against what the read costs anyway.
-    cacheOverheadMs: serialiseMs + storeMs + parseMs,
-    verdict: (serialiseMs + storeMs + parseMs) * 4 < sheetMs
-      ? 'The cache earns its place: filling it costs a fraction of the read, ' +
-        'and every read after it is a fetch.'
-      : 'The cache costs a real share of the miss. Compare it against how many ' +
-        'hits a session actually gets before the TTL expires.'
-  };
-
-  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app query cost', report);
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    report.rows + ' rows read in ' + readMs + 'ms; a full month-to-date query took ' +
-    queryMs + 'ms.\n\nA miss costs ' + report.missMs + 'ms: sheet ' + sheetMs +
-    ', serialise ' + serialiseMs + ', store ' + storeMs + ', parse ' + parseMs +
-    '.\nA hit costs ' + fetchMs + 'ms over ' + report.chunks + ' chunks (' +
-    Math.round(text.length / 1024) + 'KB).', 'Query cost', 30);
-
-  return report;
 }

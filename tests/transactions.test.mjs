@@ -27,7 +27,7 @@ function booked(over) {
     transaction_date: '2026-07-28',
     remittance_information: ['PAGAMENTO POS 28/07 CARTA *1234', 'ESSELUNGA SPA TORINO'],
     creditor: { name: 'ESSELUNGA SPA' },
-    debtor: { name: 'MARIO ROSSI' },
+    debtor: { name: 'ACCOUNT HOLDER' },
     merchant_category_code: '5411',
     bank_transaction_code: { code: 'PMNT', sub_code: 'POSD', description: 'Card payment' }
   }, over || {});
@@ -111,7 +111,7 @@ describe('counterpartyName', () => {
     // reads as working right up until you categorise by it.
     expect(ctx.counterpartyName(booked())).toBe('ESSELUNGA SPA');
     expect(ctx.counterpartyName(booked({ credit_debit_indicator: 'CRDT' })))
-      .toBe('MARIO ROSSI');
+      .toBe('ACCOUNT HOLDER');
   });
 
   it('falls back to an IBAN rather than to the other side', () => {
