@@ -194,13 +194,20 @@
         lists: result.lists,
         generatedAt: state.data.generatedAt
       };
-      state.data.overview = {
-        month: result.month,
-        health: result.health,
-        review: result.review,
-        pending: result.pending || [],
-        lists: state.data.overview ? state.data.overview.lists : state.lists
-      };
+      /*
+        Whole, the way `applyOverview` takes the boot's copy — not a list of the
+        fields this screen happens to draw.
+
+        `appDashboard` answers for both halves and `open` is the smaller one, so
+        that half is picked out by name above and this one is what is left. It
+        was a field list too, and a field list is a second copy of the payload's
+        shape maintained by hand: `trend` was added to `appDashboard` and to
+        `appOverview`, drew from the boot, and was dropped by every rebuild after
+        it. Which reads as the chart being removed by the act of confirming a
+        row, on the screen you are returned to, with the numbers around it all
+        correct.
+      */
+      state.data.overview = result;
       state.overviewError = '';
       render();
       settle();

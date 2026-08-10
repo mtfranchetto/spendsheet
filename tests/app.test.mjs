@@ -1822,8 +1822,27 @@ describe('the page and the server agree', () => {
 
     open.forEach((key) => expect(overview, key).not.toContain(key));
 
-    shared(c.appDashboard()).forEach((key) => {
-      expect(open.concat(overview), key).toContain(key);
+    const merged = shared(c.appDashboard());
+    merged.forEach((key) => expect(open.concat(overview), key).toContain(key));
+
+    /*
+      And the other direction, which is the one that had the gap.
+
+      "No key in neither" was the half written, and it only rejects a merge
+      sending something the boot never sent — the harmless direction. A key the
+      *boot* sends and the merge does not is the damaging one: the page replaces
+      its overview with this payload, so an omitted field is a block that was on
+      the screen before you confirmed a row and is gone after. `trend` was
+      exactly that, computed by `appOverviewData_` on this very path and dropped
+      by the field list that copies out of it — the chart was deleted by the act
+      of ticking a transaction.
+
+      `screens` is the only exemption, and by construction rather than by taste:
+      it is the first view of Records seeded into the boot, and a refresh that
+      re-sent it would throw away the page someone had scrolled to.
+    */
+    overview.filter((key) => key !== 'screens').forEach((key) => {
+      expect(merged, key).toContain(key);
     });
   });
 
