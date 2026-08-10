@@ -131,7 +131,7 @@ function runSync_(options) {
 
   // Cash last, so a bank outage cannot stop the entries you typed yourself
   // from landing — they need nothing from the network.
-  var cash = drainCashEntries_(existing, new Date());
+  var cash = drainCashEntries_(existing.byUid, new Date());
   totals.inserted += cash.inserted;
   totals.cashPending = cash.incomplete;
 
@@ -439,6 +439,41 @@ function readExistingIndex_(sheet) {
 
   index.imported = indexImportedRows(imported);
   return index;
+}
+
+/**
+ * The same identity, for a caller that needs identity and nothing else.
+ *
+ * `readExistingIndex_` builds three things out of thirteen columns of the whole
+ * ledger, and `drainCashEntries_` consults exactly one of them, to ask whether
+ * a uid is already there. On the sync that read is shared by every account and
+ * pays for itself many times over. On the immediate cash path it is one entry
+ * typed on a phone with somebody watching the button, and the widest read in
+ * the request is being taken for a question one column answers.
+ *
+ * `getLastRow()` rather than `lastRecordRow_`, which is a second round trip
+ * over the very column being fetched. It overstates the end of any tab carrying
+ * an ARRAYFORMULA, and overstating it is harmless *here* — a scan for what is
+ * present skips the blanks. It would not be harmless as an append position,
+ * which is the rule written down elsewhere in this project and is not bending.
+ *
+ * Worth being plain about what this guard is worth on that path, because it is
+ * not what stops a double add. A drained row carries a `processed` stamp and
+ * the drain skips it; and `computeCashUid` draws a fresh sequence every time,
+ * so an entry drained twice would not match itself here in any case. This is
+ * the net under a *lost* sequence counter — see `computeCashUid` — and it costs
+ * two round trips rather than three plus twelve columns nobody reads.
+ */
+function readUidIndex_(sheet) {
+  var byUid = {};
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return byUid;
+
+  var uids = sheet.getRange(2, colIndex_(TX_COLUMNS_CODE, 'uid'), lastRow - 1, 1).getValues();
+  uids.forEach(function (row) {
+    if (row[0] !== '' && row[0] !== null) byUid[String(row[0])] = true;
+  });
+  return byUid;
 }
 
 // ---------------------------------------------------------------------------

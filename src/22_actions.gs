@@ -840,7 +840,13 @@ function webAppAddCash_(entry) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CASH_ENTRY);
   if (!sheet) throw new Error('No "' + TABS.CASH_ENTRY + '" tab. Run Spendsheet → Setup sheet first.');
 
-  var problem = cashEntryProblem_(request) || unknownCategoryProblem_(request);
+  // One read of `categories`, used twice: to refuse a category this book does
+  // not have, and again by the drain to decide the entry's direction. Three
+  // round trips each time it is asked, in a request with somebody watching the
+  // button — see `drainCashEntries_` on why handing it over is safe here.
+  var categories = categoryIndex_();
+
+  var problem = cashEntryProblem_(request) || unknownCategoryProblem_(request, categories);
   if (problem) throw new Error(problem);
 
   // Placed by `lastFilledRow_` rather than through `appendRows_`, because that
@@ -869,8 +875,9 @@ function webAppAddCash_(entry) {
 
   try {
     var now = new Date();
-    var drained = drainCashEntries_(readExistingIndex_(sheetOrThrow_(TABS.TRANSACTIONS)), now);
-    if (drained.inserted) clearDrainedCashRows_(sheet);
+    var drained = drainCashEntries_(
+      readUidIndex_(sheetOrThrow_(TABS.TRANSACTIONS)), now, categories);
+    if (drained.inserted) clearDrainedCashRows_(sheet, drained.stamped);
 
     return {
       inserted: drained.inserted,
@@ -935,24 +942,26 @@ function cashEntryProblem_(entry) {
  *
  * A blank category is not unknown. `renderAdd` offers "Uncategorised" and the
  * cascade is what fills those in — refusing them would be refusing the default.
+ *
+ * `index` is a `categoryIndex_()` the caller has already paid for. A book with
+ * no `categories` tab knows nothing about any name and refuses none of them,
+ * which is what `present` is for: an empty index built from a missing tab and
+ * one built from an empty tab are the same object and mean opposite things.
  */
-function unknownCategoryProblem_(entry) {
+function unknownCategoryProblem_(entry, index) {
   var request = entry || {};
   var category = String(request.category || '').trim();
   var subcategory = String(request.subcategory || '').trim();
   if (!category && !subcategory) return null;
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
-  if (!sheet) return null;
+  var known = index || categoryIndex_();
+  if (!known.present) return null;
 
-  var rows = readRecords_(sheet, CATEGORY_COLUMNS);
-  var missing = function (want, column) {
-    if (!want) return false;
-    return !rows.some(function (row) { return String(row[column] || '').trim() === want; });
-  };
+  var missingCategory = Boolean(category) && !known.categories[category];
+  var missingSubcategory = Boolean(subcategory) && !known.subcategories[subcategory];
 
-  if (missing(category, 'category') || missing(subcategory, 'subcategory')) {
-    return 'This book has no "' + (missing(category, 'category') ? category : subcategory) +
+  if (missingCategory || missingSubcategory) {
+    return 'This book has no "' + (missingCategory ? category : subcategory) +
       '" category. Run Spendsheet → Setup sheet to add the ones that ship with it.';
   }
   return null;

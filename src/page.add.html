@@ -18,7 +18,7 @@
     back.addEventListener('click', function () { go('dashboard'); });
     add(root, back);
 
-    add(root, el('h1', null, 'Add cash'));
+    add(root, el('h1', null, 'Add transaction'));
 
     if (!state.lists.cashAccounts.length) {
       return add(root, add(el('div', 'card'),

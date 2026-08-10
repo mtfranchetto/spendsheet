@@ -44,7 +44,16 @@ function type(c, row, values) {
   });
 }
 
-const drain = (c) => c.drainCashEntries_(c.readExistingIndex_(
+/**
+ * Drain the tab the way the immediate path does.
+ *
+ * `readUidIndex_` rather than `readExistingIndex_`, because the drain asks the
+ * ledger one question — is this uid already there — and the wide index is the
+ * sync's, shared across every account it fetches. Handing the wrong shape here
+ * would not fail: the lookup would simply never match, every entry would look
+ * fresh, and the `processed` stamp would go on covering for it.
+ */
+const drain = (c) => c.drainCashEntries_(c.readUidIndex_(
   c.__spreadsheet.getSheetByName('transactions')), new Date());
 
 const tx = (c) => c.__spreadsheet.getSheetByName('transactions');
@@ -159,7 +168,48 @@ describe('draining', () => {
 
   it('does nothing when there is nothing typed', () => {
     const c = withWallet();
-    expect(drain(c)).toEqual({ inserted: 0, incomplete: 0 });
+    expect(drain(c)).toEqual({ inserted: 0, incomplete: 0, stamped: [] });
+  });
+
+  it('refuses a uid the ledger already holds', () => {
+    // The net under a lost sequence counter, and the only thing `readUidIndex_`
+    // is read for. Asserted directly because the `processed` stamp hides it:
+    // every other path to a second copy is stopped before identity is reached,
+    // so a membership map that never matched would pass every test but this.
+    const c = withWallet();
+    type(c, 2, { date: new Date(2026, 6, 30), account: 'wallet', amount: 3, note: 'coffee' });
+    drain(c);
+
+    const uid = tx(c).getRange('A2').getValue();
+    expect(uid).toBeTruthy();
+
+    type(c, 3, { date: new Date(2026, 6, 30), account: 'wallet', amount: 3, note: 'again' });
+    const known = c.readUidIndex_(tx(c));
+    expect(known[uid]).toBeTruthy();
+
+    // Every uid this drain could compute, already claimed.
+    c.computeCashUid = () => uid;
+    expect(c.drainCashEntries_(known, new Date()).inserted).toBe(0);
+  });
+
+  it('reads `categories` once when the caller has already read it', () => {
+    // `appAddCash` validates the category and then drains, a few lines apart in
+    // one request. Two reads of the same tab is three round trips paid twice
+    // with somebody watching the button.
+    const c = withWallet();
+    type(c, 2, { date: new Date(2026, 6, 30), account: 'wallet', amount: 100, category: 'Transfer' });
+
+    const index = c.categoryIndex_();
+    expect(index.present).toBe(true);
+    expect(index.kinds.Transfer).toBe('transfer');
+
+    // The only way to prove a read did not happen is to make it fail.
+    c.categoryIndex_ = () => { throw new Error('read categories a second time'); };
+
+    expect(c.drainCashEntries_(
+      c.readUidIndex_(tx(c)), new Date(), index).inserted).toBe(1);
+    // An ATM withdrawal adds to the wallet — the direction came from `kinds`.
+    expect(tx(c).getRange('G2').getValue()).toBe(100);
   });
 });
 

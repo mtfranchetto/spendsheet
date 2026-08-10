@@ -11,7 +11,7 @@ It gives you three screens and two forms:
 | **Home** | net worth and the last thirty days of it, the account tiles, holds the bank has not settled, this month against the same point last month, spending by category, and the review backlog |
 | **Charts** | a date range plus account and label filters, over cashflow, net worth and category breakdowns |
 | **Records** | the whole ledger, filtered, searched and paged |
-| **Add cash** | a cash transaction, landing straight away. Reached from a cash tile |
+| **Add transaction** | a cash transaction, landing straight away. Reached from a cash tile |
 | **Update balance** | an asset account's new total. Reached from an asset tile |
 
 Everything it writes goes to `transactions` and `cash_entry`, into the same columns the `review` tab and the cash form already write to and no others. There is no storage of its own anywhere in it.
