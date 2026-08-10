@@ -434,6 +434,36 @@ function appOverviewData_() {
       lastMonthToDate: lastMonth.totals.expenses,
       byCategory: month.byCategory
     },
+
+    /*
+      Thirty days of net worth, drawn under the total it ends at.
+
+      **In this half and not the other one, because it needs the ledger.** The
+      top of the dashboard is the half that reads no transactions — that split
+      is what lets net worth and the tiles draw ~1,600ms before the rest — and
+      a trend is every row in the book by definition. Sent here, it lands with
+      the month and the queue and draws in the same paint.
+
+      It does cost this half one tab read it was not making: `netWorthNow_`
+      goes to `accounts`, which nothing else on the overview path touches
+      (`runChecks_` reads `_status`, the queue and the records read
+      `transactions` and `pending`). The project's own measured figure for a
+      read is ~175ms and `withReadCache_` cannot save it, there being nothing
+      to share it with. `describeDashboardCost` prices the parts in bootstrap
+      order if this ever needs settling rather than estimating.
+
+      **The number under the chart and the number above it are read twice**,
+      once here and once in `appOpen`, in two executions running side by side.
+      They agree unless a sync lands between them, which is a cosmetic
+      disagreement for one refresh — and the alternative was to have the page
+      add up the deltas itself against the total it already holds, which buys
+      that consistency by moving arithmetic into the one file no test runs.
+    */
+    trend: {
+      days: DASHBOARD_TREND_DAYS,
+      series: recentBalanceTrend_(ledger, now, netWorthNow_({}).total)
+    },
+
     // The ledger's length is `lastRecordRow_ - 1` on `transactions`, which is
     // exactly what `checkRowLoss_` would scan the tab to work out. Handing it
     // over takes ~1,900ms off every dashboard — see the note on `runChecks_`.

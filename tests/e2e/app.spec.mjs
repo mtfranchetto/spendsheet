@@ -180,8 +180,14 @@ test.describe('the charts', () => {
         // A `.plot` is a full chart and owes a scale; the rest are the
         // thumbnails on the stat tiles, which are a shape beside a number that
         // already says what it is worth.
+        //
+        // Measured as boxes and not just as text, because whether two labels
+        // are readable is a question about where they landed. See below.
         ticks: svg.closest('.plot')
-          ? [...svg.closest('.plot').querySelectorAll('.ytick')].map((t) => t.textContent)
+          ? [...svg.closest('.plot').querySelectorAll('.ytick')].map((t) => {
+            const box = t.getBoundingClientRect();
+            return { text: t.textContent, top: box.top, bottom: box.bottom, height: box.height };
+          })
           : null
       })));
 
@@ -192,13 +198,59 @@ test.describe('the charts', () => {
       expect(plot.texts, 'a stretched viewBox carries its own <text>').toBe(0);
       expect(plot.points + plot.bars, 'a plot with nothing drawn in it').toBeGreaterThan(1);
 
-      // A plot with a truncated baseline and no scale reads as starting from
-      // zero, which is the most misleading thing a chart here can do quietly.
       if (plot.ticks) {
-        expect(plot.ticks.length, 'a plot with no scale').toBeGreaterThan(1);
-        for (const tick of plot.ticks) expect(tick).toMatch(/\d/);
+        // A plot with a truncated baseline and no scale reads as starting from
+        // zero, which is the most misleading thing a chart here can do quietly.
+        expect(plot.ticks.length, 'a plot with no scale').toBeGreaterThan(0);
+        for (const tick of plot.ticks) expect(tick.text).toMatch(/\d/);
+
+        // And two labels close enough to read as one block are not a tight
+        // scale, they are no scale at all. It is what a chart with one huge end
+        // and one small one does by default: a month earning €2,800 and
+        // spending €308 put zero and the spending mark 15px apart with 11px
+        // text between them, and `spacedMarks` is what drops the loser.
+        //
+        // Measured against the labels' own height rather than against a pixel
+        // count, so it keeps meaning the same thing if the type size moves —
+        // and so it does not simply restate `MARK_GAP_PIXELS` back at itself.
+        // The first version asked only that the boxes not overlap, which the
+        // broken layout satisfied with four pixels to spare: it passed with the
+        // fix reverted, which is the one result that makes a test worthless.
+        const sorted = [...plot.ticks].sort((a, b) => a.top - b.top);
+        for (let i = 1; i < sorted.length; i++) {
+          const clear = sorted[i].top - sorted[i - 1].bottom;
+          const room = Math.max(sorted[i].height, sorted[i - 1].height) / 2;
+          expect(clear, `"${sorted[i - 1].text}" and "${sorted[i].text}" are packed together`)
+            .toBeGreaterThanOrEqual(room);
+        }
       }
     }
+
+    expect(errors).toEqual([]);
+  });
+
+  test('the trend on Home draws thirty days, with the scale that makes it readable', async ({ page, errors }) => {
+    // It draws with the *lower* half of the dashboard, because a trend is every
+    // row in the book and the top half deliberately reads none — so this can
+    // only be looked for after the overview lands. A card that appeared with
+    // the top half would be a card built from data nobody had fetched.
+    await open(page);
+    await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
+
+    const card = page.locator('h2', { hasText: /Net worth, last \d+ days/ })
+      .locator('xpath=following-sibling::div[1]');
+
+    // Thirty days is thirty points. One point is what an empty series and a
+    // series the page failed to read both look like.
+    const points = await card.locator('polyline').getAttribute('points');
+    expect(points.trim().split(/\s+/).filter(Boolean)).toHaveLength(30);
+
+    // The same rule the Charts plots are held to, and it matters more here:
+    // this one sits directly under the total, where a line climbing from the
+    // floor of the card reads as a net worth that started from nothing.
+    const ticks = await card.locator('.ytick').allTextContents();
+    expect(ticks.length, 'the trend has no scale beside it').toBeGreaterThan(1);
+    for (const tick of ticks) expect(tick).toMatch(/\d/);
 
     expect(errors).toEqual([]);
   });

@@ -375,6 +375,55 @@ describe('the view, in the page the server sends', () => {
   });
 });
 
+describe('the partials, in the page the server sends', () => {
+  function book(options) {
+    const c = load(options);
+    c.setup();
+    return c;
+  }
+
+  /*
+    A partial is JavaScript, and the first `<` in one is a less-than.
+
+    `include_` read through `createHtmlOutputFromFile(name).getContent()` for
+    one release — the include idiom out of Google's own documentation, which
+    works there because the partial being included is markup. An `HtmlOutput`
+    holds HTML, so reading one back gives HTML, and a `<` that opens no tag
+    comes back as `&lt;`. `page.core`'s first loop arrived as
+    `i &lt; arguments.length`, which fails on the *next* `;` — one syntax error
+    discards the whole block, so every screen of the app was gone and the shell
+    sat on its `Loading…` for ever.
+
+    The harness escapes on that call now, so these go red if anyone reaches for
+    it again. What they cannot prove is that Google agrees about
+    `getRawContent`, which is what `checkPageAssembly_` is for.
+  */
+  it('arrives as JavaScript rather than as markup', () => {
+    const html = book().webAppHtml_().getContent();
+
+    expect(html).toContain('for (var i = 1; i < arguments.length; i++)');
+    expect(html).not.toContain('&lt; arguments.length');
+  });
+
+  it('brings every partial, not just the first one', () => {
+    // Each of these is the distinctive line of a different file, so a shell
+    // that resolved one include and stopped cannot pass.
+    const html = book().webAppHtml_().getContent();
+
+    expect(html).toContain('for (var i = 0; i < name.length; i++)');  // page.charts
+    expect(html).toContain('for (var month = 0; month < 12; month++)'); // page.filters
+  });
+
+  it('leaves no scriptlet behind', () => {
+    // An unresolved `include_` is a page that draws nothing and reports
+    // nothing — the same silence as the escaped `<`, from the other direction.
+    const html = book().webAppHtml_().getContent();
+
+    expect(html).not.toContain('include_(');
+    expect(html).not.toContain('<?');
+  });
+});
+
 describe('doGet', () => {
   function book(options) {
     const c = load(options);

@@ -22,12 +22,65 @@
    * worth, because the height between them had no stated meaning.
    *
    * `marks` are `{y, label}` in viewBox units, and the y-to-pixels conversion is
-   * the one thing tying the two halves together: the SVG is 40 units tall and
-   * `120px` on screen, both stated here rather than measured, because a measure
-   * would have to happen after layout and this runs while building the node.
+   * the one thing tying the two halves together: the SVG is `PLOT_UNITS` tall
+   * and `PLOT_PIXELS` on screen, both stated here rather than measured, because
+   * a measure would have to happen after layout and this runs while building
+   * the node. **These two are the only statement of it** — the gutter used to
+   * repeat the pixel height in `.yaxis`, and a stylesheet holding half of an
+   * arithmetic identity is a number that goes stale the first time the other
+   * half moves. It stretches to the plot now.
+   *
+   * 150 rather than 120: at 120 a thirty-point line had about four pixels of
+   * height per day, so a month of movement read as one flat stripe with a step
+   * in it. The three scale labels also sit on the top, middle and bottom
+   * gridlines, which at that height put them 54px apart — close enough to scan
+   * as a block of text beside the chart rather than as marks on it.
    */
   var PLOT_UNITS = 40;
-  var PLOT_PIXELS = 120;
+  var PLOT_PIXELS = 150;
+
+  /**
+   * The marks that will not sit on top of each other, in priority order.
+   *
+   * A `.ytick` is centred on its gridline, so two marks closer together than a
+   * label is tall overlap — and two overlapping figures are not a scale that is
+   * merely tight, they are a scale nobody can read at all. It happens whenever
+   * one end of a chart dwarfs the other: a month earning €2,800 and spending
+   * €308 put the zero mark and the spending mark 15px apart on a 150px plot,
+   * with 11px text between them.
+   *
+   * **Order is priority, and both callers already order theirs meaningfully.**
+   * A mark is kept unless something already kept is within `MARK_GAP_PIXELS` of
+   * it, so the first one always survives — the bar chart passes zero first,
+   * which is the one it must never lose (it is what the sign is measured from,
+   * not a scale reading), and the line chart passes its two ends before the
+   * midpoint, which is the one worth losing.
+   *
+   * Filtered here rather than inside `withScale` so a dropped mark takes its
+   * gridline with it: the callers draw those, and a rule across the plot with
+   * no figure beside it is a scale reading you cannot look up.
+   */
+  /*
+    Centre to centre, and it is deliberately about twice a label's height
+    rather than exactly one. Labels that merely fail to overlap still read as a
+    block of text beside the chart instead of as marks on it — which was the
+    complaint that produced this — so the threshold is the distance at which
+    two figures are separate things, not the distance at which they stop
+    touching.
+  */
+  var MARK_GAP_PIXELS = 24;
+
+  function spacedMarks(marks) {
+    var kept = [];
+    marks.forEach(function (mark) {
+      var pixels = (mark.y / PLOT_UNITS) * PLOT_PIXELS;
+      var collides = kept.some(function (other) {
+        return Math.abs((other.y / PLOT_UNITS) * PLOT_PIXELS - pixels) < MARK_GAP_PIXELS;
+      });
+      if (!collides) kept.push(mark);
+    });
+    return kept;
+  }
 
   function withScale(svg, marks) {
     var box = el('div', 'plot');
@@ -89,11 +142,13 @@
     // so the labels sit on the line rather than near it. A flat series gets one
     // mark at the centre, where the flat line is: three identical figures down
     // the side would read as a scale that happens to repeat.
-    var marks = range === 0
+    // Ends first, midpoint last: `spacedMarks` keeps what it reaches first, and
+    // on a scale of three the midpoint is the one that can be inferred.
+    var marks = spacedMarks(range === 0
       ? [{ y: 20, label: money(low, { whole: true }) }]
       : [{ y: 2, label: money(high, { whole: true }) },
-         { y: 20, label: money((low + high) / 2, { whole: true }) },
-         { y: 38, label: money(low, { whole: true }) }];
+         { y: 38, label: money(low, { whole: true }) },
+         { y: 20, label: money((low + high) / 2, { whole: true }) }]);
 
     marks.forEach(function (mark) { add(svg, gridline(mark.y)); });
     add(svg, svgNode('polyline', { points: points, class: 'line',
@@ -173,9 +228,13 @@
     // already knew that. The other two are added only where they are a
     // different number: a month with no income at all puts `high` at zero, and
     // two ticks reading nothing apart is a scale that looks broken.
+    // Zero first, so the one mark this chart cannot do without is the one
+    // `spacedMarks` keeps when a month's spending is small enough beside its
+    // income that the two marks would print on top of each other.
     var marks = [{ y: zero, label: money(0, { whole: true }) }];
     if (high > 0) marks.push({ y: yOf(high), label: money(high, { whole: true }) });
     if (low < 0) marks.push({ y: yOf(low), label: money(low, { whole: true }) });
+    marks = spacedMarks(marks);
 
     marks.forEach(function (mark) { add(svg, gridline(mark.y)); });
     add(svg, svgNode('line', { x1: 0, y1: zero.toFixed(2), x2: 100, y2: zero.toFixed(2),

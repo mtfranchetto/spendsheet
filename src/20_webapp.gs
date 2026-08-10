@@ -506,12 +506,40 @@ function htmlSafeJson_(value) {
 /**
  * One partial, inlined where its scriptlet sits in `page.html`.
  *
- * `createHtmlOutputFromFile` rather than `createTemplateFromFile`, and the
- * difference is what the partials are allowed to contain. A template would be
- * evaluated, so a `<?` anywhere in one — inside a regex, inside a comment
- * explaining templating — becomes a parse failure in a file that has no
- * scriptlets and no reason to be scanned for any. Only `page.html` is a
- * template; everything it includes is text.
+ * **`getRawContent()`, because the partials are JavaScript and not markup.**
+ * The obvious reader is `createHtmlOutputFromFile(name).getContent()` — it is
+ * the include idiom in Google's own documentation — and it works there because
+ * the partial being included is *HTML*: a `<script>` element, a `<style>`, a
+ * fragment of a form. An `HtmlOutput` holds markup, and reading one back gives
+ * markup, so a `<` that does not open a tag comes back as `&lt;`.
+ *
+ * Every file here is bare JavaScript pasted inside a `<script>` the shell
+ * opens, so the first `<` in the first partial is a less-than: `page.core`'s
+ *
+ *     for (var i = 1; i < arguments.length; i++)
+ *
+ * arrived as `i &lt; arguments.length`, which parses — `i & lt`, then the
+ * entity's own `;` ends the condition — and then fails on the *next* `;` with
+ * `missing ) after for-loop control`. One syntax error anywhere in that block
+ * discards all of it, so the page kept the `Loading…` the shell ships with and
+ * nothing else ever ran. Every screen, gone, from one escaped character.
+ *
+ * `HtmlTemplate.getRawContent()` returns the file, unprocessed and unparsed —
+ * and *unevaluated*, which is what makes reaching for a template here safe: a
+ * `<?` anywhere in a partial would be a parse failure if this called
+ * `evaluate()`, and `getRawContent()` never does. Only `page.html` is
+ * evaluated; everything it includes stays text.
+ *
+ * The scriptlet printing it is `<?!= ?>`, which does not escape — proven by
+ * the boot payload, which is JSON full of quotes going through the same
+ * printer into a `<script>` and arriving parseable. So the escaping was never
+ * the template's, and a page that failed only after the split points at the
+ * one call the split introduced.
+ *
+ * `checkPageAssembly_` in the smoke tests is what holds this down, because the
+ * harness cannot: its `HtmlService` is a fake reading the same files off disk,
+ * and a fake with no HTML parser in it hands back whatever it read. Whether
+ * Google escapes a character is a fact about Google.
  *
  * The `_` suffix is right and is not a formality. A template calls whatever it
  * likes, so this is reachable from `page.html`; `google.script.run` refuses a
@@ -519,7 +547,7 @@ function htmlSafeJson_(value) {
  * would be an entry point that reads a file named by its caller.
  */
 function include_(name) {
-  return HtmlService.createHtmlOutputFromFile(name).getContent();
+  return HtmlService.createTemplateFromFile(name).getRawContent();
 }
 
 function webAppHtml_(parameters) {

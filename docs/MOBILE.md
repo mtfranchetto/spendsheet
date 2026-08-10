@@ -8,7 +8,7 @@ It gives you three screens and two forms:
 
 | | |
 |---|---|
-| **Home** | net worth, the account tiles, holds the bank has not settled, this month against the same point last month, spending by category, and the review backlog |
+| **Home** | net worth and the last thirty days of it, the account tiles, holds the bank has not settled, this month against the same point last month, spending by category, and the review backlog |
 | **Charts** | a date range plus account and label filters, over cashflow, net worth and category breakdowns |
 | **Records** | the whole ledger, filtered, searched and paged |
 | **Add cash** | a cash transaction, landing straight away. Reached from a cash tile |
@@ -64,6 +64,16 @@ An asset — a brokerage account, a car, a property — is a wallet you top up b
 **Update balance** on an asset tile asks for the new total, pre-filled with the current one, and records the **difference** as one `Transfer › Valuation change` transaction dated today. That is what gives an asset a history: net worth over time is reconstructed by walking transactions backwards, so a value that only ever changed by being overwritten was invisible to it — the curve was flat, and then on the day you retyped the number the whole line moved.
 
 `kind: transfer` on that category is what keeps a €1,500 market gain out of *income this month* while still moving net worth. A gain is not income.
+
+### The thirty days under the total
+
+Home draws net worth for the last thirty days, directly under the figure it ends at. Thirty *days* and not this month: a month-to-date window is one day long on the 1st, so the card would empty itself every time the month turned and fill back up over four weeks, and two openings a fortnight apart would not be comparable.
+
+**It is a reconstruction, not a record** — the same walk backwards from today's balance the Charts curve uses, and it carries the same three caveats. It is anchored to *today*, so a transaction the bank has not sent yet shifts the whole line rather than showing a step at the end. An account in another currency contributes nothing to the movement while its balance sits inside today's total, so it flat-lines. And an asset account only steps on the day you retype its value — which is what *Update balance* above is for.
+
+The scale down the right-hand side is not decoration. The line is drawn between its own high and low rather than from zero, so without it a balance that drifted two per cent would draw exactly the same climb as one that doubled.
+
+It arrives with the lower half of the screen, a moment after the total and the tiles: a trend is every row in the book, and the top of the dashboard is deliberately the half that reads none.
 
 ### Filters
 
@@ -201,6 +211,8 @@ Two checks, and the second one is the one people skip.
 **Door 2 should let you in.** Open the URL. You should get the four screens. If you get *"This page is not available"*, you are signed in as a different Google account — switch and reload. If you get it while signed in as the right account, run **Spendsheet → Diagnostics → Check web app access** from the Sheet: it reports the owner address, who Google says you are, and whether that combination would be let in.
 
 **Door 1 should refuse.** Open the *consent redirect* URL in a private window, with no parameters on it. You should get the refusal page. If you get the app, Door 1 is not anonymous or the owner gate is not doing its job — and an anonymous URL serving your balances is the one failure in this whole document that matters.
+
+**And if a redeploy leaves the app on its `Loading…`**, run **Spendsheet → Diagnostics → Run smoke tests**: *the page arrives as JavaScript* is the check for it. The page is assembled by Google out of a dozen files this project only hands over, so a partial that arrives HTML-escaped is a syntax error in the whole script and a screen that never draws — and it is invisible to every test that runs off the files themselves.
 
 ## What it costs to run
 

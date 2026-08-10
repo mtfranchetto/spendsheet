@@ -508,6 +508,62 @@ describe('the balance trend', () => {
   });
 });
 
+describe('the thirty days under the dashboard total', () => {
+  /*
+    Dates in the past, deliberately, and they stay valid as the calendar moves.
+
+    `balanceSeries_` ends its walk at `Math.min(window.to, today)` against the
+    *real* clock, which no test can move. So a `now` in the future is silently
+    truncated — the first draft of these asked for August from a book whose
+    clock said the 10th and got twelve points, which reads exactly like the
+    window being wrong. A `now` already past clamps to nothing.
+  */
+  const now = new Date(2026, 6, 20);
+
+  it('draws the same number of days whichever day of the month it is', () => {
+    // The reason it is not month-to-date: that window is one day long on the
+    // 1st, so the card would empty itself every time the month turned and
+    // refill over four weeks. These two dates would disagree under that rule
+    // by twenty-seven days, and here they do not disagree at all.
+    const first = ctx.recentBalanceTrend_([], new Date(2026, 6, 1), 100);
+    const late = ctx.recentBalanceTrend_([], new Date(2026, 6, 28), 100);
+
+    expect(first).toHaveLength(ctx.DASHBOARD_TREND_DAYS);
+    expect(late).toHaveLength(ctx.DASHBOARD_TREND_DAYS);
+    expect([first[0].key, first[first.length - 1].key])
+      .toEqual(['2026-06-02', '2026-07-01']);
+    expect([late[0].key, late[late.length - 1].key])
+      .toEqual(['2026-06-29', '2026-07-28']);
+  });
+
+  it('ends on today, at the total the card above it shows', () => {
+    // The last point *is* the net worth printed above the chart. If those ever
+    // disagree, the chart is describing a different book than the number is.
+    //
+    // A point is the balance at the *end* of its day, so the row booked on the
+    // 18th is already in the 18th's value and the step is between it and the
+    // 17th. Reading it the other way puts every move a day late.
+    const series = ctx.recentBalanceTrend_([
+      row({ booking_date: new Date(2026, 6, 18), amount_base: -40 })
+    ], now, 900);
+
+    expect(series[series.length - 1]).toEqual({ key: '2026-07-20', value: 900 });
+    expect(series[series.length - 3]).toEqual({ key: '2026-07-18', value: 900 });
+    expect(series[series.length - 4]).toEqual({ key: '2026-07-17', value: 940 });
+  });
+
+  it('ignores a row older than the frame, which is already inside the total', () => {
+    // It must move nothing — the balance it produced is part of `balance_now`
+    // — while the day it sits on is not in the series at all.
+    const old = ctx.recentBalanceTrend_([
+      row({ booking_date: new Date(2026, 4, 1), amount_base: -500 })
+    ], now, 900);
+
+    expect(old).toHaveLength(ctx.DASHBOARD_TREND_DAYS);
+    expect(old.every((point) => point.value === 900)).toBe(true);
+  });
+});
+
 describe('a query against a real book', () => {
   /** A book with a few transactions in it, written the way the sync writes them. */
   function bookWith(rows, options = {}) {

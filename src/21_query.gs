@@ -610,6 +610,39 @@ function balanceSeries_(rows, window, balanceNow) {
 }
 
 /**
+ * How many days of net worth the dashboard draws under the total.
+ *
+ * Thirty rather than a month, and the difference is the point: a month-to-date
+ * window is one day long on the 1st, so the card would empty itself every time
+ * the month turned and fill back up over four weeks. A fixed count of days
+ * always draws the same amount of line, which is what makes two openings
+ * comparable.
+ */
+var DASHBOARD_TREND_DAYS = 30;
+
+/**
+ * The last thirty days of net worth, ending on today.
+ *
+ * `balanceSeries_` with a window nobody chose — the period picker's vocabulary
+ * is for the Charts screen, where you asked for a period, and this is a fixed
+ * frame on a screen with no filters. Keeping it out of `resolveWindow_` keeps
+ * it out of the picker, which would otherwise have to offer a period it has no
+ * reason to.
+ *
+ * Every caveat `balanceSeries_` carries applies here unchanged, and one of them
+ * is worth restating where it will be read: the curve is *derived backwards
+ * from today's balance*, so it is a reconstruction and not a record. An account
+ * whose balance is in another currency flat-lines, and an `asset` account only
+ * steps when you type a new value into it.
+ */
+function recentBalanceTrend_(rows, now, balanceNow) {
+  var today = dayNumber_(now);
+  return balanceSeries_(rows,
+    { kind: 'trend', from: today - (DASHBOARD_TREND_DAYS - 1), to: today },
+    balanceNow);
+}
+
+/**
  * What every included account is worth today, in the base currency.
  *
  * The same three conditions `netWorthFormula` applies, and the third is the one

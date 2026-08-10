@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from './harness.mjs';
@@ -1458,7 +1458,7 @@ describe('the two calls the app opens with', () => {
     const overview = c.appOverview();
 
     expect(Object.keys(overview).sort()).toEqual(
-      ['health', 'lists', 'month', 'pending', 'review', 'screens']);
+      ['health', 'lists', 'month', 'pending', 'review', 'screens', 'trend']);
     expect(overview.lists.periods.map((p) => p.kind)).toContain('mtd');
   });
 
@@ -1657,6 +1657,25 @@ describe('the page itself', () => {
     expect(called.length).toBeGreaterThan(0);
     [...new Set(called)].forEach((name) => {
       expect(typeof c[name], name).toBe('function');
+    });
+  });
+
+  it('writes no HTML entity in any partial, which is what makes one evidence', () => {
+    // `checkPageAssembly_` calls the page broken when a partial arrives holding
+    // `&lt;`, and that only means anything while no partial contains one to
+    // begin with. It is a cheap premise to keep — the page builds nodes and
+    // assigns `textContent`, so there is no markup here for an entity to be
+    // part of — and an expensive one to lose, because losing it turns the one
+    // live check on the assembly into a check that always passes.
+    //
+    // Asserted per file rather than over the assembly, so the failure names
+    // the partial to look in.
+    const partials = readdirSync(SRC)
+      .filter((name) => name.startsWith('page.') && name !== 'page.html');
+
+    expect(partials.length).toBeGreaterThan(10);
+    partials.forEach((name) => {
+      expect(readFileSync(join(SRC, name), 'utf8'), name).not.toMatch(/&(lt|gt|amp|quot|#\d+);/);
     });
   });
 });
