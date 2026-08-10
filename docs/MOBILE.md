@@ -87,9 +87,9 @@ Picking *A month* puts a row of month chips under the dropdown, and that split i
 
 ### Drilling from a number to the rows behind it
 
-On Charts, the **Spending** and **Income** cards open the transactions that make them up. `Balance` does not: it is a position rather than a set of rows, so a list from it would sum to something else.
+On Charts, the **Spending** and **Income** cards open the transactions that make them up. `Balance` and `Cash flow` do not: a balance is a position rather than a set of rows, and cashflow is the *net* of the two directions, so a list from either would sum to neither.
 
-Net has no card. The **Cashflow** section covers the same window and says more about it — a period's net is one figure, where the chart shows when the money moved.
+`Cash flow` and the **Cashflow** section below cover the same window on purpose. The card is how much the period moved, as one figure beside the two directions it came from; the section is when it moved. The card is the part you get without scrolling.
 
 A **category bar** expands on tap, into its subcategories and a full-width **All &lt;category&gt; transactions** button at the end of them. Every row expands, including one with no subcategories — otherwise the same tap means two different things depending on a fact about the data you cannot see before tapping. A subcategory is a leaf and drills straight through.
 
