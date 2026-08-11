@@ -518,3 +518,102 @@ test.describe('the gestures', () => {
     expect(errors).toEqual([]);
   });
 });
+
+test.describe('the tab bar', () => {
+  /**
+   * Order, which nothing has ever asserted and which has now been changed twice.
+   *
+   * It is kept in three places that have to agree — `SCREENS` and `NAV` in
+   * `page.view.html`, and `WEBAPP_SCREENS` on the server — and the bar draws in
+   * `SCREENS` order *filtered by* `NAV` membership, so moving one list and not
+   * the other reorders nothing while looking done. A file test can compare the
+   * two arrays; only this can say what the bar renders.
+   */
+  test('draws Home, Records, Charts, in that order', async ({ page, errors }) => {
+    await open(page);
+
+    await expect(page.locator('#tabs button')).toHaveText([HOME, RECORDS, CHARTS]);
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('deleting a cash transaction', () => {
+  /** Open the sheet on the one row in the fixture that carries a delete. */
+  const openCash = async (page) => {
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }).click();
+    await expect(page.locator('#sheet')).toBeVisible();
+  };
+
+  test('offers no delete on a synced row', async ({ page, errors }) => {
+    // `deletable` comes from the server and is false for everything the bank
+    // sent, which is almost every row — so this is the ordinary case and the
+    // one worth pinning.
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+
+    await expect(page.locator('#sheet')).toBeVisible();
+    await expect(page.locator('#sheet button.danger')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('takes two taps, and the first one sends nothing', async ({ page, errors }) => {
+    /*
+      The whole point of arming. A single-tap delete on a phone is one mis-tap
+      from a row that no longer exists, and the first tap has to be provably
+      inert rather than merely look it — `toHaveCount(0)` after a wait, because
+      the call is asynchronous and asserting immediately would pass against a
+      page that sent it 10ms later.
+    */
+    await open(page);
+    await openCash(page);
+
+    const button = page.locator('#sheet button.danger');
+    await expect(button).toHaveText('Delete');
+
+    await button.click();
+    await expect(button).toHaveText('Tap again to delete');
+    await page.waitForTimeout(300);
+    expect(await calls(page)).not.toContain('appDeleteRecord');
+
+    await button.click();
+    await expect.poll(() => calls(page)).toContain('appDeleteRecord');
+    expect(errors).toEqual([]);
+  });
+
+  test('stays armed rather than disarming itself', async ({ page, errors }) => {
+    // No timer undoes the first tap. A control that changes what it does while
+    // you are looking at it is worse than one that waits — the tap meant for
+    // the armed button would land on a disarmed one and do nothing.
+    await open(page);
+    await openCash(page);
+
+    await page.locator('#sheet button.danger').click();
+    await page.waitForTimeout(5000);
+
+    await expect(page.locator('#sheet button.danger')).toHaveText('Tap again to delete');
+    expect(errors).toEqual([]);
+  });
+
+  test('sends the uid and takes the row off the screen', async ({ page, errors }) => {
+    await open(page);
+    await openCash(page);
+
+    await page.locator('#sheet button.danger').click();
+    await page.locator('#sheet button.danger').click();
+
+    const [request, ...rest] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appDeleteRecord').map((c) => c.args[0]));
+
+    expect(rest, 'appDeleteRecord called more than once').toHaveLength(0);
+    expect(String(request.uid)).toHaveLength(3);
+
+    // Gone from the list without waiting on a refetch — `dropRecord` removes it
+    // unconditionally, where `dropConfirmed` would have left it unless the list
+    // happened to be filtered to unconfirmed.
+    await expect(page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }))
+      .toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});

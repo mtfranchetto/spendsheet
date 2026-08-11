@@ -57,9 +57,19 @@ A guessed category and a category you agreed with are not the same fact.
 
 Confirming does two things: it freezes that row's `category_auto` against future rule changes, and it makes the row eligible for learning. Typing a `category_override` counts as confirming without the tick.
 
+**A rule match confirms itself.** A row the `rules` tab answered for — tier 4 or tier 5 — is ticked by the run that categorises it, and never reaches the queue. A rule is a standing instruction, so obeying it and then asking you to agree with it is the same act twice.
+
+Three things follow, and the third is the one to know before you rely on it:
+
+- **Only the rules tab.** A memory match is not confirmed, because memory is *built* from confirmed rows and confirming on it would let one agreement propagate itself for ever. A transfer is not confirmed either: it is a pairing rather than a categorisation, and the other leg changing can dissolve it. An unclassified row is what the queue is for.
+- **A confirmed-by-rule row does not teach memory.** Memory outranks both rule tiers, so a rule that taught memory its own answer would go on being obeyed *through* memory after you had corrected the rule — with the `rules` tab looking ignored and the reason two tiers away. Overriding a rule's answer still teaches, which is the case memory exists for.
+- **It freezes the row, and that is not undone by fixing the rule.** This is confirmation, with everything confirmation means. If a `contains` pattern turns out to be too loose, correcting it will not reach the rows it already claimed — untick `confirmed` on those and re-categorise, as below. **Set `confirm_rule_matches` to `no` in `_config`** to turn the whole behaviour off; every row then goes to the queue as it used to.
+
+**Spendsheet → Re-categorise all** counts the rows it is about to confirm, in the dialog, before it writes any of them. That is the only place this happens in front of you — the nightly sync does the identical thing to whatever landed, unattended.
+
 **On a phone, use the `review` tab instead.** It holds the unconfirmed backlog, oldest first, with a checkbox and a category dropdown next to each row — and a tick there writes straight back to `transactions`. That is the whole reason it exists: custom menus do not exist in the Sheets mobile app, so *Confirm visible rows* is a desktop tool and the checkbox is the one that works everywhere. See [`REPORTS.md`](REPORTS.md#review).
 
-Never automatic. A row confirmed by elapsed time is a row nobody looked at, wearing a badge that says somebody did.
+Never automatic on time. A row confirmed by elapsed time is a row nobody looked at, wearing a badge that says somebody did — which is a different thing from a row confirmed by a rule you wrote, where the looking happened when you wrote the rule.
 
 ---
 
@@ -202,6 +212,8 @@ Two things the tab does not check, both silent:
 The cascade runs on sync, so a rule takes effect on rows that arrive after it. **Spendsheet → Re-categorise all** applies it to what is already there — with one exception that matters more than it sounds: **a confirmed row keeps whatever it was confirmed with.** An imported history arrives confirmed, so no rule you add afterwards will touch it.
 
 To make a rule reach a row you have already confirmed, untick `confirmed` on that row and re-categorise. The phone's toast says the same thing in a line, because otherwise the feature reads as broken: you make a rule for a merchant you have seen ten times, go back, and all ten are exactly as they were.
+
+Since a rule match now confirms itself, this applies to rows an *earlier* rule claimed as well as to ones you ticked by hand — a second rule for the same merchant does not overrule the first, because the row it would have moved is already frozen.
 
 ---
 

@@ -43,7 +43,7 @@ Files are numbered because Apps Script has no modules — it concatenates `src/*
 | `19_menu.gs` | the Spendsheet menu. |
 | `20_webapp.gs` | the second front door: routing, the owner gate, serving the page. |
 | `21_query.gs` | the ledger asked a question. Pure aggregation, and **no writes**. |
-| `22_actions.gs` | the four things the app writes: a confirmation, a transfer link, a rule, a cash entry. |
+| `22_actions.gs` | the five things the app writes: a confirmation, a transfer link, a rule, a cash entry, and the deletion of a cash entry — the only one that destroys anything, and it borrows `15_duplicates.gs`'s discipline whole. |
 | `23_api.gs` | every function a page may call by name, each one gated. |
 | `page.html` | the document, and the order its parts load in. A shell of `include_` scriptlets. |
 | `page.*.html` | the app itself, in a dozen partials — `page.css`, `page.core`, `page.api`, `page.charts`, `page.view`, `page.dashboard`, `page.records`, `page.analytics`, `page.filters`, `page.sheet`, `page.add`, `page.gestures`, `page.boot`, in that load order. |

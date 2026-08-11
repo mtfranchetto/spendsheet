@@ -1,5 +1,5 @@
 /**
- * 22_actions.gs — the four things the app writes.
+ * 22_actions.gs — the five things the app writes.
  *
  * Reading is 21_query.gs and it is careful to write nothing at all. This file
  * is the other half:
@@ -8,10 +8,15 @@
  *   `webAppLinkTransfer_`    a move between two of your own accounts
  *   `webAppAddRule_`         a categorisation to impose from now on
  *   `webAppAddCash_`         money no bank will ever report
+ *   `webAppDeleteRecord_`    cash you typed and should not have
  *
- * Three of those existed already as spreadsheet gestures — a checkbox on
+ * Four of those existed already as spreadsheet gestures — a checkbox on
  * `review`, a row on `cash_entry`, a row on `rules` — and none of them is
- * reachable from a web page.
+ * reachable from a web page. The fifth had no gesture at all: the tab is
+ * append-only and the one exception to that lives in `15_duplicates.gs`, is a
+ * bulk operation about imported-versus-synced pairs, and answers a different
+ * question. It is also the only one here that destroys something, which is why
+ * it borrows that file's whole discipline rather than its code.
  *
  * `webAppAddRule_` was the first with no existing mechanism to reuse.
  * Confirming had `writeReviewRow_`'s three rules to reproduce and cash had
@@ -1093,4 +1098,79 @@ function categoryChoices_() {
       };
     })
   };
+}
+
+// ---------------------------------------------------------------------------
+// Deleting
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove one cash transaction, because you typed it and should not have.
+ *
+ * `transactions` is append-only everywhere else, and the reasoning for that has
+ * not changed: a row already in the book is what a uid points at, what a
+ * formula references, and what the row-loss detector counts. This is the second
+ * exception ever written and it copies the first — `commitSyncedDuplicates_` in
+ * `15_duplicates.gs` — clause for clause rather than inventing a lighter set of
+ * checks for the single-row case. There is nothing lighter about deleting one
+ * row; it is the same tab.
+ *
+ * What it borrows, and why each one:
+ *
+ *   **Row 2 is refused.** It anchors every ARRAYFORMULA on the tab. Deleting it
+ *   does not shift the anchor down, it destroys it, and every derived column
+ *   goes with it. That is a sheet edit made deliberately, not a tap on a phone.
+ *
+ *   **The row is archived before it is deleted, never after.** `_removed`
+ *   already exists at the full `TX_COLUMNS` width for exactly this. Appending
+ *   first means a failure at the delete leaves a spare archive row — noise —
+ *   while archiving second would mean a failure leaves nothing at all.
+ *
+ *   **`rememberRowCount_()` afterwards.** The row-loss detector has just
+ *   watched the tab shrink, which it is right to treat as a catastrophe and
+ *   which would block every future sync. This shrink was asked for, so the
+ *   baseline moves with it.
+ *
+ * And one thing it does not borrow: there is no merge. A cash row has no
+ * surviving counterpart to carry its overrides onto.
+ *
+ * The two caches are invalidated by hand. `deleteRows` is not `writeCell_` or
+ * `appendRows_`, which is where `forgetReadCache_` and `bumpDataVersion_`
+ * normally hang, and `onEdit` does not fire for a change a script made — so
+ * without these the app goes on serving the deleted row until the ledger cache
+ * expires.
+ */
+function webAppDeleteRecord_(request) {
+  var wanted = String((request && request.uid) || '');
+  if (!wanted) throw new Error('Which transaction?');
+
+  var tx = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.TRANSACTIONS);
+  if (!tx) throw new Error('No "' + TABS.TRANSACTIONS + '" tab. Run Spendsheet → Setup sheet first.');
+
+  var row = uidIndex_(tx)[wanted];
+  if (!row) throw new Error('That transaction is not in ' + TABS.TRANSACTIONS + ' any more.');
+
+  // Read from the sheet rather than trusting anything in `request`. The page
+  // decides whether to *offer* the control from the same predicate, and a page
+  // can send any uid it likes — see `recordIsDeletable_`.
+  if (!recordIsDeletable_(readCell_(tx, row, TX_COLUMNS, 'source'))) {
+    throw new Error('Only a cash transaction you typed can be deleted. ' +
+      'A synced row would come back on the next sync.');
+  }
+
+  if (row <= 2) {
+    throw new Error('Refusing: this is row 2, and it anchors every formula in ' +
+      TABS.TRANSACTIONS + '. Delete that one row by hand in the sheet.');
+  }
+
+  var values = tx.getRange(row, 1, 1, TX_COLUMNS.length).getValues()[0];
+  var kept = appendRows_(sheetOrThrow_(TABS.REMOVED), 1, [values]);
+
+  tx.deleteRows(row, 1);
+
+  forgetReadCache_();
+  bumpDataVersion_();
+  rememberRowCount_();
+
+  return { removed: 1, uid: wanted, keptAt: kept.row };
 }

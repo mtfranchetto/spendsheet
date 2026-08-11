@@ -112,7 +112,7 @@ Append-only. **Booked transactions only** (see `pending` below).
 | Y | `notes` | **you** | |
 | Z | `excluded` | **you** | drop a row from reports without deleting it |
 | AA | `labels` | **you** | comma-separated, cross-cutting. Never affects a total |
-| AB | `confirmed` | **you** | you agreed with the category. The only rows memory is learned from |
+| AB | `confirmed` | **you**, or a rules match | you agreed with the category, or a rule you wrote answered for it |
 | AC | `in_reports` | formula | whether the row counts as spending. **Every money block reads this** |
 | AD | `subcategory_override` | **you** | the one to reach for — it names the category too |
 
@@ -127,6 +127,8 @@ It is a column rather than one more condition per query for a reason worth knowi
 Tick `excluded` on a row and it leaves every report at once. Nothing else changes; the row stays exactly where it is.
 
 **`confirmed` is what separates a guess you agreed with from a guess.** Synced rows arrive blank; imported rows arrive ticked, because you categorised them once already in the tool they came from. A row carrying a `category_override` counts as confirmed without the tick — typing the category is a stronger statement than ticking a box next to it.
+
+**It is also written by the cascade, on rows the `rules` tab answered for.** A rule is a standing instruction, so a match is ticked as it is categorised and never reaches the review queue — controlled by `confirm_rule_matches` in `_config`. Such a row is deliberately *not* learned from: memory outranks both rule tiers, so learning there would let a rule go on being obeyed through memory after you had corrected the rule itself. See [`CATEGORIES.md`](CATEGORIES.md#confirming).
 
 It earns a column rather than being inferred because **`Learn from corrections` reads confirmed rows and nothing else.** Learn from everything and the cascade trains on its own output: one wrong guess about a frequent merchant becomes a memory entry, which produces more rows carrying that guess, which reinforces the entry. The review queue is the side benefit, not the reason.
 
@@ -198,7 +200,9 @@ Deleting the history costs more than it looks. It understates the years the acco
 
 The asymmetry is the argument: you can hide a dormant account at any point, but you cannot un-delete its history without redoing the import.
 
-If you do decide to delete rows from `transactions`, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Run **Spendsheet → Set up and maintain → Accept row count** immediately afterwards.
+If you delete rows from `transactions` **by hand**, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Run **Spendsheet → Set up and maintain → Accept row count** immediately afterwards.
+
+The two deletions this project performs itself — *Remove synced duplicates*, and deleting one cash transaction from the phone — re-baseline that count as part of the operation, so neither leaves the sync blocked. Both also copy every row to `_removed` first, and both refuse the first data row, which anchors every formula on the tab.
 
 ### The two kinds of non-bank account
 
@@ -281,7 +285,7 @@ See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 | `_category_map` | source category → your taxonomy |
 | `_import_raw` | where a CSV lands via File → Import |
 | `_import_staged` | formula-mapped rows, and `include`/`why` for each. Only the columns an export can fill, so it is narrower than `transactions` |
-| `_removed` | same columns as `transactions`. Rows that **Remove synced duplicates** deleted, so putting one back is a paste |
+| `_removed` | same columns as `transactions`. Rows deleted by **Remove synced duplicates**, or one cash transaction deleted from the phone, so putting one back is a paste |
 | `_tests` | smoke test results |
 
 `_runs` is what powers the row-count regression guard: if the row count *decreased* since the last run, that's never legitimate in an append-only tab, so the sync alerts and aborts rather than carrying on.

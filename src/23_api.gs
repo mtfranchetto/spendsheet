@@ -302,6 +302,26 @@ function appAddRule(rule) {
   return result;
 }
 
+/**
+ * Delete one cash transaction.
+ *
+ * The only endpoint here that destroys anything, and the message says where the
+ * copy went rather than just reporting success. `_removed` is a tab in the same
+ * book, so "gone" is recoverable by hand and the person tapping delete on a
+ * phone is the one who most needs to know that.
+ *
+ * No `withReadCache_`, like the other writes: that memo exists to share reads
+ * across one read-only request, and sharing it across a write is how a caller
+ * gets a stale answer to the question it just changed.
+ */
+function appDeleteRecord(request) {
+  requireOwner_();
+
+  var result = webAppDeleteRecord_(request);
+  result.message = 'Deleted. A copy is on the _removed tab.';
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // The dashboard screen
 // ---------------------------------------------------------------------------

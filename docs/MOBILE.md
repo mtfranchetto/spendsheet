@@ -9,8 +9,8 @@ It gives you three screens and two forms:
 | | |
 |---|---|
 | **Home** | net worth and the last thirty days of it, the account tiles, holds the bank has not settled, this month against the same point last month, spending by category, and the review backlog |
-| **Charts** | a date range plus account and label filters, over cashflow, net worth and category breakdowns |
 | **Records** | the whole ledger, filtered, searched and paged |
+| **Charts** | a date range plus account and label filters, over cashflow, net worth and category breakdowns |
 | **Add transaction** | a cash transaction, landing straight away. Reached from a cash tile |
 | **Update balance** | an asset account's new total. Reached from an asset tile |
 
@@ -32,8 +32,17 @@ The sheet that opens asks **what the row is** before it asks what to file it und
 - **Not on a transfer.** The Transfer tab offers no labels, and the server refuses them there. A label is the axis a category cannot express — `travel` spanning a flight, a hotel and forty euros of coffee — and a transfer is the same money in two places, counted in neither direction. Labelling one builds a filter that can never match what you set it to find. Labels already on such a row are left alone.
 - **The description** is editable on rows you own — cash you typed, a leg this project wrote, anything imported — and read-only on rows a bank sent. The field simply is not there on the second kind, which is worth knowing so its absence reads as a rule rather than a bug. A bank's description is part of what *identifies* the transaction: when the bank sends no immutable reference, the row's id is a hash that includes it, so rewriting one could stop a later sync recognising something already in the book and quietly append a duplicate.
 - **Long-press** a row instead, and you get a rule built from it — pattern, match type, category, priority, all editable before saving. The pattern comes from the server's own merchant normaliser, not a second copy of it in the page.
-- **Swipe right** to confirm without opening anything.
+- **Delete** is at the bottom of the sheet, and only on **cash you typed**. It takes two taps — the first arms it and nothing reverts it but closing the sheet — and the row is copied to the `_removed` tab before it goes, so "gone" is recoverable by hand.
+- **Swipe right** to confirm without opening anything. Left does nothing, deliberately: almost every row is one the bank sent and cannot be deleted, and a gesture that does nothing on almost every row teaches you it is broken.
 - **Tap outside** the sheet to close it, or the ✕ in its corner.
+
+### Deleting, and why only cash
+
+`transactions` is append-only everywhere else in this project. Deleting a row a bank sent would achieve nothing — `sync_window_days` is 90, so the next run fetches it again under the same id and it reappears overnight, with nothing anywhere reporting that it had gone. A leg this project wrote to balance a transfer has a partner row that would be left pointing at a group of one; the thing to undo there is the move, on the other leg. An imported row has its own route, *Remove synced duplicates*, which knows how to pair it against the synced copy and which of the two regenerates.
+
+That leaves cash you typed: nothing fetches it, nothing pairs with it, and it is the only kind you can create by accident in two taps. So it is the only kind the delete is offered on, and the server refuses the rest a second time even if a page asks.
+
+One row it will refuse regardless: the very first data row of `transactions`, which anchors every formula on the tab. Deleting it destroys the derived columns rather than shifting them, so that one is a deliberate edit in the sheet.
 
 ### Transfers, and the money that used to go missing
 

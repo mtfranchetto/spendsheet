@@ -123,6 +123,11 @@ const ROWS = [
     description: 'Transfer from Revolut', category: 'Transfer',
     subcategory: 'Cash withdrawal', type: 'transfer', inReports: false,
     group: 'tr:w-out', confirmed: true },
+  // Cash typed by hand, which is the only source a row can be deleted from —
+  // so this is what puts the delete control on any screen at all.
+  { uid: 'c-1', account: 'Wallet', at: 11, amount: -6.5, source: 'manual',
+    description: 'Caffè e cornetto', category: 'Food & Drink',
+    subcategory: 'Bars & Cafes', type: 'expense', confirmed: true },
   // Foreign currency with no rate: `amount_base` is blank, and the row must
   // draw an em dash rather than a zero.
   { uid: 'r-10', account: 'Revolut', at: 12, amount: -45, currency: 'GBP',
@@ -227,6 +232,7 @@ export function previewAnswers(c = previewBook()) {
     appMarkTransfer: { linked: false, outside: true,
       message: 'Marked as a transfer out of your tracked accounts.' },
     appAddCash: { added: 1, message: 'Added.' },
-    appAddRule: { added: 1, message: 'Rule added. Nothing already in the book moves.' }
+    appAddRule: { added: 1, message: 'Rule added. Nothing already in the book moves.' },
+    appDeleteRecord: { removed: 1, uid: 'c-1', message: 'Deleted. A copy is on the _removed tab.' }
   };
 }

@@ -7,8 +7,8 @@
     // The tab bar draws in *this* order — it filters `SCREENS` by `NAV`
     // membership rather than mapping over `NAV` — so the two lists have to
     // agree on order as well as on membership, and this is the one that shows.
-    { id: 'analytics', label: 'Charts', glyph: '\u{1F4CA}', render: renderAnalytics },
     { id: 'records', label: 'Records', glyph: '\u{1F4C4}', render: renderRecords },
+    { id: 'analytics', label: 'Charts', glyph: '\u{1F4CA}', render: renderAnalytics },
     { id: 'add', label: 'Add transaction', glyph: '\u{2795}', render: renderAdd },
     // Reached from an asset tile only, like `add` from a cash one.
     { id: 'revalue', label: 'Update balance', glyph: '\u{2195}', render: renderSetValue }
@@ -24,7 +24,7 @@
    * stays and the tab goes: `go('add')` still reaches it, from the one place
    * where it is already in context.
    */
-  var NAV = ['dashboard', 'analytics', 'records'];
+  var NAV = ['dashboard', 'records', 'analytics'];
 
   /**
    * The query string, spelled once. `WEBAPP_VIEW_PARAM` and friends in
