@@ -117,9 +117,11 @@
       // browser must stay free to scroll.
       event.preventDefault();
 
-      // Rightwards only. Left is where a delete would go if there is ever one,
-      // and a row that slid both ways would promise an action that does not
-      // exist.
+      // Rightwards only. Deleting lives in the sheet, on the one row kind that
+      // can be deleted — see `deleteControl` — deliberately rather than on the
+      // leftward swipe this leaves free: almost every row is synced and cannot
+      // be deleted at all, and a gesture that does nothing on almost every row
+      // teaches you it is broken.
       dx = Math.max(0, moveX);
       button.style.transform = 'translateX(' + dx + 'px)';
       wrap.className = 'swipe sliding' +

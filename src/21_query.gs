@@ -1248,6 +1248,8 @@ function recordForPage_(row, peers) {
     inReports: isTruthyCell_(row.in_reports),
     // Whether the description is yours to change. See `descriptionIsEditable_`.
     editableDescription: descriptionIsEditable_(row.source),
+    // Whether the row is yours to remove — cash only. See `recordIsDeletable_`.
+    deletable: recordIsDeletable_(row.source),
     /*
       The other end of a transfer, when this book holds it.
 
@@ -1345,4 +1347,38 @@ function transferPeers_(ledger) {
  */
 function descriptionIsEditable_(source) {
   return String(source === null || source === undefined ? '' : source) !== TX_SOURCE_API;
+}
+
+/**
+ * Whether a row may be deleted outright, which is a narrower question than the
+ * one above and answers `manual` and nothing else.
+ *
+ * `transactions` is append-only by design and this is the second exception to
+ * that ever written, so each of the other three sources is excluded for its own
+ * reason rather than by falling outside a rule:
+ *
+ *   enablebanking  comes back. `sync_window_days` is 90, so a synced row is
+ *                  re-fetched on the next run under the same uid and reappears
+ *                  — a delete that undoes itself overnight is worse than a
+ *                  refusal, because nothing reports it.
+ *   transfer-leg   has a partner. Both legs carry one `transfer_group`, and
+ *                  removing one leaves the other marked Transfer against a
+ *                  group of one. The leg is written *by* this project to
+ *                  balance a move; the thing to undo is the move.
+ *   csv:           has a route already — "Remove synced duplicates", which
+ *                  pairs imported rows against fetched ones and knows which of
+ *                  the two regenerates. A per-row delete beside it would be a
+ *                  second answer to that question with none of the pairing.
+ *
+ * That leaves cash you typed: nothing fetches it, nothing pairs with it, and a
+ * `cash_entry` row is cleared once drained, so there is nothing upstream to
+ * re-create it. It is also the only source you can produce by accident in two
+ * taps, which is what makes the delete worth having at all.
+ *
+ * Asked twice, like `descriptionIsEditable_` and for the identical reason: by
+ * `recordForPage_` so the page knows whether to offer the control, and again in
+ * `webAppDeleteRecord_`, because a page can send any uid it likes.
+ */
+function recordIsDeletable_(source) {
+  return String(source === null || source === undefined ? '' : source) === TX_SOURCE_CASH;
 }

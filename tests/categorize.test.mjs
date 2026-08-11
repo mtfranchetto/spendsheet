@@ -375,6 +375,30 @@ describe('deriveMemory_', () => {
     expect(derived.entries[0].category).toBe('Housing');
   });
 
+  it('learns nothing from a row a rule confirmed', () => {
+    // Memory is tier 3 and both rule tiers are below it, so a rule that taught
+    // memory its own answer would go on being obeyed *through memory* after the
+    // rule had been corrected — with the `rules` tab looking ignored and the
+    // reason two tiers away. Since a rules match now confirms itself, this is
+    // the ordinary path rather than a corner.
+    expect(ctx.deriveMemory_([row({ category_source: 'rule' })]).entries).toHaveLength(0);
+    expect(ctx.deriveMemory_([row({ category_source: 'mcc' })]).entries).toHaveLength(0);
+  });
+
+  it('learns from a row where you overrode what a rule said', () => {
+    // The case memory exists for: you looked at a rule's answer and disagreed.
+    const derived = ctx.deriveMemory_([
+      row({ category_source: 'rule', category: '', category_override: 'Housing' })
+    ]);
+    expect(derived.entries[0].category).toBe('Housing');
+  });
+
+  it('still learns from memory and unclassified rows you confirmed', () => {
+    expect(ctx.deriveMemory_([row({ category_source: 'memory' })]).entries).toHaveLength(1);
+    expect(ctx.deriveMemory_([row({ category_source: 'unclassified' })]).entries).toHaveLength(1);
+    expect(ctx.deriveMemory_([row({ category_source: '' })]).entries).toHaveLength(1);
+  });
+
   it('keeps the category given most often, not the most recent', () => {
     const derived = ctx.deriveMemory_([
       row({ category: 'Food & Drink' }),
@@ -521,6 +545,163 @@ describe('running the cascade over the sheet', () => {
     const second = c.readRecords_(tx, c.TX_COLUMNS, 1)[1];
     expect(second.category_auto).toBe('Food & Drink');
     expect(second.category_source).toBe('memory');
+  });
+});
+
+describe('a rules match confirms itself', () => {
+  /**
+   * The point of the feature: a rule is a standing instruction, so obeying it
+   * and then queueing the row for you to agree with it is the same act twice.
+   *
+   * The tests that matter here are the *negative* ones. Confirming freezes the
+   * row against every later run, so a tier that confirmed when it should not
+   * have is not a wrong tick — it is a category that can no longer be recomputed
+   * and a rule correction that silently fails to land.
+   */
+  function book(rows, { confirmRuleMatches = null } = {}) {
+    const c = load();
+    c.setup();
+
+    if (confirmRuleMatches !== null) {
+      const config = c.__spreadsheet.getSheetByName('_config');
+      config
+        .getRange(c.readColumn_(config, 1).indexOf('confirm_rule_matches') + 2, 2)
+        .setValue(confirmRuleMatches);
+    }
+
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    const values = rows.map((row) => c.TX_COLUMNS.map((name) => (name in row ? row[name] : '')));
+    tx.getRange(2, 1, values.length, c.TX_COLUMNS.length).setValues(values);
+    return { c, tx };
+  }
+
+  const row = (i, over = {}) => Object.assign({
+    uid: 'u' + i, account_id: 'revolut', account_name: 'Revolut',
+    booking_date: new Date(2026, 4, i), amount: -10, currency: 'EUR',
+    description: 'PAGAMENTO POS NETFLIX', counterparty: ''
+  }, over);
+
+  const readOne = (c, tx, at = 0) => c.readRecords_(tx, c.TX_COLUMNS, 1)[at];
+
+  it('ticks a row a text rule answered for', () => {
+    const { c, tx } = book([row(1)]);
+    const result = c.commitCategorize_(c.planCategorize_());
+
+    expect(readOne(c, tx).category_source).toBe('rule');
+    expect(readOne(c, tx).confirmed).toBe(true);
+    expect(result.confirmed).toBe(1);
+  });
+
+  it('ticks a row an mcc rule answered for', () => {
+    // The other half of the `rules` tab, and the reason this is not gated on
+    // tier 5 alone: 5411 is an exact match on a card-network code, which is if
+    // anything the more trustworthy of the two.
+    const { c, tx } = book([row(1, { description: 'SPESA', mcc: '5411' })]);
+    c.commitCategorize_(c.planCategorize_());
+
+    expect(readOne(c, tx).category_source).toBe('mcc');
+    expect(readOne(c, tx).confirmed).toBe(true);
+  });
+
+  it('leaves a memory match alone, because memory is built from confirmed rows', () => {
+    // Tier 3 is derived from what you confirmed. Confirming *on* it would close
+    // the loop and let one agreement propagate itself for ever.
+    const memory = (c) => {
+      const sheet = c.__spreadsheet.getSheetByName('_memory');
+      sheet.getRange(2, 1, 1, c.MEMORY_COLUMNS.length).setValues([
+        c.MEMORY_COLUMNS.map((name) => ({
+          merchant_key: 'zzqq', category: 'Shopping', subcategory: 'Clothing', hits: 9
+        }[name] ?? ''))
+      ]);
+    };
+
+    const { c, tx } = book([row(1, { description: 'ZZQQ' })]);
+    memory(c);
+    c.commitCategorize_(c.planCategorize_());
+
+    expect(readOne(c, tx).category_source).toBe('memory');
+    expect(readOne(c, tx).confirmed).toBe('');
+  });
+
+  it('leaves an unclassified row alone, which is what the queue is for', () => {
+    const { c, tx } = book([row(1, { description: 'ZZQQ NOTHING MATCHES THIS' })]);
+    c.commitCategorize_(c.planCategorize_());
+
+    expect(readOne(c, tx).category_source).toBe('unclassified');
+    expect(readOne(c, tx).confirmed).toBe('');
+  });
+
+  it('leaves both legs of a transfer alone', () => {
+    // A pairing rather than a categorisation, and it can be dissolved by the
+    // other leg changing — so freezing one against a later run is wrong.
+    const { c, tx } = book([
+      row(1, { description: 'MOVE', amount: -250 }),
+      row(2, { description: 'MOVE', amount: 250, uid: 'u2',
+        account_id: 'fineco', account_name: 'Fineco' })
+    ]);
+    c.commitCategorize_(c.planCategorize_());
+
+    const records = c.readRecords_(tx, c.TX_COLUMNS, 1);
+    expect(records[0].category_source).toBe('transfer');
+    expect(records[0].confirmed).toBe('');
+    expect(records[1].confirmed).toBe('');
+  });
+
+  it('writes nothing when confirm_rule_matches is no', () => {
+    const { c, tx } = book([row(1)], { confirmRuleMatches: 'no' });
+    const result = c.commitCategorize_(c.planCategorize_());
+
+    expect(readOne(c, tx).category_source).toBe('rule');
+    expect(readOne(c, tx).confirmed).toBe('');
+    expect(result.confirmed).toBe(0);
+  });
+
+  it('counts what it is about to freeze, before it writes any of it', () => {
+    // The dialog is the only place this happens in front of somebody — the
+    // sync does the identical thing unattended — so the count has to be on the
+    // plan rather than in the result.
+    const { c, tx } = book([row(1), row(2), row(3)]);
+    const plan = c.planCategorize_();
+
+    expect(plan.confirming).toBe(3);
+    expect(readOne(c, tx).confirmed).toBe('');
+    expect(c.describeCategorizePlan_(plan)).toMatch(/3 rows matched a rule/);
+  });
+
+  it('says nothing about confirming when there is nothing to confirm', () => {
+    const { c } = book([row(1, { description: 'ZZQQ NOTHING MATCHES THIS' })]);
+    expect(c.describeCategorizePlan_(c.planCategorize_())).not.toMatch(/matched a rule/);
+  });
+
+  it('claims a row once and never looks at it again', () => {
+    // Self-limiting, and this is the assertion that says so: the row ticked on
+    // run 1 is `isConfirmedRow_` on run 2, so `frozenVerdict_` short-circuits
+    // above the confirm branch. Without that, every run would rewrite TRUE over
+    // TRUE on every rule-matched row in the book.
+    const { c } = book([row(1), row(2)]);
+    c.commitCategorize_(c.planCategorize_());
+
+    const second = c.planCategorize_();
+    expect(second.confirming).toBe(0);
+    expect(second.frozen).toBe(2);
+    expect(c.commitCategorize_(second).writes).toBe(0);
+  });
+
+  it('does not tick a row you had already confirmed by hand', () => {
+    const { c } = book([row(1, { confirmed: true })]);
+    expect(c.planCategorize_().confirming).toBe(0);
+  });
+
+  it('takes the ticked rows out of the review queue', () => {
+    // The queue filters on `!isConfirmedRow_`, so this needs no code of its own
+    // — which is the point of asserting it rather than assuming it.
+    const { c } = book([row(1), row(2, { description: 'ZZQQ NOTHING MATCHES' })]);
+    c.commitCategorize_(c.planCategorize_());
+    c.refreshReviewQueue();
+
+    const queue = c.readRecords_(
+      c.__spreadsheet.getSheetByName('review'), c.REVIEW_COLUMNS, 1);
+    expect(queue.map((entry) => entry.uid)).toEqual(['u2']);
   });
 });
 

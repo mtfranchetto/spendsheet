@@ -476,6 +476,13 @@ var DEFAULT_CONFIG = [
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
   ['duplicate_window_days', 3, 'How far apart an imported row and a synced one may be booked and still be the same transaction.'],
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
+  // A rules-tab match is a standing instruction, so obeying it and then asking
+  // you to agree with it is the same act twice. Set to no and every row goes to
+  // the queue as before. Worth a switch rather than a constant because
+  // confirming *freezes* the row — `frozenVerdict_` keeps a confirmed row's
+  // category through every later run — so a rule corrected afterwards does not
+  // reach the rows it already claimed.
+  ['confirm_rule_matches', 'yes', 'Treat a rules-tab match as confirmed, so it skips the review queue. Set to no to review every row yourself.'],
   // `cashflow_horizon_days` and `trend_days` went from here with the two files
   // that read them — the cashflow projection in `15_recurring.gs` and the net
   // worth chart on the old `dashboard` tab. A dead constant is invisible; a

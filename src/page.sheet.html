@@ -827,11 +827,82 @@
     // Rebound on every open rather than once, because `clear()` empties the
     // dialog but the element itself is reused, so a listener added here would
     // otherwise accumulate one copy per transaction you ever tapped.
+    if (record.deletable) add(body, deleteControl(record, dialog));
+
     dialog.onclick = function (event) {
       if (event.target === dialog) dialog.close();
     };
 
     openWithoutMoving(dialog);
+  }
+
+  /**
+   * Delete, on the one kind of row that can be.
+   *
+   * Only cash you typed — `recordIsDeletable_` on the server is the authority
+   * and `record.deletable` is what it decided, so a synced row is never offered
+   * this and the server refuses it again if a page sends one anyway.
+   *
+   * **Two taps, and the first one only arms it.** The alternatives were a nested
+   * dialog — this sheet is a `<dialog>` already, and a second inside it is a
+   * fight with the backdrop and with focus — or `window.confirm`, which draws
+   * bare browser chrome in the middle of a page that has none.
+   *
+   * **Nothing reverts on a timer.** Once armed it stays armed; the reset is
+   * closing the sheet, which `openSheet` rebuilds from nothing on every open. A
+   * control that quietly changes what it does while you are looking at it is
+   * worse than one that waits — the tap that lands on the disarmed button is
+   * the one you meant for the armed one.
+   */
+  function deleteControl(record, dialog) {
+    var wrap = el('div', 'danger-zone');
+    var armed = false;
+
+    var button = el('button', 'danger', 'Delete');
+    button.type = 'button';
+
+    var note = el('p', 'muted', 'A copy is kept on the _removed tab.');
+    note.hidden = true;
+
+    button.addEventListener('click', function () {
+      if (!armed) {
+        armed = true;
+        button.className = 'danger armed';
+        button.textContent = 'Tap again to delete';
+        note.hidden = false;
+        return;
+      }
+
+      dialog.close();
+      sendDelete(record);
+    });
+
+    add(wrap, button, note);
+    return wrap;
+  }
+
+  /**
+   * The delete round trip, shaped like `sendDecision` because it is the same
+   * problem: act locally, ask the server, put it back if the answer is no.
+   *
+   * `dropRecord` rather than `dropConfirmed` — there is no filter under which a
+   * deleted row still belongs on screen. And unlike a confirmation this one does
+   * toast on success: the row vanishing is the same thing a refused tap would
+   * look like a moment later, and "a copy is on _removed" is the part worth
+   * saying out loud to somebody who has just destroyed a record on a phone.
+   */
+  function sendDelete(record) {
+    var dropped = dropRecord(record);
+    render();
+
+    call('appDeleteRecord', { uid: record.uid }).then(function (result) {
+      toast(result.message);
+      reloadAfterWrite();
+    }).catch(function (error) {
+      toast('Not deleted: ' + error.message);
+      restoreDropped(record, dropped);
+      render();
+    });
   }
 
   /**
@@ -862,21 +933,46 @@
    * and the backlog closes up the way an inbox does.
    */
   function dropConfirmed(record) {
+    return dropFromLists(record, [
+      state.filters.records.unconfirmedOnly ? state.records.rows : null,
+      state.data.overview && state.data.overview.review
+    ]);
+  }
+
+  /**
+   * The same removal, for a row that is not coming back at all.
+   *
+   * A delete takes it out of `state.records.rows` unconditionally — where
+   * `dropConfirmed` leaves it alone unless the list is filtered to unconfirmed,
+   * because a confirmed row is what an unfiltered list is *for*. There is no
+   * filter under which a deleted row belongs on screen.
+   */
+  function dropRecord(record) {
+    return dropFromLists(record, [
+      state.records.rows,
+      state.data.overview && state.data.overview.review
+    ]);
+  }
+
+  /**
+   * Take the record out of each list that still holds it, remembering where.
+   *
+   * The count follows `state.records.rows` **by identity** rather than by which
+   * caller ran, for the same reason `restoreDropped` does: a refetch that lands
+   * mid-flight replaces that array wholesale, and a decrement aimed at the array
+   * it replaced would be counting a list nobody is drawing.
+   */
+  function dropFromLists(record, lists) {
     var dropped = [];
 
-    var take = function (rows) {
+    (lists || []).forEach(function (rows) {
       var at = (rows || []).indexOf(record);
-      if (at === -1) return false;
+      if (at === -1) return;
 
       rows.splice(at, 1);
       dropped.push({ rows: rows, at: at });
-      return true;
-    };
-
-    if (state.filters.records.unconfirmedOnly && take(state.records.rows)) {
-      if (state.records.total > 0) state.records.total--;
-    }
-    take(state.data.overview && state.data.overview.review);
+      if (rows === state.records.rows && state.records.total > 0) state.records.total--;
+    });
 
     return dropped;
   }

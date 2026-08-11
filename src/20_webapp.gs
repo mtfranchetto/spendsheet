@@ -91,7 +91,7 @@ var WEBAPP_UNCONFIRMED_PARAM = 'u'; // `1`, and nothing else is true
  * landing on the dashboard. So this is the tab bar's three, and it is the same
  * list the page keeps as `NAV`.
  */
-var WEBAPP_SCREENS = ['dashboard', 'analytics', 'records'];
+var WEBAPP_SCREENS = ['dashboard', 'records', 'analytics'];
 
 /**
  * How much of any one parameter is carried through, and how many accounts.

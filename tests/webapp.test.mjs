@@ -263,7 +263,7 @@ describe('the view on the URL', () => {
     // `add` and `revalue` are opened from an account tile and carry that
     // account in memory only. A URL naming one would restore a form that had
     // forgotten what it was for.
-    expect(ctx.WEBAPP_SCREENS).toEqual(['dashboard', 'analytics', 'records']);
+    expect(ctx.WEBAPP_SCREENS).toEqual(['dashboard', 'records', 'analytics']);
   });
 
   it('carries the filters the URL named, and only those', () => {

@@ -67,7 +67,8 @@ const tx = (over = {}) => Object.assign({
 
 /** Every function a page can invoke by name. */
 const PUBLIC_API = ['appOpen', 'appOverview', 'appAnalytics', 'appRecords',
-  'appDashboard', 'appConfirm', 'appAddCash', 'appAddRule', 'appMarkTransfer', 'describeDashboardCost'];
+  'appDashboard', 'appConfirm', 'appAddCash', 'appAddRule', 'appMarkTransfer',
+  'appDeleteRecord', 'describeDashboardCost'];
 
 describe('the gate on every entry point', () => {
   it('lets the owner past the guard on each one', () => {
@@ -579,6 +580,26 @@ describe('confirming from the app', () => {
     ['manual', 'transfer-leg', 'csv:budgetbakers', ''].forEach((source) => {
       expect(c.descriptionIsEditable_(source), source).toBe(true);
     });
+  });
+
+  it('says which rows may be deleted, which is a narrower list than that', () => {
+    // Editing a description asks whether a bank will fetch the row again.
+    // Deleting asks that *and* whether anything else depends on the row — so a
+    // transfer leg and an imported row are editable and not deletable.
+    const c = book();
+    expect(c.recordIsDeletable_('manual')).toBe(true);
+    ['enablebanking', 'transfer-leg', 'csv:budgetbakers', '', null, undefined]
+      .forEach((source) => {
+        expect(c.recordIsDeletable_(source), String(source)).toBe(false);
+      });
+  });
+
+  it('tells the page which rows carry the control', () => {
+    const c = book([tx({ uid: 'u-bank' }), tx({ uid: 'u-cash', source: 'manual' })]);
+    const rows = c.appRecords({ period: { kind: 'last_12' } }, 0).rows;
+
+    expect(rows.find((r) => r.uid === 'u-cash').deletable).toBe(true);
+    expect(rows.find((r) => r.uid === 'u-bank').deletable).toBe(false);
   });
 
   it('does not offer one as a chip from the labels tab', () => {
@@ -1418,6 +1439,105 @@ describe('adding cash from the app', () => {
     c.appAddCash({ amount: '3', account: 'Wallet', date: '2026-03-09' });
 
     expect(ledger(c)[0].booking_date).toBeInstanceOf(Date);
+  });
+});
+
+describe('deleting a cash transaction', () => {
+  /**
+   * The only thing in the app that destroys a row, so most of this file is
+   * about what it *refuses*. `transactions` is append-only by design and every
+   * other source has a reason not to be removable a row at a time — see
+   * `recordIsDeletable_`.
+   */
+  const ledger = (c) => c.readRecords_(
+    c.__spreadsheet.getSheetByName('transactions'), c.TX_COLUMNS, 1);
+
+  const removed = (c) => c.readRecords_(
+    c.__spreadsheet.getSheetByName('_removed'), c.TX_COLUMNS, 1);
+
+  const cash = (over = {}) => tx(Object.assign({
+    uid: 'u-cash', source: 'manual', description: 'Coffee'
+  }, over));
+
+  it('removes the row and keeps a copy on _removed', () => {
+    const c = book([tx({ uid: 'u-bank' }), cash()]);
+    const result = c.appDeleteRecord({ uid: 'u-cash' });
+
+    expect(result.removed).toBe(1);
+    expect(result.message).toMatch(/_removed/);
+    expect(ledger(c).map((r) => r.uid)).toEqual(['u-bank']);
+    expect(removed(c).map((r) => r.uid)).toEqual(['u-cash']);
+  });
+
+  it('archives the row before deleting it, not after', () => {
+    // Ordered this way so a failure at the delete leaves a spare archive row —
+    // noise — rather than leaving nothing at all. Asserted through the archive
+    // holding the row's actual contents, which is only true if the copy was
+    // taken while the row still existed.
+    const c = book([tx({ uid: 'u-bank' }), cash({ description: 'Gelato', amount: 4.5 })]);
+    c.appDeleteRecord({ uid: 'u-cash' });
+
+    expect(removed(c)[0].description).toBe('Gelato');
+    expect(removed(c)[0].amount).toBe(4.5);
+  });
+
+  it('refuses a synced row, which would come back on the next sync', () => {
+    const c = book([tx({ uid: 'u-bank' })]);
+    expect(() => c.appDeleteRecord({ uid: 'u-bank' })).toThrow(/cash transaction you typed/);
+    expect(ledger(c)).toHaveLength(1);
+  });
+
+  it('refuses a transfer leg, which would orphan its partner', () => {
+    const c = book([cash({ uid: 'u-leg', source: 'transfer-leg' })]);
+    expect(() => c.appDeleteRecord({ uid: 'u-leg' })).toThrow(/cash transaction you typed/);
+  });
+
+  it('refuses an imported row, which has its own removal path', () => {
+    const c = book([cash({ uid: 'u-csv', source: 'csv:budgetbakers' })]);
+    expect(() => c.appDeleteRecord({ uid: 'u-csv' })).toThrow(/cash transaction you typed/);
+  });
+
+  it('asks the sheet what the source is, not the caller', () => {
+    // A page can send anything. `recordIsDeletable_` is consulted twice for the
+    // same reason `descriptionIsEditable_` is, and this is the second one.
+    const c = book([tx({ uid: 'u-bank' })]);
+    expect(() => c.appDeleteRecord({ uid: 'u-bank', source: 'manual' }))
+      .toThrow(/cash transaction you typed/);
+  });
+
+  it('refuses row 2, which anchors every formula on the tab', () => {
+    // Not a delete at all but the destruction of every derived column, and the
+    // one case `commitSyncedDuplicates_` also refuses rather than repairs.
+    const c = book([cash()]);
+    expect(() => c.appDeleteRecord({ uid: 'u-cash' })).toThrow(/row 2/);
+    expect(ledger(c)).toHaveLength(1);
+  });
+
+  it('refuses a uid it cannot find, and one it was never given', () => {
+    const c = book([tx({ uid: 'u-bank' }), cash()]);
+    expect(() => c.appDeleteRecord({ uid: 'nope' })).toThrow(/not in transactions/);
+    expect(() => c.appDeleteRecord({})).toThrow(/Which transaction/);
+  });
+
+  it('re-baselines the row count, so the next sync is not blocked', () => {
+    // The row-loss detector has just watched the tab shrink, which it is right
+    // to treat as a catastrophe. This shrink was asked for.
+    const c = book([tx({ uid: 'u-bank' }), cash()]);
+    c.rememberRowCount_();
+    c.appDeleteRecord({ uid: 'u-cash' });
+
+    expect(c.checkRowLoss_()).toEqual([]);
+  });
+
+  it('invalidates the ledger cache, which deleteRows does not do by itself', () => {
+    // `deleteRows` is neither `writeCell_` nor `appendRows_`, and `onEdit` does
+    // not fire for a change a script made — so without the explicit bump the
+    // app goes on serving the deleted row until the cache expires.
+    const c = book([tx({ uid: 'u-bank' }), cash()]);
+    const before = c.dataVersion_();
+    c.appDeleteRecord({ uid: 'u-cash' });
+
+    expect(c.dataVersion_()).not.toBe(before);
   });
 });
 
