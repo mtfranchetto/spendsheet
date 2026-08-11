@@ -56,6 +56,7 @@ var CALLS_PER_FULL_SYNC = 3;
 
 /** Menu → Install triggers. Safe to run as often as you like. */
 function installTriggers() {
+  requireInteractive_();
   var config = readConfig_();
   var removed = removeOwnTriggers_();
   var installed = [];
@@ -184,6 +185,7 @@ function formatHour_(hour) {
  * ask from the spreadsheet.
  */
 function describeTriggers() {
+  requireInteractive_();
   var ours = SCHEDULED.map(function (entry) { return entry.fn; });
   var found = ScriptApp.getProjectTriggers().filter(function (trigger) {
     return ours.indexOf(trigger.getHandlerFunction()) !== -1;

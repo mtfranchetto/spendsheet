@@ -29,7 +29,7 @@
  * every refresh appended another blank-keyed `_status` row instead of
  * updating the one it meant to.
  */
-function recordConnection(session, fallbackProvider, fallbackSessionId) {
+function recordConnection_(session, fallbackProvider, fallbackSessionId) {
   var accounts = extractAccounts(session);
   var provider = (session.aspsp && session.aspsp.name) || fallbackProvider || 'unknown';
   var session_id = sessionId(session) || fallbackSessionId || '';
@@ -140,7 +140,7 @@ function enrichAccounts_(accounts) {
 
     var details;
     try {
-      details = ebGetAccountDetails(account.uid);
+      details = ebGetAccountDetails_(account.uid);
     } catch (e) {
       return account;
     }
@@ -315,6 +315,7 @@ function listSyncableAccounts_() {
  * Names you have given accounts are preserved, as on any reconnect.
  */
 function refreshAccounts() {
+  requireInteractive_();
   var status = sheetOrThrow_(TABS.STATUS);
   var ids = readColumn_(status, colIndex_(STATUS_COLUMNS, 'session_id'))
     .filter(function (id) { return id; });
@@ -326,7 +327,7 @@ function refreshAccounts() {
 
   ids.forEach(function (id) {
     try {
-      var summary = recordConnection(ebGetSession(id), null, id);
+      var summary = recordConnection_(ebGetSession_(id), null, id);
       total += summary.accountCount;
       trace.push({ sessionId: id, summary: summary });
     } catch (e) {

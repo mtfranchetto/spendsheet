@@ -25,6 +25,7 @@
  * unit test there was, which is the argument for this file existing.
  */
 function runSmokeTests() {
+  requireInteractive_();
   var results = [];
   var env = ebEnvironment();
 
@@ -40,12 +41,12 @@ function runSmokeTests() {
   }));
 
   results.push(smokeTest_('api', 'GET /application', function () {
-    var app = ebGetApplication();
+    var app = ebGetApplication_();
     return app.name || app.kid || 'ok';
   }));
 
   results.push(smokeTest_('api', 'GET /aspsps', function () {
-    var banks = ebListAspsps();
+    var banks = ebListAspsps_();
     if (!banks.length) throw new Error('no banks returned');
     return banks.length + ' banks, e.g. ' + banks[0].name;
   }));
@@ -539,6 +540,7 @@ function writeTestResults_(results) {
  * anonymous visitor should ever see.
  */
 function describeWebAppContext() {
+  requireInteractive_();
   var report = {
     activeUser: safeEmail_(function () { return Session.getActiveUser().getEmail(); }),
     effectiveUser: safeEmail_(function () { return Session.getEffectiveUser().getEmail(); }),
@@ -587,6 +589,7 @@ function safeEmail_(fn) {
  * accounts, and which fields survive between them.
  */
 function inspectSession() {
+  requireInteractive_();
   var status = sheetOrThrow_(TABS.STATUS);
   var ids = readColumn_(status, colIndex_(STATUS_COLUMNS, 'session_id'))
     .filter(function (id) { return id; });
@@ -595,7 +598,7 @@ function inspectSession() {
   var sessions = [];
   ids.forEach(function (id) {
     try {
-      var session = ebGetSession(id);
+      var session = ebGetSession_(id);
       sessions.push({ id: id, session: session });
       logAnomaly_(ANOMALY_KIND.RAW_DUMP, '',
         'GET /sessions/' + id + ' — top-level keys: ' + Object.keys(session || {}).join(', '),
@@ -688,6 +691,7 @@ function unique_(values) {
  * *holder* in `name` and leaves `product` null.
  */
 function inspectAccountDetails() {
+  requireInteractive_();
   var sheet = sheetOrThrow_(TABS.ACCOUNTS);
   // The provider's current uid, not our frozen one — this calls the API.
   var uids = readRecords_(sheet, ACCOUNT_COLUMNS)
@@ -697,7 +701,7 @@ function inspectAccountDetails() {
 
   uids.forEach(function (uid) {
     try {
-      var details = ebGetAccountDetails(uid);
+      var details = ebGetAccountDetails_(uid);
       logAnomaly_(ANOMALY_KIND.RAW_DUMP, uid,
         'GET /accounts/{uid}/details — keys: ' + Object.keys(details || {}).join(', '), details);
     } catch (e) {
@@ -720,12 +724,13 @@ function inspectAccountDetails() {
  * answers them per bank.
  */
 function inspectTransactions() {
+  requireInteractive_();
   var accounts = listSyncableAccounts_();
   if (!accounts.length) throw new Error('No bank accounts to inspect.');
 
   accounts.forEach(function (account) {
     try {
-      var page = ebGetTransactionsPage(account.uid, {
+      var page = ebGetTransactionsPage_(account.uid, {
         dateFrom: isoDay_(new Date(), -30),
         status: TX_STATUS.BOOKED
       });

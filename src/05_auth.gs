@@ -6,7 +6,7 @@
  * application nominated. That address normally implies hosting something.
  *
  * Here it is the Apps Script web app deployment — `doGet` receives the
- * callback, exchanges the code for a session and hands it to `recordConnection`
+ * callback, exchanges the code for a session and hands it to `recordConnection_`
  * in 06_accounts.gs. No localhost, no tunnel, no VPS, nothing to keep patched.
  *
  * The cost of that is a publicly reachable endpoint. It has to be: the bank's
@@ -33,6 +33,7 @@ var CONSENT_DAYS = 180;
 
 /** Menu → Connect a bank. */
 function startAuth() {
+  requireInteractive_();
   var html = HtmlService.createHtmlOutput(bankPickerHtml_())
     .setWidth(560)
     .setHeight(620);
@@ -41,7 +42,8 @@ function startAuth() {
 
 /** Called from the picker dialog. */
 function listBanks(country) {
-  return ebListAspsps(country).map(function (aspsp) {
+  requireInteractive_();
+  return ebListAspsps_(country).map(function (aspsp) {
     return {
       name: aspsp.name,
       country: aspsp.country,
@@ -59,6 +61,7 @@ function listBanks(country) {
  * arrive for a flow we have no record of.
  */
 function beginAuthorization(aspspName, country, psuType) {
+  requireInteractive_();
   if (!aspspName) throw new Error('Pick a bank first.');
 
   var redirectUrl = webAppUrl();
@@ -87,7 +90,7 @@ function beginAuthorization(aspspName, country, psuType) {
 
   var response;
   try {
-    response = ebStartAuthorization(payload);
+    response = ebStartAuthorization_(payload);
   } catch (err) {
     // The redirect URL is the usual culprit on a 400: it must match one
     // registered for the application exactly, and the value here comes from
@@ -179,6 +182,7 @@ function detectedWebAppUrl() {
  * at the typo.
  */
 function saveRedirectUrl(url) {
+  requireInteractive_();
   var error = validateRedirectUrl(url);
   if (error) throw new Error(error);
 
@@ -271,8 +275,8 @@ function doGet(e) {
     }
 
     clearAuthState_();
-    var session = ebCreateSession(params.code);
-    var summary = recordConnection(session, stored.aspspName);
+    var session = ebCreateSession_(params.code);
+    var summary = recordConnection_(session, stored.aspspName);
 
     // The full-history window closes about an hour after authorisation, after
     // which the same call returns a rolling ~90 days and the backfill is gone

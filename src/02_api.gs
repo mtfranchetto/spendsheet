@@ -125,6 +125,7 @@ function validateApplicationId(id) {
  * editor if you'd rather not click.
  */
 function saveCredentials(env, applicationId, privateKey) {
+  requireInteractive_();
   var idError = validateApplicationId(applicationId);
   if (idError) throw new Error(idError);
 
@@ -155,6 +156,7 @@ function saveCredentials(env, applicationId, privateKey) {
  * key isn't a procedure, it's a trap.
  */
 function installCredentials() {
+  requireInteractive_();
   var html = HtmlService.createHtmlOutput(credentialsFormHtml_())
     .setWidth(560)
     .setHeight(620);
@@ -453,12 +455,12 @@ function extractErrorDetail(bodyText) {
 // ---------------------------------------------------------------------------
 
 /** The registered application. Cheapest possible proof that the JWT is valid. */
-function ebGetApplication() {
+function ebGetApplication_() {
   return ebFetch_('get', '/application');
 }
 
 /** Banks reachable in this environment. In sandbox this includes Mock ASPSP. */
-function ebListAspsps(country) {
+function ebListAspsps_(country) {
   var result = ebFetch_('get', '/aspsps', { query: { country: country } });
   return result.aspsps || [];
 }
@@ -467,16 +469,16 @@ function ebListAspsps(country) {
  * Begin authorisation. Returns `{ url }` — the bank's own login page, which
  * the user must open themselves; SCA cannot be automated, by design.
  */
-function ebStartAuthorization(payload) {
+function ebStartAuthorization_(payload) {
   return ebFetch_('post', '/auth', { payload: payload });
 }
 
 /** Exchange the code the bank redirected back with for a session. */
-function ebCreateSession(code) {
+function ebCreateSession_(code) {
   return ebFetch_('post', '/sessions', { payload: { code: code } });
 }
 
-function ebGetSession(sessionId) {
+function ebGetSession_(sessionId) {
   return ebFetch_('get', '/sessions/' + encodeURIComponent(sessionId));
 }
 
@@ -496,11 +498,11 @@ function ebGetSession(sessionId) {
  * as "no name available" rather than as an error: an unnamed account is
  * still a perfectly usable account.
  */
-function ebGetAccountDetails(accountUid) {
+function ebGetAccountDetails_(accountUid) {
   return ebFetch_('get', '/accounts/' + encodeURIComponent(accountUid) + '/details');
 }
 
-function ebGetAccountBalances(accountUid) {
+function ebGetAccountBalances_(accountUid) {
   var result = ebFetch_('get', '/accounts/' + encodeURIComponent(accountUid) + '/balances');
   return result.balances || [];
 }
@@ -513,7 +515,7 @@ function ebGetAccountBalances(accountUid) {
  * rolling ~90 days afterwards. `strategy: 'longest'` on the first run is the
  * one chance to backfill, and missing it costs a re-consent.
  */
-function ebGetTransactionsPage(accountUid, options) {
+function ebGetTransactionsPage_(accountUid, options) {
   options = options || {};
   return ebFetch_('get', '/accounts/' + encodeURIComponent(accountUid) + '/transactions', {
     query: {
@@ -534,7 +536,7 @@ function ebGetTransactionsPage(accountUid, options) {
  * caller is told — `truncated` is returned rather than logged and forgotten,
  * because a silent cap reads as "we fetched everything" when we didn't.
  */
-function ebGetAllTransactions(accountUid, options) {
+function ebGetAllTransactions_(accountUid, options) {
   options = options || {};
   var maxPages = options.maxPages || 20;
 
@@ -543,7 +545,7 @@ function ebGetAllTransactions(accountUid, options) {
   var pages = 0;
 
   do {
-    var page = ebGetTransactionsPage(accountUid, {
+    var page = ebGetTransactionsPage_(accountUid, {
       dateFrom: options.dateFrom,
       dateTo: options.dateTo,
       status: options.status,

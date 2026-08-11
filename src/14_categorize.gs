@@ -502,6 +502,7 @@ function dayDistance_(a, b) {
 
 /** Menu → Re-categorise all. */
 function recategorizeAll() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var preview = planCategorize_();
 
@@ -751,6 +752,7 @@ function categorizeAfterSync_(config) {
  * wrong guess, which reinforces the entry.
  */
 function learnFromCorrections() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -933,6 +935,7 @@ function writeMemory_(sheet, entries) {
  * any way that leaves the flag meaning what it claims.
  */
 function confirmVisibleRows() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var sheet = sheetOrThrow_(TABS.TRANSACTIONS);
   var target = confirmableRows_(sheet);

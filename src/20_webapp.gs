@@ -22,7 +22,7 @@
  *   Door 1, the consent redirect — the URL already registered with Enable
  *   Banking, access **Anyone**. It must stay anonymous: PSD2 consent often
  *   completes inside the bank's own webview, which carries no Google session,
- *   and a login wall there kills `ebCreateSession(params.code)` while the
+ *   and a login wall there kills `ebCreateSession_(params.code)` while the
  *   authorisation code expires.
  *
  *   Door 2, the app — a new, private URL, access **Only myself**. Google
@@ -126,6 +126,7 @@ var WEBAPP_URL_PATTERN =
  * Apps Script offers, and it is also the honest one: the click is the user's.
  */
 function openWebApp() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var url = String(readConfig_()[WEBAPP_URL_KEY] || '').trim();
 
@@ -396,6 +397,51 @@ function webAppOwner_() {
   } catch (e) {
     return '';
   }
+}
+
+/**
+ * The gate for a function reached from the Sheet — a menu item, or a dialog it
+ * opened — and never from a page.
+ *
+ * ## Why this is not the same gate as `requireOwner_`
+ *
+ * `google.script.run` reaches **every** public name, not only the ones in
+ * `23_api.gs`. That is harmless for a script whose only door is the editor —
+ * a menu item already runs for someone with edit access. It is not harmless
+ * here, because Door 1 (the consent redirect) is served to *anyone* by
+ * necessity, and the page it serves carries the `google.script.run` bridge. So
+ * a stranger who loads that URL can call any global that lacks a trailing `_`,
+ * and it runs with the owner's authority — which is what let the ungated
+ * menu and diagnostic functions read balances, overwrite credentials and
+ * repoint the redirect. The `_` suffix is a *privacy* rule; it was never an
+ * authorisation one, and this is the missing half.
+ *
+ * The distinguisher is the UI context, not the identity. `getUi()` is reachable
+ * from a menu click and from a dialog the container opened, and throws under a
+ * page's `google.script.run` and under a trigger. Deciding on that rather than
+ * on `owner_email` keeps `setup()` runnable on a fresh book, where no owner is
+ * configured yet and an identity check would lock the first run out of itself.
+ *
+ * The fallback to `requireOwner_()` is for the one interactive path with no UI
+ * of its own: a dialog's `google.script.run` callback runs server-side with no
+ * `getUi()`, but with the owner as the active user. A page's anonymous call is
+ * neither — no UI and no owner — so it is refused by both halves.
+ *
+ * Not for a function a trigger invokes by name (`syncScheduled`, `selfCheck`,
+ * `snapshotToDrive`): a trigger has no UI either, and gating it would break the
+ * unattended run this whole project exists to keep working. Those stay reachable
+ * and are kept harmless by returning nothing a caller could read — see the note
+ * on the sync entry points.
+ */
+function requireInteractive_() {
+  try {
+    SpreadsheetApp.getUi();
+    return;
+  } catch (e) {
+    // No UI context — a page's google.script.run, or a trigger. Fall through to
+    // the identity check, which a dialog callback passes and a stranger fails.
+  }
+  requireOwner_();
 }
 
 /**
