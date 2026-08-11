@@ -147,6 +147,7 @@ function buildAnalytics_(ss, sep, report) {
  * other is refilling the review queue.
  */
 function rebuildCharts() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 

@@ -169,7 +169,7 @@ describe('thrown errors carry the API explanation', () => {
       body: JSON.stringify({ message: 'redirect_url not registered for this application' })
     }));
 
-    expect(() => c.ebListAspsps()).toThrow(/redirect_url not registered/);
+    expect(() => c.ebListAspsps_()).toThrow(/redirect_url not registered/);
   });
 });
 
@@ -202,11 +202,11 @@ describe('credentials', () => {
 
   it('selects the key pair matching EB_ENV', () => {
     const sandbox = withApi(ok({}), 'SANDBOX');
-    sandbox.ebGetApplication();
+    sandbox.ebGetApplication_();
     expect(sandbox.decodeJwtPayload(sandbox.__fetches[0].params.headers.Authorization.slice(7)));
 
     const prod = withApi(ok({}), 'PRODUCTION');
-    prod.ebGetApplication();
+    prod.ebGetApplication_();
 
     // kid is the application ID, and kid is what picks the environment.
     const kidOf = (c) => JSON.parse(
@@ -218,7 +218,7 @@ describe('credentials', () => {
   });
 
   it('fails with a usable message when nothing is installed', () => {
-    expect(() => load().ebGetApplication()).toThrow(/installCredentials/);
+    expect(() => load().ebGetApplication_()).toThrow(/installCredentials/);
   });
 });
 
@@ -291,19 +291,19 @@ describe('the credentials dialog', () => {
 describe('endpoints', () => {
   it('lists banks, filtered by country', () => {
     const c = withApi(ok({ aspsps: [{ name: 'Mock ASPSP', country: 'FI' }] }));
-    const banks = c.ebListAspsps('IT');
+    const banks = c.ebListAspsps_('IT');
 
     expect(banks).toHaveLength(1);
     expect(c.__fetches[0].url).toBe('https://api.enablebanking.com/aspsps?country=IT');
   });
 
   it('returns an empty list rather than undefined when there are no banks', () => {
-    expect(withApi(ok({})).ebListAspsps()).toEqual([]);
+    expect(withApi(ok({})).ebListAspsps_()).toEqual([]);
   });
 
   it('escapes path parameters', () => {
     const c = withApi(ok({ balances: [] }));
-    c.ebGetAccountBalances('acc/../secret');
+    c.ebGetAccountBalances_('acc/../secret');
     expect(c.__fetches[0].url).toContain('acc%2F..%2Fsecret');
   });
 
@@ -311,7 +311,7 @@ describe('endpoints', () => {
     // Full history is reachable only for ~1h after authorisation; missing
     // this on the first run costs a re-consent.
     const c = withApi(ok({ transactions: [] }));
-    c.ebGetTransactionsPage('acc-1', { strategy: 'longest', dateFrom: '2024-01-01' });
+    c.ebGetTransactionsPage_('acc-1', { strategy: 'longest', dateFrom: '2024-01-01' });
 
     expect(c.__fetches[0].url).toContain('date_from=2024-01-01');
     expect(c.__fetches[0].url).toContain('strategy=longest');
@@ -320,7 +320,7 @@ describe('endpoints', () => {
   it('raises a typed error the caller can switch on', () => {
     const c = withApi(() => ({ code: 429, body: JSON.stringify({ code: 'ASPSP_RATE_LIMIT_EXCEEDED' }) }));
     try {
-      c.ebListAspsps();
+      c.ebListAspsps_();
       throw new Error('should have thrown');
     } catch (e) {
       expect(e.code).toBe('ASPSP_RATE_LIMIT_EXCEEDED');
@@ -330,7 +330,7 @@ describe('endpoints', () => {
   });
 });
 
-describe('ebGetAllTransactions', () => {
+describe('ebGetAllTransactions_', () => {
   it('follows continuation keys and concatenates pages', () => {
     let call = 0;
     const c = withApi(() => {
@@ -340,7 +340,7 @@ describe('ebGetAllTransactions', () => {
         : { code: 200, body: JSON.stringify({ transactions: [{ n: call }] }) };
     });
 
-    const result = c.ebGetAllTransactions('acc-1');
+    const result = c.ebGetAllTransactions_('acc-1');
 
     expect(result.transactions).toHaveLength(3);
     expect(result.pages).toBe(3);
@@ -356,7 +356,7 @@ describe('ebGetAllTransactions', () => {
       body: JSON.stringify({ transactions: [{}], continuation_key: 'always-more' })
     }));
 
-    const result = c.ebGetAllTransactions('acc-1', { maxPages: 3 });
+    const result = c.ebGetAllTransactions_('acc-1', { maxPages: 3 });
 
     expect(result.pages).toBe(3);
     expect(result.truncated).toBe(true);
@@ -364,7 +364,7 @@ describe('ebGetAllTransactions', () => {
   });
 
   it('handles an account with no transactions', () => {
-    const result = withApi(ok({ transactions: [] })).ebGetAllTransactions('acc-1');
+    const result = withApi(ok({ transactions: [] })).ebGetAllTransactions_('acc-1');
     expect(result.transactions).toEqual([]);
     expect(result.truncated).toBe(false);
   });

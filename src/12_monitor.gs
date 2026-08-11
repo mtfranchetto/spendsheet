@@ -45,6 +45,7 @@ var ALERT_KIND = {
 
 /** Menu → Health check. Every detector, reported rather than emailed. */
 function healthCheck() {
+  requireInteractive_();
   var findings = runChecks_(new Date());
   var message = findings.length
     ? findings.map(function (f) { return '• ' + f.detail; }).join('\n')
@@ -288,6 +289,7 @@ function rememberRowCount_() {
  * reset would make the detector unable to detect anything.
  */
 function acceptRowCount() {
+  requireInteractive_();
   var before = PropertiesService.getScriptProperties().getProperty(ROW_COUNT_PROP);
   rememberRowCount_();
 

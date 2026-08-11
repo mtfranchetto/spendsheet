@@ -149,6 +149,107 @@ describe('the gate on every entry point', () => {
   });
 });
 
+describe('the gate on every function the Sheet reaches', () => {
+  // `23_api.gs` is not the whole browser-reachable surface, and treating it as
+  // one is the hole this block exists to keep shut. `google.script.run` can call
+  // *any* global whose name lacks a trailing `_`, and Door 1 — the consent
+  // redirect — is served to anyone by necessity, bridge and all. So a stranger
+  // who loads that URL can call a menu handler or a diagnostic and it runs with
+  // the owner's authority: that is how the ungated `ebGet*` wrappers returned
+  // balances and `saveCredentials` overwrote the PEM to an anonymous caller.
+  //
+  // The rule is derived, not remembered, exactly as the `23_api.gs` block above
+  // derives its list by reading the file. The set that must be gated is every
+  // function the *menu* names and every function a *dialog* calls back into —
+  // read out of `19_menu.gs` and the `google.script.run` calls in `src/*.gs`, so
+  // a menu item added later drags its handler into this test whether or not
+  // anyone remembered to gate it.
+
+  const gs = readdirSync(SRC).filter((f) => f.endsWith('.gs'));
+  const text = Object.fromEntries(gs.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
+
+  /** name -> the function body, for every non-`_` global across `src/*.gs`. */
+  const bodies = {};
+  gs.forEach((f) => {
+    const src = text[f];
+    for (const m of src.matchAll(/^function\s+([A-Za-z0-9]+)\s*\(/gm)) {
+      const name = m[1];
+      if (name.endsWith('_')) continue;
+      const from = m.index;
+      const next = src.indexOf('\nfunction ', from + 1);
+      bodies[name] = src.slice(from, next === -1 ? undefined : next);
+    }
+  });
+
+  const names = (re, src) => [...src.matchAll(re)].map((m) => m[1]);
+
+  /** Every function the menu invokes, by name, out of the menu declaration. */
+  const menuFns = names(/\bfn:\s*'([A-Za-z0-9]+)'/g, text['19_menu.gs']);
+
+  /** Every function a dialog hands back to via `google.script.run`. */
+  const HANDLERS = new Set(['withSuccessHandler', 'withFailureHandler', 'withUserObject', 'withLogger']);
+  const dialogFns = [];
+  gs.forEach((f) => {
+    if (!text[f].includes('google.script.run')) return;
+    for (const m of text[f].matchAll(/\.([A-Za-z][A-Za-z0-9]*)\s*\(/g)) {
+      const name = m[1];
+      if (HANDLERS.has(name)) continue;
+      if (bodies[name] && !dialogFns.includes(name)) dialogFns.push(name);
+    }
+  });
+
+  // A trigger fires by naming a public function, and a trigger has no UI and no
+  // signed-in user — so a UI-or-owner gate on one would break the unattended run
+  // this project exists to keep alive. They are excused here deliberately, and
+  // stay safe by returning nothing a caller could read (counts, a filename, a
+  // health summary — never a balance, a transaction or a credential). Derived
+  // from the schedule so a fourth one is excused only once it is really wired.
+  const triggerFns = names(/\bfn:\s*'([A-Za-z0-9]+)'/g, text['11_triggers.gs']);
+
+  const mustGate = [...new Set([...menuFns, ...dialogFns])].filter((n) => !triggerFns.includes(n));
+
+  it('names a handler for every menu item and dialog callback', () => {
+    // If this is empty the derivation broke and every assertion below is vacuous.
+    expect(mustGate.length).toBeGreaterThan(20);
+    expect(mustGate).toContain('saveCredentials');   // the dialog callback
+    expect(mustGate).toContain('inspectSession');    // a diagnostic
+    expect(mustGate).not.toContain('snapshotToDrive'); // menu *and* trigger — excused
+  });
+
+  it('gates each of them on its first line', () => {
+    mustGate.forEach((name) => {
+      const body = bodies[name];
+      expect(body, name + ' is named by the menu/a dialog but defined nowhere').toBeTruthy();
+      const head = body.slice(0, body.indexOf('\n\n') === -1 ? 200 : body.indexOf('\n\n'));
+      expect(
+        /requireInteractive_\(\)|requireOwner_\(\)/.test(head),
+        name + ' is reachable from the Sheet but does not gate its first line'
+      ).toBe(true);
+    });
+  });
+
+  it('refuses the anonymous page context, and only that one', () => {
+    // The three states `requireInteractive_` decides between, told apart by the
+    // two things it reads: is there a UI, and who is the active user.
+    const c = book();
+
+    // A menu click: a UI context, so it is let through even before an identity
+    // is known — which is what keeps `setup()` runnable on a book with no owner.
+    c.Session.getActiveUser = () => ({ getEmail: () => '' });
+    expect(() => c.requireInteractive_(), 'menu click').not.toThrow();
+
+    // A dialog callback: no UI, but the owner is the active user.
+    c.Session.getActiveUser = () => ({ getEmail: () => 'owner@example.com' });
+    c.SpreadsheetApp.getUi = () => { throw new Error('no UI in this context'); };
+    expect(() => c.requireInteractive_(), 'dialog callback').not.toThrow();
+
+    // An anonymous `google.script.run` from Door 1: no UI, and no owner. The one
+    // case that must fail — it is the whole reason this gate exists.
+    c.Session.getActiveUser = () => ({ getEmail: () => '' });
+    expect(() => c.requireInteractive_(), 'anonymous page call').toThrow('Not available');
+  });
+});
+
 describe('confirming from the app', () => {
   const uidRow = (c, uid) => c.readRecords_(
     c.__spreadsheet.getSheetByName('transactions'), c.TX_COLUMNS, 1)

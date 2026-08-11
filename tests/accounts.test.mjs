@@ -142,7 +142,7 @@ describe('mergeAccountDetails', () => {
 describe('enrichAccounts_', () => {
   it('names an account the session left bare', () => {
     const c = connected(() => ({ code: 200, body: JSON.stringify({ name: 'Fineco mock', currency: 'EUR' }) }));
-    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+    c.recordConnection_(SPARSE_SESSION, 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('B2').getValue()).toBe('Fineco mock');
@@ -152,7 +152,7 @@ describe('enrichAccounts_', () => {
   it('does not spend a call when the session already told us everything', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
     const before = c.__fetches.length;
-    c.recordConnection({
+    c.recordConnection_({
       ...SESSION,
       accounts_data: [{ uid: 'acc-1', name: 'Current', currency: 'EUR', account_id: { iban: 'FI21' } }],
       accounts: ['acc-1']
@@ -164,7 +164,7 @@ describe('enrichAccounts_', () => {
   it('keeps the connection when the provider has no details endpoint', () => {
     // A 404 here means "no name available", not "connection failed".
     const c = connected(() => ({ code: 404, body: '{}' }));
-    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+    c.recordConnection_(SPARSE_SESSION, 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('A2').getValue()).toBe('a8160088-28a0-45f2-ba4d-3c7959863f92');
@@ -181,7 +181,7 @@ describe('append position', () => {
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('J2').getFormula()).toContain('ARRAYFORMULA');
 
-    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
 
     expect(accounts.getRange('A2').getValue()).toBe('acc-1');
     expect(accounts.getRange('A3').getValue()).toBe('acc-2');
@@ -202,10 +202,10 @@ describe('maskIban', () => {
   });
 });
 
-describe('recordConnection', () => {
+describe('recordConnection_', () => {
   it('adds discovered accounts as bank accounts', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('A2').getValue()).toBe('acc-1');
@@ -220,12 +220,12 @@ describe('recordConnection', () => {
       ? { code: 200, body: JSON.stringify({ name: 'Fineco mock' }) }
       : { code: 404, body: '{}' });
 
-    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+    c.recordConnection_(SPARSE_SESSION, 'Mock ASPSP');
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('B2').getValue()).toBe('Mock ASPSP account');
 
     named = true;
-    c.recordConnection(SPARSE_SESSION, 'Mock ASPSP');
+    c.recordConnection_(SPARSE_SESSION, 'Mock ASPSP');
 
     // The placeholder was never anyone's decision, so it is safe to replace.
     expect(accounts.getRange('B2').getValue()).toBe('Fineco mock');
@@ -238,7 +238,7 @@ describe('recordConnection', () => {
     const noId = { ...SESSION };
     delete noId.session_id;
 
-    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
+    c.recordConnection_(noId, 'Mock ASPSP', 'sess-42');
 
     const status = c.__spreadsheet.getSheetByName('_status');
     expect(status.getRange('C2').getValue()).toBe('sess-42');
@@ -255,8 +255,8 @@ describe('recordConnection', () => {
     // past valid_until — which is exactly what the expiry detector alerts on.
     const c = connected(() => ({ code: 200, body: '{}' }));
 
-    c.recordConnection(SESSION, 'Mock ASPSP');
-    c.recordConnection({ ...SESSION, session_id: 'sess-99' }, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
+    c.recordConnection_({ ...SESSION, session_id: 'sess-99' }, 'Mock ASPSP');
 
     const status = c.__spreadsheet.getSheetByName('_status');
     expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
@@ -270,8 +270,8 @@ describe('recordConnection', () => {
     // session, stranding the accounts it covered.
     const c = connected(() => ({ code: 200, body: '{}' }));
 
-    c.recordConnection(SESSION, 'Mock ASPSP');
-    c.recordConnection({
+    c.recordConnection_(SESSION, 'Mock ASPSP');
+    c.recordConnection_({
       ...SESSION,
       session_id: 'sess-77',
       accounts: ['acc-9'],
@@ -291,16 +291,16 @@ describe('recordConnection', () => {
     const noId = { ...SESSION };
     delete noId.session_id;
 
-    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
-    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
-    c.recordConnection(noId, 'Mock ASPSP', 'sess-42');
+    c.recordConnection_(noId, 'Mock ASPSP', 'sess-42');
+    c.recordConnection_(noId, 'Mock ASPSP', 'sess-42');
+    c.recordConnection_(noId, 'Mock ASPSP', 'sess-42');
 
     const status = c.__spreadsheet.getSheetByName('_status');
     expect(status.getRange('A3').getValue()).toBe('');
   });
 
   it('refuses to write a status row with no key at all', () => {
-    // Unreachable through recordConnection, which always has a provider name
+    // Unreachable through recordConnection_, which always has a provider name
     // to fall back on — but an unkeyed upsert appends a new row every run
     // while looking like a successful update, so the primitive says no.
     const c = connected(() => ({ code: 200, body: '{}' }));
@@ -310,12 +310,12 @@ describe('recordConnection', () => {
 
   it('keeps a name you gave an account when the bank is reconnected', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     accounts.getRange('B2').setValue('My spending account');
 
-    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
 
     expect(accounts.getRange('B2').getValue()).toBe('My spending account');
     expect(accounts.getLastRow()).toBe(3);   // no duplicates
@@ -323,8 +323,8 @@ describe('recordConnection', () => {
 
   it('updates the existing _status row rather than appending on reconnect', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(SESSION, 'Mock ASPSP');
-    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
 
     expect(c.__spreadsheet.getSheetByName('_status').getLastRow()).toBe(2);
   });
@@ -421,7 +421,7 @@ describe('connection_id', () => {
     // Without it there is no way to attribute a fetch failure to the
     // connection whose _status row should carry the error.
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(SESSION, 'Mock ASPSP');
+    c.recordConnection_(SESSION, 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('P2').getValue()).toBe('mock-aspsp-it');
@@ -513,8 +513,8 @@ describe('reconnecting a bank', () => {
 
   it('updates the one row instead of adding a second', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
-    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('A3').getValue()).toBe('');
@@ -523,8 +523,8 @@ describe('reconnecting a bank', () => {
 
   it('never rewrites account_id, because transaction uids hash it', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
-    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
 
     const accounts = c.__spreadsheet.getSheetByName('accounts');
     expect(accounts.getRange('A2').getValue()).toBe('uid-old');
@@ -535,8 +535,8 @@ describe('reconnecting a bank', () => {
   it('calls the bank with the new uid, not the frozen one', () => {
     // The API has forgotten uid-old the moment the consent was replaced.
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
-    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
 
     const account = c.listSyncableAccounts_()[0];
     expect(account.uid).toBe('uid-old');
@@ -545,8 +545,8 @@ describe('reconnecting a bank', () => {
 
   it('keeps the same connection rather than minting a second', () => {
     const c = connected(() => ({ code: 200, body: '{}' }));
-    c.recordConnection(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
-    c.recordConnection(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-1', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-2', 'uid-new'), 'Mock ASPSP');
 
     const status = c.__spreadsheet.getSheetByName('_status');
     expect(status.getRange('A2').getValue()).toBe('mock-aspsp-it');
@@ -561,7 +561,7 @@ describe('reconnecting a bank', () => {
     accounts.getRange('A2').setValue('uid-old');
     accounts.getRange('C2').setValue('bank');
 
-    c.recordConnection(sessionWith('sess-2', 'uid-old'), 'Mock ASPSP');
+    c.recordConnection_(sessionWith('sess-2', 'uid-old'), 'Mock ASPSP');
 
     expect(c.lastRecordRow_(accounts, 1)).toBe(2);
     expect(accounts.getRange(2, c.colIndex_(c.ACCOUNT_COLUMNS, 'identity_hash')).getValue())
@@ -580,7 +580,7 @@ describe('reconnecting a bank', () => {
       account_id: { iban: 'IT60X0542811101000000123456' }
     });
 
-    c.recordConnection({
+    c.recordConnection_({
       session_id: 'sess-fineco',
       aspsp: { name: 'FinecoBank', country: 'IT' },
       access: { valid_until: '2027-01-26T19:55:29.069000Z' },

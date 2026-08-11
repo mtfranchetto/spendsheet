@@ -195,6 +195,7 @@ function markReviewInputs_(sheet) {
  * already current.
  */
 function refreshReviewQueue() {
+  requireInteractive_();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var result = fillReviewQueue_(ss);
 

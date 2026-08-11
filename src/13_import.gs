@@ -406,6 +406,7 @@ function stagedFormulas() {
  * no such defence.
  */
 function importStagedRows() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var plan = planStagedImport_();
 

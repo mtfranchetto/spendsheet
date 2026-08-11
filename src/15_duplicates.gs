@@ -67,6 +67,7 @@ var DUPLICATE_LIST_CAP = 25;
 var DUPLICATE_MERGE_COLUMNS = ['category_override', 'subcategory_override', 'labels', 'notes'];
 
 function removeSyncedDuplicates() {
+  requireInteractive_();
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var plan = planSyncedDuplicates_();
