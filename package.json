@@ -8,6 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "node tests/preview.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:dry": "node scripts/deploy.mjs --dry-run",
     "push": "clasp push",
     "push:watch": "clasp push --watch",
     "pull": "clasp pull",

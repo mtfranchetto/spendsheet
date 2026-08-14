@@ -62,9 +62,11 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 
 ## After pushing code
 
-`npm test` → `npm run test:e2e` if `src/page*.html` changed → `npx clasp push --force` → **say whether a redeploy is needed.**
+`npm run deploy` does the sequence: `npm test` → `npm run test:e2e` if `src/page*.html` changed → `clasp push --force` → version and redeploy both doors if anything web-facing changed → read both doors back from Google and fail if either is not what it must be. `npm run deploy:dry` prints the plan and touches nothing. `docs/DEPLOY.md` is the reference; `scripts/deploy.mjs` argues the reasoning.
 
-`clasp push` updates the Apps Script project, so menu items and anything run from the sheet pick it up at once. It does **not** update a live `/exec` deployment, which serves a frozen version. Anything touching `doGet`, `src/page.html` or `20`–`23` needs:
+**The script decides whether a redeploy is needed, and you still say which door and what its access must be** — it computes the answer from the changed files, and everything below is why that answer matters and what to do when the check goes red.
+
+`clasp push` updates the Apps Script project, so menu items and anything run from the sheet pick it up at once. It does **not** update a live `/exec` deployment, which serves a frozen version. Anything touching `doGet`, `src/page.html`, `20`–`23` or the manifest needs:
 
 > Manage deployments → pencil → Version: New version → Deploy
 
@@ -72,6 +74,7 @@ When a file starts holding two kinds of thing, split it before adding a third. `
 
 - *New deployment* mints a different URL. On Door 1 that breaks the registered redirect; on Door 2 it just means the home-screen icon points at a dead URL. Always update in place.
 - **A Door 2 redeployed as "Anyone" serves bank balances to anyone with the URL.** The owner gate is what stops that being fatal, and a lock behind a door you left open is not a thing to rely on. When a redeploy is needed, say *which* door and *what its access setting must be* — not just "redeploy".
+- **Access is derived from the manifest when a deployment is created, and `src/appsscript.json` says `ANYONE_ANONYMOUS`** — Door 1's setting, which Door 2 diverges from because it was set to `MYSELF` in the UI. Whether an *update* re-derives it is not documented, and from the owner's own phone both answers look identical. So it is read back from the Apps Script API after every deploy rather than reasoned about: `clasp list-deployments` cannot show it, because access lives on the entry point and clasp does not print that.
 
 Flag all of this explicitly when a push needs it — don't leave it to be discovered as a Drive "unable to open the file" error, or worse, not discovered at all.
 

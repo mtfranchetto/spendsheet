@@ -132,6 +132,8 @@ npm run push             # --force the first time, to overwrite the remote manif
 npm run push          # sync src/ → Apps Script
 npm run push:watch    # push on every save
 npm run pull          # pull remote edits back down
+npm run deploy        # test, push, version, and move the live URLs onto it
+npm run deploy:dry    # print what that would do, change nothing
 ```
 
 ### Why `rootDir` is `src`
@@ -142,4 +144,4 @@ npm run pull          # pull remote edits back down
 
 - **`.clasp.json` and `.clasprc.json` are gitignored.** The first holds your script ID, the second your OAuth credentials. Keep it that way.
 - **`clasp pull` overwrites local files.** It's for recovering edits made in the web editor, not a merge.
-- **Pushing does not deploy.** The web app URL that banks redirect to comes from a *deployment*; `clasp push` only updates the code behind it. Use `clasp deploy` or the editor's Deploy button.
+- **Pushing does not deploy.** The web app URL that banks redirect to comes from a *deployment*; `clasp push` only updates the code behind it. `npm run deploy` cuts a version and moves the existing URLs onto it — see [docs/DEPLOY.md](DEPLOY.md), which also covers why it never runs `clasp deploy`: that command mints a *new* URL, and one of the two here is registered with your provider.
