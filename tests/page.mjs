@@ -166,6 +166,30 @@ window.google = { script: { run: (function () {
         return uids.indexOf(String(row.uid)) === -1;
       });
     });
+
+    // And the answer itself says which rows it was about.
+    //
+    // The captured one is a single result naming the single row the fixture
+    // confirmed when it was built, whatever the page has just sent. The real
+    // applyReviewDecisions_ reports one result per decision and carries the uid
+    // on each, because that is the whole of the addressing on both sides — a
+    // page that matched them up by position would apply one row's refusal to
+    // its neighbour. A fake that answers for a row nobody asked about cannot be
+    // matched at all, and is the fixture disagreeing with the server rather
+    // than simplifying it.
+    //
+    // No record on the result. The server hands back the row as the sheet now
+    // describes it and there is no sheet here, so the honest answer is silence
+    // — the page keeps its own optimistic patch, which is what it does in
+    // production for every field the server did not correct.
+    var confirmed = window.__answers.appConfirm;
+    if (!confirmed) return;
+
+    confirmed.results = uids.map(function (uid) {
+      return { uid: uid, ok: true, wrote: ['confirmed'], refused: [] };
+    });
+    confirmed.written = uids.length;
+    confirmed.skipped = 0;
   };
 
   var api = new Proxy({}, {

@@ -414,6 +414,126 @@ test.describe('confirming a transaction', () => {
 
     expect(errors).toEqual([]);
   });
+
+  /**
+   * The one above proves the refetch agrees. This proves it agrees about a row
+   * it could not have known about — which is the case working through a backlog
+   * puts you in every time.
+   *
+   * Every write ends in a dashboard reload, and a reload is one execution
+   * reading the ledger. Confirm a second row while the first row's reload is in
+   * the air and that execution answers honestly with a queue that still holds
+   * the second row: the write had not landed when it looked. The answer replaces
+   * `state.data.overview` whole, so a row you have already swiped comes back
+   * under a heading that says it needs reviewing — and swiping it again is how a
+   * queue of multi-second executions builds up behind a bridge that eventually
+   * drops one.
+   *
+   * The arrangement is the `__latency` trick the ordering test uses, in three
+   * steps. The first confirmation is slow enough to leave a window; the reload
+   * it fires inherits that latency at *call* time, so the window is still open
+   * when the second row is confirmed inside it; and the second confirmation is
+   * put far out of the way, so nothing can correct the screen before the
+   * assertion. What is read at the end is the reload's own answer, once, without
+   * polling — `toHaveCount` would wait for the second reload and go green on the
+   * behaviour this rejects.
+   */
+  test('a row confirmed during a reload is not handed back by it', async ({ page, errors }) => {
+    await open(page);
+
+    const queue = page.locator('#screens h2:has-text("Needs review") + .card');
+    const rows = queue.locator('button.tap');
+
+    const before = await rows.count();
+    expect(before, 'fewer than two rows in the backlog to confirm').toBeGreaterThan(1);
+
+    const labels = await rows.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('aria-label')));
+
+    const confirm = async (label) => {
+      await queue.locator(`button[aria-label="${label}"]`).click();
+      await expect(page.locator('#sheet')).toBeVisible();
+      await page.locator('#sheet button.primary', { hasText: 'Confirm' }).click();
+    };
+
+    await page.evaluate(() => { window.__latency = 2500; });
+    await confirm(labels[0]);
+
+    // The reload is *issued* here, carrying a 2500ms answer with it. `calls`
+    // rather than `answered` on purpose: the window this test needs is between
+    // the request leaving and its answer arriving.
+    await expect.poll(() => calls(page), { timeout: 15000 }).toContain('appDashboard');
+
+    await page.evaluate(() => { window.__latency = 8000; });
+    await confirm(labels[1]);
+    expect(await queue.locator(`button[aria-label="${labels[1]}"]`).count(),
+      'the second row did not leave the queue when it was confirmed').toBe(0);
+
+    await expect.poll(() => answered(page), { timeout: 15000 }).toContain('appDashboard');
+
+    expect(await queue.locator(`button[aria-label="${labels[1]}"]`).count(),
+      'the reload put a row back that had already been confirmed').toBe(0);
+    expect(await queue.locator(`button[aria-label="${labels[0]}"]`).count(),
+      'the reload put the first row back too').toBe(0);
+
+    expect(errors).toEqual([]);
+  });
+
+  /**
+   * A run of swipes is one call, not one call each.
+   *
+   * `appConfirm` takes a list and says why in its own comment — a request per
+   * tap queues multi-second executions behind each other on Apps Script, and the
+   * bridge in front of them gives up on one with an error about the transport
+   * that says nothing about the cause. The gesture that sends them is one row at
+   * a time, so the batching only happens if the page holds what is swiped while
+   * a call is out.
+   *
+   * Both halves are asserted, because either alone passes against something
+   * broken: that three rows left the screen, and that they did it in fewer than
+   * three calls.
+   */
+  test('swipes made while a confirmation is in flight travel together', async ({ page, errors }) => {
+    await open(page);
+
+    const queue = page.locator('#screens h2:has-text("Needs review") + .card');
+    const rows = queue.locator('button.tap');
+
+    const before = await rows.count();
+    expect(before, 'fewer than three rows in the backlog').toBeGreaterThan(2);
+
+    const labels = await rows.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('aria-label')));
+
+    // Slow enough that all three are made before the first call is answered,
+    // which is the ordinary case on a platform with a ~2.7s round-trip floor.
+    await page.evaluate(() => { window.__latency = 5000; });
+
+    for (const label of labels.slice(0, 3)) {
+      await queue.locator(`button[aria-label="${label}"]`).click();
+      await expect(page.locator('#sheet')).toBeVisible();
+      await page.locator('#sheet button.primary', { hasText: 'Confirm' }).click();
+    }
+
+    await expect(rows).toHaveCount(before - 3);
+
+    // How many decisions each call carried. Polled rather than read once: the
+    // rows leave the screen on the swipe and the calls behind them are still
+    // going, so a single read here counts whatever had left by then and would
+    // call a page that dropped two of them a batch of one.
+    const sent = () => page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0].length));
+
+    await expect
+      .poll(async () => (await sent()).reduce((total, count) => total + count, 0),
+        { timeout: 20000 })
+      .toBe(3);
+
+    expect((await sent()).length, 'one call per swipe, which is what the batch is for')
+      .toBeLessThan(3);
+
+    expect(errors).toEqual([]);
+  });
 });
 
 test.describe('two requests in flight', () => {

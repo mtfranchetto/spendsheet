@@ -790,8 +790,9 @@
         record.inReports = false;
         record.confirmed = true;
         // Marking a transfer confirms the row, so it leaves the same lists a
-        // confirmation does. Without this it stayed in the review queue wearing
-        // the tick it had just been given.
+        // confirmation does — and is noted the same way, or the reload this
+        // fires hands it straight back. See `agreeWithLocalWrites`.
+        noteWrite(record.uid, 'confirmed');
         var dropped = dropConfirmed(record);
         render();
 
@@ -801,9 +802,11 @@
 
         call('appMarkTransfer', request)
           .then(function (result) {
+            writeLanded(record.uid);
             toast(result.message);
             reloadAfterWrite();
           }).catch(function (error) {
+            forgetWrite(record.uid);
             record.category = before.category;
             record.subcategory = before.subcategory;
             record.type = before.type;
@@ -892,13 +895,19 @@
    * saying out loud to somebody who has just destroyed a record on a phone.
    */
   function sendDelete(record) {
+    // `gone` rather than `confirmed`: there is no list a deleted row belongs in
+    // and no filter that would want it back, so a fetch taken before the
+    // deletion landed is overruled everywhere rather than only in the queue.
+    noteWrite(record.uid, 'gone');
     var dropped = dropRecord(record);
     render();
 
     call('appDeleteRecord', { uid: record.uid }).then(function (result) {
+      writeLanded(record.uid);
       toast(result.message);
       reloadAfterWrite();
     }).catch(function (error) {
+      forgetWrite(record.uid);
       toast('Not deleted: ' + error.message);
       restoreDropped(record, dropped);
       render();
@@ -1017,11 +1026,39 @@
    *
    * Keyed off the server's own shape, so a field added to `recordForPage_`
    * arrives here without a second list to keep in step.
+   *
+   * Draws nothing. A batch patches several rows from one answer and the screen
+   * is redrawn once at the end of it — see `flushDecisions`.
    */
   function patchRecord(record, fresh) {
     Object.keys(fresh).forEach(function (key) { record[key] = fresh[key]; });
-    render();
   }
+
+  /**
+   * Decisions waiting for a call to carry them, and whether one is already out.
+   *
+   * **One `appConfirm` in flight at a time, carrying everything swiped since the
+   * last one left.** `appConfirm` has always taken a list — its own comment says
+   * why, at length: a request per tap produces a queue of executions that
+   * resolve out of order, and on Apps Script they queue rather than overlap, so
+   * the fifth swipe's answer arrives seconds after the fifth swipe and the
+   * bridge in front of them eventually drops one with `http connection failure
+   * 0`. The page sent that list one element at a time anyway, because a swipe is
+   * one row and the shape fitted.
+   *
+   * What the shape misses is that swipes come in runs. Working through a
+   * backlog is five gestures in five seconds, and it used to cost five writes
+   * and five dashboard reloads — every one of them a multi-second execution
+   * behind the others, each answer landing on a screen that had moved on.
+   * Batching makes the same run one write and one reload if you swipe faster
+   * than the round trip, which on this platform is most of the time.
+   *
+   * The optimistic half is untouched by any of this: a queued decision has
+   * already redrawn its row, so waiting for the call to leave costs the screen
+   * nothing.
+   */
+  var queuedDecisions = [];
+  var decisionsInFlight = false;
 
   function sendDecision(record, decision) {
     // Optimistic, and the local copies are what get redrawn — the server's own
@@ -1045,44 +1082,121 @@
       }
     }
     if (decision.labels !== undefined) record.labels = decision.labels.slice();
-    var dropped = dropConfirmed(record);
+
+    // Noted before the call leaves, so a fetch that goes out while this is
+    // queued or in flight cannot hand the row back — see `agreeWithLocalWrites`.
+    noteWrite(record.uid, 'confirmed');
+    queuedDecisions.push({ record: record, decision: decision, was: was,
+      dropped: dropConfirmed(record) });
     render();
 
-    // Both failure paths put the row back the way it was, and the soft one
-    // used to forget to redraw — so a refusal left the optimistic row on
-    // screen looking saved until something else happened to call `render`.
-    var refuse = function (message) {
-      toast(message);
-      record.confirmed = was.confirmed;
-      record.category = was.category;
-      record.subcategory = was.subcategory;
-      record.labels = was.labels;
-      record.type = was.type;
-      record.inReports = was.inReports;
-      restoreDropped(record, dropped);
-      render();
+    flushDecisions();
+  }
+
+  /**
+   * Put one refused row back the way it was, and say so.
+   *
+   * Returns the reason rather than toasting it: a batch can be refused whole —
+   * a dropped connection refuses every row in it — and five banners in a row is
+   * four the screen never gets to show. The caller says it once.
+   *
+   * `forgetWrite` is the half that is easy to miss. A row this page believes it
+   * confirmed is a row it will go on hiding from every fetch; a refusal means it
+   * never happened, so the note has to go with the tick.
+   */
+  function undoDecision(entry, reason) {
+    var record = entry.record;
+
+    record.confirmed = entry.was.confirmed;
+    record.category = entry.was.category;
+    record.subcategory = entry.was.subcategory;
+    record.labels = entry.was.labels;
+    record.type = entry.was.type;
+    record.inReports = entry.was.inReports;
+    restoreDropped(record, entry.dropped);
+    forgetWrite(record.uid);
+
+    return reason;
+  }
+
+  /**
+   * Send everything swiped since the last call left, as one call.
+   *
+   * The answer is matched back to the rows **by uid**, not by position:
+   * `applyReviewDecisions_` reports one result per decision and is free to skip
+   * one, and a batch aligned by index would then apply each row's answer to its
+   * neighbour — a refusal restoring the wrong transaction, silently.
+   *
+   * **A row with no result at all is a refusal.** `MAX_APP_DECISIONS` caps a
+   * batch server-side and reports `capped` rather than a result per row left
+   * out, so a decision that fell off the end has no outcome to be `ok: false` —
+   * and treating a missing answer as success is how a row ends up ticked on
+   * screen, hidden from every refetch, and unconfirmed in the book.
+   */
+  function flushDecisions() {
+    if (decisionsInFlight || !queuedDecisions.length) return;
+
+    var batch = queuedDecisions;
+    queuedDecisions = [];
+    decisionsInFlight = true;
+
+    var settle = function () {
+      decisionsInFlight = false;
+      flushDecisions();
     };
 
-    call('appConfirm', [decision]).then(function (result) {
-      var outcome = (result.results || [])[0];
-      if (outcome && !outcome.ok) return refuse('Not saved: ' + outcome.reason);
+    call('appConfirm', batch.map(function (entry) { return entry.decision; }))
+      .then(function (result) {
+        var byUid = {};
+        (result.results || []).forEach(function (outcome) {
+          byUid[String(outcome.uid)] = outcome;
+        });
 
-      /*
-        No toast on success, deliberately.
+        var refused = [];
+        var written = 0;
 
-        The row has already redrawn — it carries a tick, it may have changed
-        category, it may have left the list entirely if you were filtering on
-        unconfirmed. A banner saying "Saved." adds nothing to that and costs
-        four seconds of the screen, every single time, on the action you do most
-        often. A refusal still speaks, because a refusal has nothing else to
-        show for itself: the row goes back to how it was, which looks exactly
-        like a tap that never landed.
+        batch.forEach(function (entry) {
+          var outcome = byUid[String(entry.decision.uid)];
+          if (!outcome || !outcome.ok) {
+            return refused.push(undoDecision(entry,
+              outcome ? outcome.reason : 'the server did not answer for it'));
+          }
 
-        `record` is the row as the sheet describes it *now* — the derived
-        columns are formulas, so what a confirmation means is only knowable by
-        asking, and the optimistic patch above is a guess at what it will say.
-      */
-      if (outcome && outcome.record) patchRecord(record, outcome.record);
-      reloadAfterWrite();
-    }).catch(function (error) { refuse(error.message); });
+          written++;
+          writeLanded(entry.record.uid);
+          /*
+            `record` is the row as the sheet describes it *now* — the derived
+            columns are formulas, so what a confirmation means is only knowable
+            by asking, and the optimistic patch above is a guess at what it will
+            say.
+          */
+          if (outcome.record) patchRecord(entry.record, outcome.record);
+        });
+
+        /*
+          No toast on success, deliberately.
+
+          The row has already redrawn — it carries a tick, it may have changed
+          category, it may have left the list entirely if you were filtering on
+          unconfirmed. A banner saying "Saved." adds nothing to that and costs
+          four seconds of the screen, every single time, on the action you do
+          most often. A refusal still speaks, because a refusal has nothing else
+          to show for itself: the row goes back to how it was, which looks
+          exactly like a tap that never landed.
+        */
+        render();
+        if (refused.length) {
+          toast(refused.length === 1
+            ? 'Not saved: ' + refused[0]
+            : refused.length + ' not saved: ' + refused[0]);
+        }
+        if (written) reloadAfterWrite();
+        settle();
+      })
+      .catch(function (error) {
+        batch.forEach(function (entry) { undoDecision(entry, error.message); });
+        toast(error.message);
+        render();
+        settle();
+      });
   }
