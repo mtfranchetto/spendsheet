@@ -14,9 +14,9 @@ clasp touches three separate things and they are easy to conflate:
 
 | | what changes | who sees it |
 |---|---|---|
-| `clasp push` | the project's working copy (HEAD) | anything run from the Sheet, immediately |
+| `clasp push` | the project's working copy (HEAD), manifest included | anything run from the Sheet, immediately |
 | `clasp version` | freezes HEAD as immutable version N | nobody, yet |
-| `clasp redeploy` | points a door's URL at version N | that door's `/exec` |
+| `clasp redeploy` | points a door's URL at version N, and rebuilds its access from that version's manifest | that door's `/exec` |
 
 Menu items, dialogs and the nightly trigger all execute at HEAD, so a push is genuinely all they need. A live `/exec` serves a **frozen version**, which is the whole reason the other two steps exist: without them the sheet half of a change is live and the phone half is not, and nothing anywhere reports a problem.
 
@@ -40,21 +40,45 @@ One script, two deployments, and they are not interchangeable.
 | 1 | `bank` | Spendsheet banking | **Anyone** | the consent redirect. Its URL is registered with Enable Banking, and the browser arriving at it has nobody signed in. |
 | 2 | `app` | Spendsheet viewer | **Only myself** | the mobile app. It serves this book's balances. |
 
-Both go to the same version on every deploy. Nothing about the code makes the consent redirect and the phone allowed to disagree, and one door redeployed by hand is exactly what a version skew looks like afterwards.
+Both carry the same code on every deploy. Nothing about the code makes the consent redirect and the phone allowed to disagree, and one door redeployed by hand is exactly what a version skew looks like afterwards.
 
-### Why the script reads the doors back
+They do **not** land on the same version number, and that is deliberate — see below.
 
-A deployment's access setting is per-deployment, but it is *derived from the manifest of the version being deployed* when a deployment is created. `src/appsscript.json` declares `ANYONE_ANONYMOUS` — the bank door's setting. The app door was set to `MYSELF` in the UI, so it diverges from the manifest it was cut from.
+### Why each door gets its own version
 
-Whether `redeploy` re-derives access from the new version's manifest or leaves the deployment's own setting alone is not something the documentation settles, and the failure mode if it re-derives is the one worth being paranoid about: **this book's balances behind a URL anyone can load**, with only `requireOwner_` between them and a stranger. It would also look completely normal from your own phone, because you are allowed in either way.
+A deployment's "Who has access" lives on its **entry point**, and `entryPoints` is output-only in the Apps Script API. `deployments.update` — what `clasp redeploy` calls — drops the entry point and rebuilds it from the manifest. Two consequences, and both are load-bearing:
 
-So it is not assumed in either direction. Every run refetches both entry points from the Apps Script API and fails on any mismatch. `clasp list-deployments` cannot show this — the access setting lives on the entry point, which clasp does not print — so the check goes to the REST API, using the refresh token in `~/.clasprc.json` that clasp is already holding.
+- **Access cannot be set through the API.** There is no field for it. The Apps Script UI is the only place a human can change it.
+- **A redeploy does not preserve the setting a door already had.** It takes whatever `webapp.access` the manifest says, every time.
+
+One manifest cannot say `ANYONE_ANONYMOUS` for the bank door and `MYSELF` for the app door at once, so a single shared version cannot deploy both doors correctly. It lands one answer on both — and the direction that costs something is the app door coming back public with only `requireOwner_` between a stranger and the balances.
+
+So the script deploys one door at a time, and each one gets the manifest it needs:
+
+```
+write webapp.access = <the door's access>  →  push  →  create-version N
+  →  update-deployment <door> -V N
+```
+
+The two versions hold identical code and differ in that one manifest field. Adjacent version numbers are what a healthy deploy looks like here.
+
+Sequencing the manifest write immediately before the version is also what keeps this independent of a question the documentation does not answer: whether the rebuilt entry point reads the *version's* manifest or HEAD's at the moment of the update. Done in this order they are the same file, so both answers give the same result.
+
+`src/appsscript.json` is tracked, so it is captured before the first write and restored afterwards — from an `exit` hook as well as a `finally`, because the script's own `fail()` leaves through `process.exit`, which runs neither a `finally` nor a signal handler. A closing push puts HEAD back on the committed manifest, so git and the Apps Script editor agree once a deploy has finished.
+
+### Why the script still reads the doors back
+
+Because the mechanism above is a claim, and the failure it would produce is silent: **this book's balances behind a URL anyone can load**. That looks completely normal from your own phone, because you are allowed in either way.
+
+Every run refetches both entry points from the Apps Script API and fails on any mismatch. `clasp list-deployments` cannot show this — the access setting lives on the entry point, which clasp does not print — so the check goes to the REST API, using the refresh token in `~/.clasprc.json` that clasp is already holding.
+
+That read is **polled**, not taken once. The deployments endpoint lags a redeploy by a few seconds and answers with the *previous* state — not a harmless delay, because the record it returns describes the door as it was before the update. A check that trusts the first answer reads the old access off a door it never actually looked at. The script waits for each door to report the version it was just given, and only then asks what access came back with it.
 
 If it ever does fail:
 
 > Apps Script editor → Deploy → Manage deployments → pencil → set **Who has access**, and Version: **New version**.
 
-Update in place. Never *New deployment*.
+Update in place. Never *New deployment*. Then treat it as a bug in the deploy rather than a one-off: the access came from the manifest that run wrote, so a wrong answer will repeat on the next run and undo the manual repair.
 
 ## What is not automated
 
@@ -70,9 +94,9 @@ Recreating a door is a one-time human operation, so it is written down rather th
 
 ## `.deploy.json`
 
-Gitignored — this repo is public, and the app door's URL is the outer lock on a page showing balances. Copy `.deploy.example.json`, fill in the two ids from `npx clasp list-deployments`, and leave `access` as the table above: it is the assertion the script checks the live door against, not a setting it applies.
+Gitignored — this repo is public, and the app door's URL is the outer lock on a page showing balances. Copy `.deploy.example.json`, fill in the two ids from `npx clasp list-deployments`, and leave `access` as the table above: it is both the value written into the manifest before that door's version is cut, and the assertion the live door is then checked against.
 
-`lastDeploy` is written by the script and is how it knows which files changed since. Delete it to make the next run treat everything as changed.
+`lastDeploy` is written by the script. `commit` is how it knows which files changed since; `versions` records the version each door was left on, one per door. Delete it to make the next run treat everything as changed.
 
 ## Options
 
