@@ -128,7 +128,7 @@ Tick `excluded` on a row and it leaves every report at once. Nothing else change
 
 **`confirmed` is what separates a guess you agreed with from a guess.** Synced rows arrive blank; imported rows arrive ticked, because you categorised them once already in the tool they came from. A row carrying a `category_override` counts as confirmed without the tick — typing the category is a stronger statement than ticking a box next to it.
 
-**It is also written by the cascade, on rows the `rules` tab answered for.** A rule is a standing instruction, so a match is ticked as it is categorised and never reaches the review queue — controlled by `confirm_rule_matches` in `_config`. Such a row is deliberately *not* learned from: memory outranks both rule tiers, so learning there would let a rule go on being obeyed through memory after you had corrected the rule itself. See [`CATEGORIES.md`](CATEGORIES.md#confirming).
+**The cascade never writes it.** Every row waits for you, whichever tier answered it. A confirmed row whose category came from the `rules` tab is deliberately *not* learned from, though: memory outranks both rule tiers, so learning there would let a rule go on being obeyed through memory after you had corrected the rule itself. See [`CATEGORIES.md`](CATEGORIES.md#confirming).
 
 It earns a column rather than being inferred because **`Learn from corrections` reads confirmed rows and nothing else.** Learn from everything and the cascade trains on its own output: one wrong guess about a frequent merchant becomes a memory entry, which produces more rows carrying that guess, which reinforces the entry. The review queue is the side benefit, not the reason.
 

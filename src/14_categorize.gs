@@ -156,8 +156,7 @@ function buildCascadeContext_(config) {
     mccRules: readRules_(ss, true),
     textRules: readRules_(ss, false),
     kindByCategory: readCategoryKinds_(ss),
-    transferWindowDays: configNumber_(cfg, 'transfer_window_days'),
-    confirmRuleMatches: configFlag_(cfg, 'confirm_rule_matches')
+    transferWindowDays: configNumber_(cfg, 'transfer_window_days')
   };
 }
 
@@ -520,8 +519,7 @@ function recategorizeAll() {
 
   var result = commitCategorize_(preview);
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    result.changed + ' rows updated, ' + result.pairs + ' transfer pairs' +
-    (result.confirmed ? ', ' + result.confirmed + ' confirmed by rule' : '') + '.',
+    result.changed + ' rows updated, ' + result.pairs + ' transfer pairs.',
     'Re-categorised', 10);
   return result;
 }
@@ -553,7 +551,6 @@ function planCategorize_() {
       category: verdict.category,
       subcategory: verdict.subcategory,
       source: verdict.source,
-      confirm: confirmsItself_(record, verdict, frozen, context),
       transferGroup: record._transferGroup || '',
       was: {
         category: cellText_(record.category_auto),
@@ -577,37 +574,9 @@ function planCategorize_() {
     rows: rows,
     changed: changed.length,
     frozen: rows.filter(function (row) { return row.frozen; }).length,
-    confirming: rows.filter(function (row) { return row.confirm; }).length,
     pairs: pairs,
     bySource: tallyBy_(rows, 'source')
   };
-}
-
-/**
- * Whether this run should tick `confirmed` on a row the rules tab answered for.
- *
- * A rule is a standing instruction — "file this merchant here, always" — so
- * obeying it and then queueing the row for you to agree with it is the same act
- * twice. Both tiers of the tab count: `mcc` is an exact match on the merchant's
- * card-network code and `rule` is a pattern over the description, and they are
- * two ways of writing a row on one tab rather than two kinds of authority.
- *
- * Not memory, which is tier 3 and is *built* from confirmed rows — confirming
- * on it would make it teach itself. Not transfer, which is a pairing rather
- * than a categorisation and can be dissolved by the other leg changing.
- *
- * **This is self-limiting, and that is the whole reason it is safe to run every
- * night.** A row ticked here is `isConfirmedRow_` on the next run, so
- * `frozenVerdict_` short-circuits above and `frozen` is truthy — the branch is
- * never reached for the same row twice, and `plan.confirming` counts only rows
- * this run would newly claim.
- */
-function confirmsItself_(record, verdict, frozen, context) {
-  if (!context.confirmRuleMatches) return false;
-  if (frozen) return false;
-  if (isConfirmedRow_(record)) return false;
-
-  return verdict.source === CATEGORY_SOURCE.RULE || verdict.source === CATEGORY_SOURCE.MCC;
 }
 
 /**
@@ -674,20 +643,9 @@ function describeCategorizePlan_(plan) {
     lines.push(plan.frozen + ' confirmed rows are left exactly as they are.');
   }
 
-  // The one number worth reading twice, so it gets its own paragraph and says
-  // what it costs. Confirming freezes the row against every later run, and this
-  // dialog is the only place that happens in front of somebody — the sync does
-  // the identical thing to whatever landed that night, unattended.
-  if (plan.confirming) {
-    lines.push('');
-    lines.push(plan.confirming + ' rows matched a rule and will be ticked as confirmed, ' +
-      'which takes them out of the review queue and settles their category for good. ' +
-      'Set confirm_rule_matches to no in _config to leave them for review instead.');
-  }
-
   lines.push('');
-  lines.push('Only category_auto, subcategory_auto, category_source, transfer_group and ' +
-    'confirmed are written. Your overrides, labels and notes are not touched.');
+  lines.push('Only category_auto, subcategory_auto, category_source and transfer_group are ' +
+    'written. Your overrides, confirmations, labels and notes are not touched.');
   lines.push('');
   lines.push('Continue?');
   return lines.join('\n');
@@ -727,30 +685,15 @@ function commitCategorize_(plan) {
     sheet.getRange(run[0]._row, transferColumn, values.length, 1).setValues(values);
   });
 
-  // `confirmed` is AB and the three above are Q-S, so this cannot ride along in
-  // that rectangle — it is its own column and its own grouping. Filtered on
-  // `was.confirmed` for the same reason the other two passes are: writing TRUE
-  // over TRUE is a revision spent saying nothing.
-  var confirmColumn = colIndex_(TX_COLUMNS, 'confirmed');
-  var newlyConfirmed = plan.rows.filter(function (row) {
-    return row.confirm && !row.was.confirmed;
-  });
+  var writes = runsOf_(changedRows).length + runsOf_(changedTransfers).length;
 
-  runsOf_(newlyConfirmed).forEach(function (run) {
-    var values = run.map(function () { return [true]; });
-    sheet.getRange(run[0]._row, confirmColumn, values.length, 1).setValues(values);
-  });
-
-  var writes = runsOf_(changedRows).length + runsOf_(changedTransfers).length +
-    runsOf_(newlyConfirmed).length;
-
-  // These three write through `setValues` directly rather than through
+  // Both passes write through `setValues` directly rather than through
   // `writeCell_` or `appendRows_`, which are where `forgetReadCache_` and
   // `bumpDataVersion_` normally hang — so nothing else is going to invalidate
-  // what this just changed. It mattered little while the cascade only moved
-  // three columns behind a sync whose own append had already bumped the
-  // version; `confirmed` is drawn by the app, and `recategorizeAll()` from the
-  // menu appends nothing at all.
+  // what this just changed. Behind a sync it matters little, because that run's
+  // own append has already bumped the version — but `recategorizeAll()` from
+  // the menu appends nothing at all, and the categories it moves are drawn by
+  // the app.
   if (writes) {
     forgetReadCache_();
     bumpDataVersion_();
@@ -760,7 +703,6 @@ function commitCategorize_(plan) {
     changed: plan.changed,
     pairs: plan.pairs,
     frozen: plan.frozen,
-    confirmed: newlyConfirmed.length,
     bySource: plan.bySource,
     writes: writes
   };
@@ -944,19 +886,17 @@ function deriveMemory_(records) {
  * memory its own answer would go on being obeyed *through memory* after the
  * rule itself had been corrected — and the `rules` tab would look like it was
  * being ignored, with the reason two tiers away on a tab nobody edits by hand.
- * Since a rules match now confirms itself, that is the ordinary path rather
- * than a corner, so memory takes only what a rule did not already answer.
+ * So memory takes only what a rule did not already answer.
  *
  * An override is always yours, whatever tier guessed underneath it — that is
  * the case where you looked at a rule's answer and disagreed, which is exactly
  * what memory exists to hold.
  *
- * **The accepted cost:** this also drops a row you ticked *by hand* on a rule's
- * guess. Ticked and auto-ticked are the same three cells — `confirmed` true,
- * `category_source` a rule tier, no override — so the two are indistinguishable
- * and no marker short of a new column would separate them. Little is lost: a
- * row that agreed with a rule teaches memory nothing the rule does not say
- * already, and says it at a higher tier.
+ * **Confirming a rule's answer is therefore a decision that does not
+ * propagate**, and that is the shape rather than a gap in it: the row agreed
+ * with the rule, so it teaches memory nothing the rule does not say already —
+ * and the rule says it on a tab you can edit, at a tier memory would otherwise
+ * shadow. Only overriding it teaches.
  */
 function correctionRow_(record) {
   if (!isBlankCell_(record.category_override)) return true;

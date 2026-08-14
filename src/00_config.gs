@@ -476,25 +476,20 @@ var DEFAULT_CONFIG = [
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
   ['duplicate_window_days', 3, 'How far apart an imported row and a synced one may be booked and still be the same transaction.'],
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
-  // A rules-tab match is a standing instruction, so obeying it and then asking
-  // you to agree with it is the same act twice. Set to no and every row goes to
-  // the queue as before. Worth a switch rather than a constant because
-  // confirming *freezes* the row — `frozenVerdict_` keeps a confirmed row's
-  // category through every later run — so a rule corrected afterwards does not
-  // reach the rows it already claimed.
-  ['confirm_rule_matches', 'yes', 'Treat a rules-tab match as confirmed, so it skips the review queue. Set to no to review every row yourself.'],
-  // `cashflow_horizon_days` and `trend_days` went from here with the two files
-  // that read them — the cashflow projection in `15_recurring.gs` and the net
-  // worth chart on the old `dashboard` tab. A dead constant is invisible; a
-  // dead *config row* is not, because it sits on a tab the owner reads with a
-  // description promising an effect it has not had since those files went.
+  // `cashflow_horizon_days`, `trend_days` and `confirm_rule_matches` went from
+  // here with the code that read them — the cashflow projection in
+  // `15_recurring.gs`, the net worth chart on the old `dashboard` tab, and the
+  // rules-tab auto-confirm in `14_categorize.gs`. A dead constant is invisible;
+  // a dead *config row* is not, because it sits on a tab the owner reads with a
+  // description promising an effect it has not had since that code went.
   //
-  // Books set up before this keep both rows, and that is the right outcome
+  // Books set up before this keep those rows, and that is the right outcome
   // rather than an oversight: `setup()` cannot tell a row you deleted from one
   // you never had, and `reportSeedDivergence_` walks the seed rather than the
   // sheet, so a row the seed no longer names is simply not looked at. They are
-  // inert, they are two, and removing them by hand is a sheet edit — not worth
-  // a migration, unlike the category renames `RETIRED_CATEGORIES` exists for.
+  // inert, they are three, and removing them by hand is a sheet edit — not
+  // worth a migration, unlike the category renames `RETIRED_CATEGORIES` exists
+  // for.
   ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.'],
   // Blank here and filled by setup() from the account running it, because this
   // file touches no services. It is the lock on the mobile web app: one
