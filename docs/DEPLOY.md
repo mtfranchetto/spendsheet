@@ -58,7 +58,7 @@ Update in place. Never *New deployment*.
 
 ## What is not automated
 
-`clasp deploy` (create-deployment) is never called, and `tests/deploy.test.mjs` fails if it appears in the script. Without `-i` it mints a **new** deploymentId and a new URL: on the bank door that breaks the redirect Enable Banking has registered, and on the app door it points the home-screen icon at nothing.
+`clasp deploy` (create-deployment) is never called, and `scripts/deploy.test.mjs` fails if it appears in the script. Without `-i` it mints a **new** deploymentId and a new URL: on the bank door that breaks the redirect Enable Banking has registered, and on the app door it points the home-screen icon at nothing.
 
 Recreating a door is a one-time human operation, so it is written down rather than built:
 

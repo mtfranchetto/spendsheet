@@ -18,7 +18,7 @@
  * of a feature goes live while the phone half does not.
  *
  * `clasp deploy` (create-deployment) is deliberately never called here, and
- * `tests/deploy.test.mjs` fails if it ever appears. Without `-i` it mints a
+ * `deploy.test.mjs` fails if it ever appears. Without `-i` it mints a
  * *new* deploymentId and a new URL: on the bank door that breaks the redirect
  * Enable Banking has registered, and on the app door it points the home-screen
  * icon at nothing. Recreating a door is a one-time human operation and is
@@ -439,6 +439,6 @@ async function main() {
   step(`Deployed version ${version} to ${doors.map((door) => door.key).join(' and ')}.`);
 }
 
-// Imported by tests/deploy.test.mjs for the two functions worth exercising, so
+// Imported by deploy.test.mjs for the two functions worth exercising, so
 // the CLI half only runs when this file *is* the command.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

@@ -17,10 +17,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkDoors, isWebFacing, parseArgs, porcelainPaths, ACCESS_HELP } from '../scripts/deploy.mjs';
+import { checkDoors, isWebFacing, parseArgs, porcelainPaths, ACCESS_HELP } from './deploy.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const script = readFileSync(join(ROOT, 'scripts', 'deploy.mjs'), 'utf8');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, '..');
+const script = readFileSync(join(HERE, 'deploy.mjs'), 'utf8');
 
 const DOORS = [
   { key: 'bank', deploymentId: 'bank-id', description: 'Spendsheet banking', access: 'ANYONE_ANONYMOUS' },
