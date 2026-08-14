@@ -142,6 +142,19 @@
     // while it ran. See `loadDashboard`.
     dashboard: { inFlight: false, again: false, fresh: false },
 
+    /*
+      What this page has written, and how much of it any given fetch could have
+      known about.
+
+      `seq` counts writes whose *answer* has landed. `rows` is uid → the seq a
+      write settled at, or `WRITE_PENDING` while it is still in flight. Every
+      fetch stamps `seq` on its way out, so an answer carrying a stamp below a
+      row's entry was taken by an execution that could not yet see that write —
+      see `agreeWithLocalWrites`, which is what stops such an answer
+      contradicting something you have already done on screen.
+    */
+    writes: { seq: 0, rows: {} },
+
     // Which account a cash entry is being added to, set by the tile that
     // opened the form and read back by it as the default.
     addAccount: '',

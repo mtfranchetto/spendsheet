@@ -46,6 +46,114 @@
     if (state.screen === 'analytics') loadAnalytics();
   }
 
+  /**
+   * A write this page has made and the server has not answered for yet.
+   *
+   * `Infinity` rather than a flag, so the one comparison in `localWrite` covers
+   * both states: a fetch stamped with any real seq is older than a write still
+   * in flight, which is exactly the answer wanted.
+   */
+  var WRITE_PENDING = Infinity;
+
+  /** How much of this page's own writing a fetch leaving now will be able to see. */
+  function writeStamp() {
+    return state.writes.seq;
+  }
+
+  /**
+   * Three notes about one row, taken at the three moments a write has.
+   *
+   * `noteWrite` when the request leaves, `writeLanded` when it is answered,
+   * `forgetWrite` when it is refused — and the ordering guarantee under the
+   * middle one is what the whole mechanism rests on: `applyReviewDecisions_`
+   * calls `SpreadsheetApp.flush()` before returning, so once its answer is here
+   * the value is on the sheet and every execution started afterwards reads it.
+   * A fetch issued after that point is entitled to disagree with us; one issued
+   * before it is not.
+   *
+   * `kind` is what the row became: `confirmed` for a tick — which belongs in an
+   * unfiltered list wearing it, and in no list of rows that need reviewing — or
+   * `gone` for a deletion, which belongs in no list at all.
+   */
+  function noteWrite(uid, kind) {
+    state.writes.rows[String(uid)] = { kind: kind, seq: WRITE_PENDING };
+  }
+
+  function writeLanded(uid) {
+    var entry = state.writes.rows[String(uid)];
+    if (entry) entry.seq = ++state.writes.seq;
+  }
+
+  function forgetWrite(uid) {
+    delete state.writes.rows[String(uid)];
+  }
+
+  /**
+   * What this page wrote about a row after a fetch stamped `stamp` went out, or
+   * null if that fetch is entitled to its own opinion.
+   *
+   * Entries are kept rather than pruned once they stop matching. They are a uid
+   * and a number, bounded by how many rows you act on in one sitting, and
+   * deleting one is the thing that would let an *older* answer still in flight
+   * put the row back — the failure this exists to prevent, reintroduced by the
+   * tidying up.
+   */
+  function localWrite(uid, stamp) {
+    var entry = state.writes.rows[String(uid)];
+    return entry && entry.seq > stamp ? entry : null;
+  }
+
+  /**
+   * A fetched list, reconciled with what this page wrote after it was asked for.
+   *
+   * **The reason this is needed at all is that a refetch replaces a list
+   * wholesale.** Confirming a row removes it locally by identity — see
+   * `dropConfirmed` — and the refetch that follows every write hands back a new
+   * array of new objects, so a row this page removed comes back if the server
+   * execution behind that answer had not yet seen the write. Which is the
+   * ordinary case when you confirm a second row while the first one's dashboard
+   * reload is in the air: the queue redraws with a row you have already ticked
+   * back in it, and swiping that row again is how a queue of executions builds
+   * up behind a transport that eventually gives up.
+   *
+   * Rows are patched as well as dropped, because the two lists want different
+   * things from the same fact. A list of rows needing review has no reading in
+   * which a ticked row belongs, so `dropConfirmed` drops it; an unfiltered
+   * Records list is *for* confirmed rows, and what it needs is the tick.
+   */
+  function agreeWithLocalWrites(rows, stamp, options) {
+    var drop = !!(options && options.dropConfirmed);
+
+    return (rows || []).filter(function (row) {
+      var entry = localWrite(row.uid, stamp);
+      if (!entry) return true;
+      if (entry.kind === 'gone') return false;
+
+      row.confirmed = true;
+      return !drop;
+    });
+  }
+
+  /**
+   * A page of Records, reconciled, and the count reconciled with it.
+   *
+   * `total` is the server's answer to "how many match", so a row this page has
+   * taken out of the list has to come off it too — the same decrement
+   * `dropFromLists` makes for the same reason. A list showing forty rows under
+   * a count of forty-one reads as one being hidden.
+   *
+   * Confirmed rows are dropped only when the list is filtered to unconfirmed,
+   * which is the rule `dropConfirmed` already applies to the list on screen.
+   */
+  function reconciledRows(result, stamp) {
+    var rows = agreeWithLocalWrites(result.rows, stamp,
+      { dropConfirmed: !!state.filters.records.unconfirmedOnly });
+
+    var lost = (result.rows || []).length - rows.length;
+    if (lost && result.total > 0) result.total = Math.max(0, result.total - lost);
+    return rows;
+  }
+
   function currentFilters(which) {
     var filters = state.filters[which];
     return {
@@ -110,10 +218,18 @@
     render();
 
     var stamp = ++state.requests.records;
+    var written = writeStamp();
     callOrRetry('appRecords', currentFilters('records'), 0).then(function (result) {
       if (stamp !== state.requests.records) return;
 
-      state.records = { rows: result.rows, pending: result.pending || [],
+      // Before the assignment, because it corrects `result.total` as well as
+      // returning the rows — and `offset` counts what the *server* sent rather
+      // than what survived: it is the cursor the next page is asked for from,
+      // and moving it by the rows this page dropped would ask for a slice
+      // starting before the one already on screen.
+      var rows = reconciledRows(result, written);
+
+      state.records = { rows: rows, pending: result.pending || [],
         offset: result.rows.length,
         hasMore: result.hasMore, total: result.total, loading: false, loaded: true };
       render();
@@ -130,11 +246,13 @@
     // concatenate rows from a different question onto the list — plausible
     // rows, in the right shape, in the wrong query.
     var stamp = ++state.requests.records;
+    var written = writeStamp();
     callOrRetry('appRecords', currentFilters('records'), state.records.offset)
       .then(function (result) {
         if (stamp !== state.requests.records) return;
 
-        state.records.rows = state.records.rows.concat(result.rows);
+        var rows = reconciledRows(result, written);
+        state.records.rows = state.records.rows.concat(rows);
         state.records.offset += result.rows.length;
         state.records.hasMore = result.hasMore;
         state.records.total = result.total;
@@ -170,6 +288,7 @@
     }
 
     state.dashboard.inFlight = true;
+    var written = writeStamp();
     var settle = function () {
       state.dashboard.inFlight = false;
       if (!state.dashboard.again) return;
@@ -208,6 +327,27 @@
         correct.
       */
       state.data.overview = result;
+
+      /*
+        The queue is the one block in that payload this page may know better
+        than the server does.
+
+        Every write ends here, and a write is the thing most likely to still be
+        in the air when this answer was taken: confirm two rows in a row and the
+        reload the first one fires is read by an execution that has not yet seen
+        the second one's cell. So the screen you are handed back is *correct as
+        of when it was asked*, and it puts a row you have already ticked back
+        under a heading that says it needs reviewing — where swiping it again
+        adds another multi-second execution to a queue that is already the
+        reason this happened.
+
+        Reconciled rather than suppressed: a row the server disagrees with for
+        any other reason still comes back, and any fetch issued after the write
+        landed is believed in full.
+      */
+      result.review = agreeWithLocalWrites(result.review, written,
+        { dropConfirmed: true });
+
       state.overviewError = '';
       render();
       settle();
