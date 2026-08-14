@@ -73,6 +73,8 @@ Copy the `/exec` URL. This is what makes the whole thing serverless: your bank n
 >
 > So the move that satisfies both is **Manage deployments → edit (pencil) → Version: New version → Deploy**. Same URL, current code. Reach for *New deployment* only the first time.
 >
+> If you took the `clasp` path, `npm run deploy` is that move for both deployments at once, and checks afterwards that neither changed hands: [`docs/DEPLOY.md`](DEPLOY.md).
+>
 > If you're ever unsure which URL is live, open **Spendsheet → Set up and maintain → Install credentials**. It shows a **Redirect URL** field, pre-filled with what the runtime reports — and that is a starting guess rather than an answer. `ScriptApp.getService().getUrl()` answers for the context it is *called from*, so run from a menu it returns the HEAD deployment, which is neither of the two real doors. Check it against **Deploy → Manage deployments** before you paste it into Enable Banking; what you save in that field is what `startAuth()` sends, so it is also the fix if the two ever disagree.
 
 ### 5. Register a sandbox application

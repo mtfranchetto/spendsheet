@@ -121,6 +121,7 @@ If you fork this, remember that `.gitignore` excludes `*.pem`, `*.csv` and every
 | [`docs/MONITORING.md`](docs/MONITORING.md) | What breaks, how you find out, how you fix it |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Per-bank findings — which fields each bank actually populates |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Running the tests |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Pushing new code to the two deployments, and why the access setting is checked rather than trusted |
 
 The *why* behind the non-obvious decisions lives in the source comments, which are written for that purpose — start with the header of whichever `src/*.gs` file owns the thing you're changing.
 
