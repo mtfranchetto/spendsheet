@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Copy to .deploy.json and fill in the two deployment ids from `npx clasp list-deployments`.",
+    ".deploy.json is gitignored: this repo is public, and the app door's URL is the whole",
+    "of what stops a stranger reaching the page in the first place.",
+    "",
+    "`access` is not a setting this file applies — it is the assertion the deploy script",
+    "checks the live door against afterwards. ANYONE_ANONYMOUS is 'Anyone', MYSELF is",
+    "'Only myself'. The bank door has to be Anyone: Enable Banking redirects the consent",
+    "flow to it with nobody signed in. The app door serves balances and must be MYSELF.",
+    "",
+    "lastDeploy is written by the script and is how it knows which files changed since.",
+    "Delete it to force the next run to treat everything as changed."
+  ],
+  "doors": [
+    {
+      "key": "bank",
+      "deploymentId": "AKfycb…",
+      "description": "Spendsheet banking",
+      "access": "ANYONE_ANONYMOUS"
+    },
+    {
+      "key": "app",
+      "deploymentId": "AKfycb…",
+      "description": "Spendsheet viewer",
+      "access": "MYSELF"
+    }
+  ]
+}

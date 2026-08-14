@@ -5,6 +5,11 @@
 .clasp.json
 .clasprc.json
 
+# Deployment ids. Not credentials, but the app door is access-MYSELF at a URL
+# nobody is meant to have, and this repo is public. .deploy.example.json is the
+# committed half. See docs/DEPLOY.md.
+.deploy.json
+
 # Data — never commit a transaction history to a public repo.
 *.csv
 *.xlsx
