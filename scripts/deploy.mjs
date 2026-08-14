@@ -29,22 +29,57 @@
  * The reason this file is more than three `clasp` calls in a row is the access
  * setting, and it is worth stating exactly.
  *
- * A deployment's "Who has access" is per-deployment, but it is *derived from
- * the manifest of the version being deployed* when a deployment is created.
- * src/appsscript.json declares ANYONE_ANONYMOUS, which is the bank door's
- * setting; the app door was set to MYSELF in the UI and so diverges from the
- * manifest it was cut from. Whether `redeploy` re-derives access from the new
- * version's manifest or leaves the deployment's own setting alone is not
- * something the documentation answers, and the failure mode if it re-derives
- * is the one the project treats as fatal: this book's balances behind a URL
- * anyone can load, with only requireOwner_ between them and a stranger.
+ * A deployment's "Who has access" lives on its *entry point*, and the Apps
+ * Script API treats entryPoints as output-only: `deployments.update` — which is
+ * what `clasp update-deployment` calls — drops the entry point and rebuilds it
+ * from the manifest. So access cannot be set through the API at all, and a
+ * redeploy does not preserve the setting a deployment already carried. It takes
+ * whatever `webapp.access` the manifest says, every time.
  *
- * So it is not assumed in either direction. Every run reads both doors back
- * from the Apps Script API afterwards and fails loudly if either one is not
- * what .deploy.json says it must be. Checked every time beats reasoned about
- * once, and `clasp list-deployments` cannot show it — the access setting lives
- * on the entry point, which clasp does not print, so the check goes to the
- * REST API directly.
+ * That matters here because the two doors need different answers. The bank door
+ * is the consent redirect and must be ANYONE_ANONYMOUS: Enable Banking sends a
+ * browser to it with nobody signed in. The app door serves this book's balances
+ * and must be MYSELF. One manifest cannot say both, so a single shared version
+ * cannot deploy both doors correctly — it lands whichever access the manifest
+ * happened to hold on *both* of them, and the direction that costs something is
+ * the app door coming back public with only requireOwner_ between a stranger
+ * and the balances.
+ *
+ * So each door gets its own manifest value and its own version:
+ *
+ *     write webapp.access = <the door's access>  ->  push  ->  create-version N
+ *       ->  update-deployment <door> -V N
+ *
+ * once per door. The code in both versions is identical — they differ in one
+ * manifest field and in nothing else, which is why the doors sitting on
+ * adjacent version numbers is not the skew this script exists to prevent.
+ *
+ * Writing the manifest immediately before cutting the version is also what
+ * makes this independent of a question the documentation does not settle:
+ * whether the rebuilt entry point reads the *version's* manifest or HEAD's at
+ * the moment of the update. Sequenced this way they are the same file, so both
+ * answers give the same result and neither one has to be established.
+ *
+ * src/appsscript.json is tracked, so it is captured before the first write and
+ * restored afterwards — from an `exit` hook as well as a `finally`, because
+ * `fail()` leaves through `process.exit` and would otherwise strand a mutated
+ * manifest in the working tree for the next commit to sweep up. A closing push
+ * puts HEAD back on the repository's own manifest, so what git holds and what
+ * the Apps Script editor shows agree once a deploy has finished.
+ *
+ * Every run then reads both doors back from the API and fails loudly if either
+ * is not what .deploy.json says it must be. Checked every time beats reasoned
+ * about once, and `clasp list-deployments` cannot show it — the access setting
+ * lives on the entry point, which clasp does not print, so the check goes to
+ * the REST API directly.
+ *
+ * That read is polled rather than taken once. The deployments endpoint lags a
+ * redeploy by a few seconds and answers with the *previous* state, which is not
+ * a harmless delay: the record it returns describes the door as it was before
+ * the update, so a check that trusts the first answer reads the old access off
+ * a door it never actually looked at, and reports on a version that is not the
+ * one it just deployed. It waits for each door to report the version it was
+ * given, and only then asks what access came back with it.
  *
  * The credential for that is the refresh token in ~/.clasprc.json — the one
  * clasp itself uses, already carrying the deployments scope. No second login,
@@ -60,6 +95,18 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_PATH = join(ROOT, '.deploy.json');
 const CLASP_PATH = join(ROOT, '.clasp.json');
+const MANIFEST_PATH = join(ROOT, 'src', 'appsscript.json');
+
+/**
+ * How long to let the deployments endpoint catch up before believing it.
+ *
+ * Fifteen tries two seconds apart. The lag observed in practice is a few
+ * seconds; the ceiling is generous because the cost of waiting too long is a
+ * slow deploy and the cost of not waiting long enough is asserting the access
+ * setting against a door as it was before the redeploy.
+ */
+const SETTLE_ATTEMPTS = 15;
+const SETTLE_DELAY_MS = 2000;
 
 /**
  * What forces a redeploy, as opposed to being live the moment it is pushed.
@@ -176,6 +223,60 @@ function scriptId() {
 }
 
 /**
+ * The manifest with one field changed, as text.
+ *
+ * Pure, and exported, because the thing worth testing is that setting the one
+ * field leaves the rest of the manifest alone: a deploy that quietly dropped an
+ * oauthScope or the Drive advanced service would cut a version whose snapshot
+ * fails at the moment of the call, days later, with nothing pointing here.
+ * Spreading over the existing `webapp` keeps executeAs rather than rewriting
+ * the object around the one key this cares about.
+ */
+export function manifestWithAccess(source, access) {
+  const manifest = JSON.parse(source);
+  manifest.webapp = { ...manifest.webapp, access };
+  return JSON.stringify(manifest, null, 2) + '\n';
+}
+
+/**
+ * The bytes src/appsscript.json held before this run touched it, or null if it
+ * has not been touched. Restoring writes these back verbatim rather than
+ * re-serialising, so a deploy cannot reformat a tracked file as a side effect.
+ */
+let manifestOriginal = null;
+
+function restoreManifest() {
+  if (manifestOriginal === null) return;
+  const original = manifestOriginal;
+  // Cleared first: the exit hook and the finally both call this, and the second
+  // caller must not write a file the user may have edited in between.
+  manifestOriginal = null;
+  writeFileSync(MANIFEST_PATH, original);
+}
+
+function setManifestAccess(access) {
+  if (manifestOriginal === null) {
+    if (!existsSync(MANIFEST_PATH)) fail('src/appsscript.json is missing — a version cannot be cut without it.');
+    manifestOriginal = readFileSync(MANIFEST_PATH, 'utf8');
+
+    // `fail()` exits through process.exit, which runs neither a finally nor a
+    // signal handler. An exit hook is the only one of the three that sees every
+    // way out of this script, and writeFileSync is synchronous, so it is
+    // allowed to do real work here.
+    process.on('exit', restoreManifest);
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      process.on(signal, () => {
+        restoreManifest();
+        process.exit(130);
+      });
+    }
+  }
+  writeFileSync(MANIFEST_PATH, manifestWithAccess(manifestOriginal, access));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
  * Everything under src/ that differs from the last deploy: committed changes
  * since that commit, plus whatever is uncommitted right now. Both halves
  * matter — a push sends the working tree, so uncommitted page edits are as
@@ -276,7 +377,7 @@ function describe(door, live) {
  * UI, and a warning that does not say which door is a warning nobody can act
  * on at the end of a deploy.
  */
-export function checkDoors(doors, live, expectedVersion) {
+export function checkDoors(doors, live, expectedVersions) {
   const problems = [];
   let opened = null;
   for (const door of doors) {
@@ -295,17 +396,45 @@ export function checkDoors(doors, live, expectedVersion) {
       // reported as itself and not as one bullet among several.
       if (door.access === 'MYSELF') opened = door;
     }
-    if (expectedVersion !== null && found.versionNumber !== expectedVersion) {
+    // Keyed by door, because the doors are deployed from different manifests
+    // and so land on different versions by design.
+    const expected = expectedVersions?.[door.key] ?? null;
+    if (expected !== null && found.versionNumber !== expected) {
       problems.push(
-        `${door.key} (${door.description}) is on version ${found.versionNumber ?? 'HEAD'}, expected ${expectedVersion}.`
+        `${door.key} (${door.description}) is on version ${found.versionNumber ?? 'HEAD'}, expected ${expected}.`
       );
     }
   }
   return { problems, opened };
 }
 
-function verify(doors, live, expectedVersion) {
-  const { problems, opened } = checkDoors(doors, live, expectedVersion);
+/**
+ * The deployment list, once every door reports the version it was just given.
+ *
+ * Returns whatever the last attempt saw if they never agree, so the caller
+ * fails on the version mismatch rather than on a timeout — a door genuinely
+ * left behind and a door the API is slow to describe read the same here, and
+ * only the check has the standing to say which.
+ */
+async function settledDeployments(id, token, doors, expectedVersions) {
+  let live = [];
+  for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt++) {
+    live = await readDeployments(id, token);
+    const pending = doors.filter((door) => {
+      const found = live.find((deployment) => deployment.deploymentId === door.deploymentId);
+      return !found || found.versionNumber !== expectedVersions[door.key];
+    });
+    if (pending.length === 0) return live;
+    if (attempt < SETTLE_ATTEMPTS) {
+      console.log(`    still the old answer for ${pending.map((door) => door.key).join(', ')} — retrying (${attempt}/${SETTLE_ATTEMPTS})`);
+      await sleep(SETTLE_DELAY_MS);
+    }
+  }
+  return live;
+}
+
+function verify(doors, live, expectedVersions) {
+  const { problems, opened } = checkDoors(doors, live, expectedVersions);
   if (problems.length === 0) return;
 
   console.error('\n✗ Deployment check failed:');
@@ -321,6 +450,15 @@ function verify(doors, live, expectedVersion) {
       '    set "Who has access", and Version: New version. Update in place; a new\n' +
       '    deployment mints a different URL and breaks the door.\n'
   );
+  // The access this run deployed came from the manifest it wrote, so a door
+  // that came back wrong means that mechanism did not hold — the manual repair
+  // above closes the door, and the next `npm run deploy` would undo it again.
+  if (opened) {
+    console.error(
+      '  Then treat this as a bug in the deploy, not a one-off: the access came\n' +
+        '  from the manifest this run wrote, so a wrong answer here will repeat.\n'
+    );
+  }
   process.exit(1);
 }
 
@@ -382,6 +520,14 @@ async function main() {
     console.log(`    would push:      yes`);
     console.log(`    would run e2e:   ${needsE2e ? 'yes (src/page*.html changed)' : 'no'}`);
     console.log(`    would redeploy:  ${needsRedeploy ? doors.map((d) => d.key).join(', ') : 'no — nothing web-facing changed'}`);
+    if (needsRedeploy) {
+      // Named per door because the version count and the manifest rewrite are
+      // the two things about this sequence that surprise on a first reading.
+      for (const door of doors) {
+        console.log(`      ${door.key}: webapp.access = ${door.access} ("${ACCESS_HELP[door.access]}") -> push -> version -> redeploy`);
+      }
+      console.log(`    src/appsscript.json is rewritten per door and restored afterwards.`);
+    }
     return;
   }
 
@@ -396,10 +542,10 @@ async function main() {
     console.log('\n  ! --skip-tests: pushing code no suite has seen.');
   }
 
-  step('clasp push --force');
-  run(['clasp', 'push', '--force']);
-
   if (options.pushOnly || !needsRedeploy) {
+    step('clasp push --force');
+    run(['clasp', 'push', '--force']);
+
     const reason = options.pushOnly ? '--push-only' : 'nothing web-facing changed';
     step(`Pushed. No redeploy (${reason}).`);
     console.log('    The Sheet runs at HEAD, so menu items, dialogs and triggers are live now.');
@@ -411,22 +557,39 @@ async function main() {
 
   const commit = git(['rev-parse', 'HEAD']);
   const subject = git(['log', '-1', '--format=%s']) || 'deploy';
-  step(`clasp create-version "${commit.slice(0, 7)} ${subject}"`);
-  const version = createVersion(`${commit.slice(0, 7)} ${subject}`);
-  console.log(`    version ${version}`);
+  const versions = {};
 
-  // Both doors go to the same version, always. They were on 38 and 39 when
-  // this script was written, which is what one door being redeployed by hand
-  // looks like afterwards — and nothing about the code says the phone and the
-  // consent redirect are allowed to disagree.
-  for (const door of doors) {
-    step(`clasp redeploy ${door.key} -> version ${version}`);
-    run(['clasp', 'update-deployment', '-V', String(version), '-d', door.description, door.deploymentId]);
+  try {
+    // One pass per door: the manifest states that door's access, the version
+    // freezes it, and the redeploy rebuilds the entry point from it. Pushing
+    // inside the loop is what makes the version carry the right manifest, so
+    // there is no separate push before this — the first pass performs it.
+    for (const door of doors) {
+      step(`${door.key}: webapp.access = ${door.access} ("${ACCESS_HELP[door.access]}")`);
+      setManifestAccess(door.access);
+      run(['clasp', 'push', '--force']);
+
+      const message = `${commit.slice(0, 7)} ${subject} [${door.key}]`;
+      step(`clasp create-version "${message}"`);
+      versions[door.key] = createVersion(message);
+      console.log(`    version ${versions[door.key]}`);
+
+      step(`clasp redeploy ${door.key} -> version ${versions[door.key]}`);
+      run(['clasp', 'update-deployment', '-V', String(versions[door.key]), '-d', door.description, door.deploymentId]);
+    }
+  } finally {
+    restoreManifest();
   }
 
-  step('Reading both doors back from the Apps Script API');
-  const after = await readDeployments(id, token);
-  verify(doors, after, version);
+  // HEAD is left on the repository's own manifest rather than on whichever door
+  // happened to go last, so the Apps Script editor and git agree and a manual
+  // "New deployment" inherits the committed setting rather than a leftover.
+  step('clasp push --force (HEAD back onto the committed manifest)');
+  run(['clasp', 'push', '--force']);
+
+  step('Reading the doors back from the Apps Script API');
+  const after = await settledDeployments(id, token, doors, versions);
+  verify(doors, after, versions);
 
   for (const door of doors) {
     const live = after.find((deployment) => deployment.deploymentId === door.deploymentId);
@@ -434,9 +597,9 @@ async function main() {
     console.log(`      ${live.url}`);
   }
 
-  config.lastDeploy = { commit, version, at: new Date().toISOString() };
+  config.lastDeploy = { commit, versions, at: new Date().toISOString() };
   saveConfig(config);
-  step(`Deployed version ${version} to ${doors.map((door) => door.key).join(' and ')}.`);
+  step(`Deployed ${doors.map((door) => `${door.key} @${versions[door.key]}`).join(' and ')}.`);
 }
 
 // Imported by deploy.test.mjs for the two functions worth exercising, so
