@@ -476,6 +476,13 @@ var DEFAULT_CONFIG = [
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
   ['duplicate_window_days', 3, 'How far apart an imported row and a synced one may be booked and still be the same transaction.'],
   ['categorize_on_sync', 'yes', 'Categorise freshly synced rows as they land. Set to no to only run it by hand.'],
+  // Where learned memory is offered in the one ordered list `rules` and
+  // `_memory` share. 5 is below the seed's lowest rule, so your own history
+  // decides before any pattern; a value above the highest priority on the tab
+  // makes every rule win instead. Deliberately not 0: `Number('')` is 0, so a
+  // zero default and a cleared cell would be the same reading and no test could
+  // tell the guard in `configNumber_` from its absence.
+  ['memory_priority', 5, 'Where learned memory sits among the rules. Lower matches first; seed rules start at 10.'],
   // `cashflow_horizon_days`, `trend_days` and `confirm_rule_matches` went from
   // here with the code that read them — the cashflow projection in
   // `15_recurring.gs`, the net worth chart on the old `dashboard` tab, and the

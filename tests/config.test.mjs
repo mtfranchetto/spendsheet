@@ -210,12 +210,24 @@ describe('accountBalanceFormula', () => {
 
 describe('seed data', () => {
   it('puts MCC rules above text rules, since MCC is language-independent', () => {
+    // This numbering is the *only* thing arranging it. `readRules_` returns one
+    // list ordered by priority and looks at nothing else, so an MCC rule
+    // numbered into the text band would simply be tried after it — no error,
+    // no warning, and a language-independent code losing to a substring.
     const mcc = ctx.DEFAULT_RULES.filter((r) => r[1] === 'mcc');
     const text = ctx.DEFAULT_RULES.filter((r) => r[1] === 'description');
 
     expect(mcc.length).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(Math.max(...mcc.map((r) => r[0]))).toBeLessThan(Math.min(...text.map((r) => r[0])));
+  });
+
+  it('leaves room below every rule for memory to be offered first', () => {
+    // `memory_priority` ships at 5 and the cascade compares it against these
+    // numbers, so a seed rule numbered below it would silently outrank your own
+    // confirmed history on a book nobody had configured.
+    const lowest = Math.min(...ctx.DEFAULT_RULES.map((r) => r[0]));
+    expect(lowest).toBeGreaterThan(ctx.configNumber_({}, 'memory_priority'));
   });
 
   it('gives every rule a unique priority, so match order is deterministic', () => {

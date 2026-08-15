@@ -8,20 +8,33 @@ No machine learning, no API key, no per-row cost. The whole thing is a lookup ta
 
 ## The cascade
 
-Six tiers, first hit wins. Every row records **which tier decided it** in `category_source`, so "why is this Groceries?" always has an answer.
+Four tiers, first hit wins. Every row records **what decided it** in `category_source`, so "why is this Groceries?" always has an answer.
 
 | # | Tier | `category_source` | How it decides |
 |---|---|---|---|
 | 1 | Override | `override` | you typed a `category_override`. Always wins |
 | 2 | Transfer | `transfer` | the row is one leg of a matched pair — see below |
-| 3 | **Memory** | `memory` | merchant key → the category you have most often given it |
-| 4 | MCC | `mcc` | `merchant_category_code` → category, via `rules` |
-| 5 | Text | `rule` | contains/regex over description or counterparty, via `rules` |
-| 6 | — | `unclassified` | nothing matched. Goes to a queue, **never** to "Other" |
+| 3 | **Match** | `memory` / `mcc` / `rule` | the first entry in one ordered list that fits |
+| 4 | — | `unclassified` | nothing matched. Goes to a queue, **never** to "Other" |
 
-Tier 4 is a bonus rather than a foundation — PSD2 banks populate MCC inconsistently — which is exactly why memory sits above it instead of depending on it.
+### Tier 3 is one list, and you decide its order
 
-### Tier 3 is the workhorse
+`rules` and `_memory` are matched together, as a single list ordered by `priority`, first hit wins:
+
+| Priority | What sits there |
+|---|---|
+| `memory_priority` (default **5**) | every entry in `_memory`, matched on the merchant key |
+| 10–99 | the seeded MCC rules — a numeric code, so language-independent and safe from a bank rewording itself |
+| 100+ | the seeded text rules — `contains`/`regex`, the fallback for banks that populate MCC sparsely, which is most of them |
+| highest + 10 | whatever **Always categorise this** added from your phone |
+
+`category_source` still names the *kind* of thing that decided rather than where it sat, because that is the question you are actually asking of a row.
+
+**Where memory sits is one cell.** `memory_priority` in `_config` at 5 puts your own confirmed history ahead of every pattern — the default, because a merchant you have filed forty times is better evidence than a substring somebody shipped. Set it above the highest priority on the `rules` tab and every rule wins instead, which is worth knowing before you do it: the seeded patterns are deliberately loose (`COOP`, `Q8`, `AMAZON`, `SATISPAY`) precisely because memory was above them. A tie goes to the rule.
+
+Two things follow that are easy to miss. A rule you add **cannot** correct a merchant memory has learned unless `memory_priority` is above it — the way to change memory's mind is to correct a couple of rows and re-learn, and the recency tiebreak is what makes that work. And `learnFromCorrections` will not learn from a row a rule answered, so those two facts are the same fact seen from either end.
+
+### What a merchant key is
 
 `PAGAMENTO POS 12/03 CARTA *1234 ESSELUNGA SPA TORINO` becomes the key `esselunga torino`, and `_memory` says what you file that as. Dates, times, card numbers, till numbers, authorisation codes, legal suffixes and about sixty words of Italian banking ceremony are stripped out.
 
@@ -31,7 +44,7 @@ Two decisions in there are worth knowing about, because both look like bugs unti
 
 **`COOP` survives.** It's a legal form (`soc. coop.`) and it's also one of the largest supermarket chains in Italy. `SPA`, `SRL`, `GMBH` and friends are stripped; this one isn't.
 
-The gap that leaves — your BudgetBakers history says `Esselunga`, your bank says `ESSELUNGA SPA TORINO` — is closed at **lookup** time instead. A shorter learned key matches a longer transaction key by containment, on whole words only, longest match first. So the imported history categorises bank rows it has never seen the descriptor for.
+**A key matches whole.** `esselunga` and `esselunga torino` are two entries in `_memory`, and each earns its own confirmation — so your BudgetBakers history (`Esselunga`) and your bank (`ESSELUNGA SPA TORINO`) are two merchants until you have confirmed one of each. That is one extra swipe, once, in exchange for a lookup that either hits or does not. A merchant whose descriptor varies more than that is what `rules` is for: a `contains` pattern says "however this one renders, file it here", which is the statement a key deliberately cannot make.
 
 ---
 
@@ -57,7 +70,7 @@ A guessed category and a category you agreed with are not the same fact.
 
 Confirming does two things: it freezes that row's `category_auto` against future rule changes, and it makes the row eligible for learning. Typing a `category_override` counts as confirming without the tick.
 
-**Confirming a row a rule answered does not teach memory.** Memory outranks both rule tiers, so a rule that taught memory its own answer would go on being obeyed *through* memory after you had corrected the rule — with the `rules` tab looking ignored and the reason two tiers away. Nothing is lost by it: the rule already says that, on a tab you can edit. Overriding a rule's answer still teaches, which is the case memory exists for.
+**Confirming a row a rule answered does not teach memory.** At the default `memory_priority` memory is offered first, so a rule that taught memory its own answer would go on being obeyed *through* memory after you had corrected the rule — with the `rules` tab looking ignored and the reason on a tab you never edit. Nothing is lost by it: the rule already says that, on a tab you can change. Overriding a rule's answer still teaches, which is the case memory exists for.
 
 **On a phone, use the `review` tab instead.** It holds the unconfirmed backlog, oldest first, with a checkbox and a category dropdown next to each row — and a tick there writes straight back to `transactions`. That is the whole reason it exists: custom menus do not exist in the Sheets mobile app, so *Confirm visible rows* is a desktop tool and the checkbox is the one that works everywhere. See [`REPORTS.md`](REPORTS.md#review).
 
@@ -183,7 +196,7 @@ The three seeded labels are examples; replace them. `labels` is **never re-seede
 
 A typo in `field` matches **nothing**, deliberately — the alternative is `contains ""` matching every row and recategorising the whole sheet. A half-typed `regex` matches nothing too, rather than breaking the run that reads it.
 
-Rules sit *below* memory, so the way to override a merchant memory has learned is to correct a row and re-learn, not to add a rule.
+At the default `memory_priority` a rule sits *below* memory, so the way to change a merchant memory has learned is to correct a row and re-learn, not to add a rule. Raising `memory_priority` above the highest rule priority reverses that — see [the cascade](#the-cascade) for what else it changes.
 
 ### Adding a rule
 
@@ -239,4 +252,4 @@ A child rename is also the one case the tidy can't finish for you. `subcategory_
 
 ## Deliberately not included
 
-**LLM categorisation.** Calling a model for unknown merchants would work and would cost pennies — but it adds an API key, an external dependency and a per-row cost to something whose whole premise is free and maintenance-free, and tier 3 makes it largely unnecessary. If you want it, it's a hook above tier 6; it stays off by default.
+**LLM categorisation.** Calling a model for unknown merchants would work and would cost pennies — but it adds an API key, an external dependency and a per-row cost to something whose whole premise is free and maintenance-free, and the match list makes it largely unnecessary. If you want it, it's a hook between tier 3 and `unclassified`; it stays off by default.

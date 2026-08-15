@@ -728,8 +728,23 @@ describe('adding a rule from the app', () => {
     const c = book([tx()]);
     c.appAddRule(good({ pattern: 'esselunga' }));
 
-    const loaded = c.readRules_(c.__spreadsheet, false);
+    const loaded = c.readRules_(c.__spreadsheet);
     expect(loaded.some((r) => String(r.pattern) === 'esselunga')).toBe(true);
+  });
+
+  it('lands after every seed rule in the one list they share', () => {
+    // `readRules_` returns MCC and text rules together, ordered by priority and
+    // nothing else, so where an app-added rule ends up is decided entirely by
+    // the number `nextRulePriority_` gave it.
+    const c = book([tx()]);
+    c.appAddRule(good({ pattern: 'esselunga' }));
+
+    const loaded = c.readRules_(c.__spreadsheet);
+    const priorities = loaded.map((r) => Number(r.priority));
+
+    expect(loaded.some((r) => String(r.field) === 'mcc')).toBe(true);
+    expect(priorities).toEqual([...priorities].sort((a, b) => a - b));
+    expect(String(loaded[loaded.length - 1].pattern)).toBe('esselunga');
   });
 });
 

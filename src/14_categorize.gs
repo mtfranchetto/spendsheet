@@ -1,25 +1,31 @@
 /**
  * 14_categorize.gs — the categorisation cascade.
  *
- * Six tiers, first hit wins, and every row records which tier decided it in
+ * Four tiers, first hit wins, and every row records which one decided it in
  * `category_source` so "why is this Groceries?" is always answerable:
  *
  *   1 override      you typed it
  *   2 transfer      the row is one leg of a pair, and leaves spending entirely
- *   3 memory        merchant key → the category you have most often given it
- *   4 mcc           merchant_category_code → category, language-independent
- *   5 rule          contains/regex over description or counterparty
- *   6 unclassified  goes to a review queue, never silently "Other"
+ *   3 match         the first entry in one priority-ordered list that fits
+ *   4 unclassified  goes to a review queue, never silently "Other"
  *
- * **Tier 3 is the workhorse and it is a lookup, not a model.** `_memory` is
- * mined from your own confirmed history by `learnFromCorrections()`, which is
- * why this phase lands after the import rather than before it: four thousand
- * rows you already categorised are a better training signal than any ruleset
- * shipped in this file.
+ * **Tier 3 is one list, and its order is data.** `rules` holds the patterns
+ * you can edit — MCC codes numbered 10-99 because a numeric code is
+ * language-independent and cannot be broken by a bank rewording itself, text
+ * patterns 100+ for the banks that populate MCC sparsely, which is most of
+ * them. Learned memory is offered at the priority `memory_priority` names.
+ * So where your own history sits relative to a rule is a cell in `_config`
+ * rather than a branch in this file: the default 5 puts it below every seed
+ * rule, and a value above the highest rule priority makes every rule win.
  *
- * Tier 4 is a bonus rather than a foundation — PSD2 banks populate MCC
- * inconsistently, which is exactly why memory sits above it instead of
- * depending on it.
+ * **`_memory` is a lookup, not a model.** It is mined from your own confirmed
+ * history by `learnFromCorrections()`, which is why this phase lands after the
+ * import rather than before it: four thousand rows you already categorised are
+ * a better training signal than any ruleset shipped in this file.
+ *
+ * `category_source` names the *kind* of thing that decided — `memory`, `mcc`,
+ * `rule` — rather than where it sat, because that is the question someone
+ * reading a row is actually asking and a priority number does not answer it.
  *
  * Nothing here writes `category_override`, `category` or `type`. The first is
  * yours, the other two are formulas over what this file computes. Recategorising
@@ -58,13 +64,6 @@ var MERCHANT_NOISE_WORDS = [
 var MERCHANT_KEY_MAX_TOKENS = 6;
 
 /**
- * A memory key must be at least this long before it is allowed to match by
- * containment. `q8` as a substring would hit `q8 milano` and also `xq8y`;
- * four characters is where an accidental hit stops being plausible.
- */
-var MEMORY_CONTAINMENT_MIN_CHARS = 4;
-
-/**
  * The stable part of what a transaction says it was.
  *
  * Deliberately does **not** strip city names, and that is the one judgement
@@ -75,9 +74,11 @@ var MEMORY_CONTAINMENT_MIN_CHARS = 4;
  * row. Leaving the city in costs one extra confirmation per city per merchant,
  * once. The asymmetry is not close.
  *
- * The gap that leaves — imported BudgetBakers rows carry a clean `esselunga`
- * where a synced row carries `esselunga torino` — is closed at lookup time by
- * containment matching, not by making the key more aggressive.
+ * A key is matched whole: `esselunga` and `esselunga torino` are two entries in
+ * `_memory` and each earns its own confirmation. A merchant whose description
+ * varies more than that is what `rules` is for — a `contains` pattern says
+ * "however this one renders, file it here", which is the statement a key
+ * deliberately cannot make.
  */
 function normalizeMerchant(description, counterparty) {
   var text = merchantSource_(description, counterparty);
@@ -153,8 +154,8 @@ function buildCascadeContext_(config) {
 
   return {
     memory: buildMemoryIndex_(readMemoryRecords_(ss)),
-    mccRules: readRules_(ss, true),
-    textRules: readRules_(ss, false),
+    memoryPriority: configNumber_(cfg, 'memory_priority'),
+    rules: readRules_(ss),
     kindByCategory: readCategoryKinds_(ss),
     transferWindowDays: configNumber_(cfg, 'transfer_window_days')
   };
@@ -168,48 +169,51 @@ function readMemoryRecords_(ss) {
 }
 
 /**
- * Memory, indexed twice.
+ * Memory as a flat key → entry map.
  *
- * `byKey` is the exact hit. `byFirstToken` is what makes containment cheap: a
- * memory key that appears inside a transaction key as a whole run of words must
- * start at one of that key's tokens, so only the entries sharing a first token
- * are ever compared.
+ * One exact lookup is the whole matching story, which is what lets memory sit
+ * inside the rule loop at a priority without costing a scan: the entry either
+ * exists under this row's key or there is nothing to offer.
+ *
+ * An entry with no category is dropped rather than stored — offering it would
+ * categorise a row as blank while reporting `memory` as the reason.
  */
 function buildMemoryIndex_(records) {
   var byKey = {};
-  var byFirstToken = {};
 
   records.forEach(function (row) {
     var key = String(row.merchant_key).trim().toLowerCase();
     if (!key) return;
 
-    var entry = {
+    var category = String(row.category || '');
+    if (!category) return;
+
+    byKey[key] = {
       key: key,
-      category: String(row.category || ''),
+      category: category,
       subcategory: String(row.subcategory || ''),
       hits: Number(row.hits) || 0
     };
-    if (!entry.category) return;
-
-    byKey[key] = entry;
-
-    if (key.length >= MEMORY_CONTAINMENT_MIN_CHARS) {
-      var first = key.split(' ')[0];
-      (byFirstToken[first] = byFirstToken[first] || []).push(entry);
-    }
   });
 
-  return { byKey: byKey, byFirstToken: byFirstToken };
+  return byKey;
 }
 
-function readRules_(ss, wantMcc) {
+/**
+ * Every enabled rule, in the order they are tried.
+ *
+ * One list rather than one per field: `priority` is the only thing that decides
+ * match order, so the MCC-above-text arrangement lives in the seed's numbering
+ * where it can be read off the tab. `tests/config.test.mjs` is what holds the
+ * seed to it.
+ */
+function readRules_(ss) {
   var sheet = ss.getSheetByName(TABS.RULES);
   if (!sheet) return [];
 
   return readRecords_(sheet, RULE_COLUMNS, colIndex_(RULE_COLUMNS, 'priority'))
     .filter(function (row) { return isTruthyCell_(row.enabled); })
     .filter(function (row) { return String(row.pattern || '').length > 0; })
-    .filter(function (row) { return (String(row.field || '') === 'mcc') === !!wantMcc; })
     .sort(function (a, b) { return (Number(a.priority) || 0) - (Number(b.priority) || 0); });
 }
 
@@ -248,6 +252,30 @@ function categorizeOne_(record, context) {
   return guess;
 }
 
+/**
+ * The first entry in the ordered list that fits, and the subcategory of the
+ * first later entry that agrees with it.
+ *
+ * Memory is offered at `memory_priority` from inside the loop rather than ahead
+ * of it, and that is the whole arrangement: moving one number in `_config`
+ * decides whether your own history outranks a hand-written rule, and the answer
+ * is readable on a tab instead of inferable from the order of the branches
+ * here. The exact lookup is what makes it affordable — memory contributes at
+ * most one candidate, so it costs a hash hit rather than a scan.
+ *
+ * The comparison is strict, so a rule sharing memory's priority is tried first.
+ * A tie has to break somewhere, and this way `memory_priority` never has to
+ * dodge a number the seed already uses.
+ *
+ * **Scanning continues past a match that names a category and no subcategory**,
+ * because half an answer is not the answer. History teaches parents more often
+ * than children — an imported row carries its category in `category_override`
+ * and its subcategory nowhere — so memory holds plenty of entries with no
+ * child, and something further down the list often knows it. Such an entry
+ * contributes *only* the subcategory: the category was decided higher up, by
+ * definition, and a candidate that disagrees about it is not describing the
+ * same thing.
+ */
 function guessCategory_(record, context) {
   if (record._transferGroup) {
     return {
@@ -258,93 +286,63 @@ function guessCategory_(record, context) {
   }
 
   var key = normalizeMerchant(record.description, record.counterparty);
-  var remembered = key ? lookupMemory_(key, context.memory) : null;
+  var remembered = key ? context.memory[key] : null;
+  var winner = null;
 
-  var byMcc = matchRules_(record, context.mccRules);
-  var byText = matchRules_(record, context.textRules);
+  for (var i = 0; i < context.rules.length; i++) {
+    var rule = context.rules[i];
 
-  if (remembered) {
-    return {
-      category: remembered.category,
-      // History teaches parents more often than children: an imported row
-      // carries its category in `category_override` and its subcategory
-      // nowhere, because `subcategory` blanks itself when an override is
-      // present. So when memory knows the parent and a rule agrees about it,
-      // the rule's subcategory is adopted rather than thrown away — the
-      // alternative is memory *losing* detail that tier 4 or 5 would have had.
-      subcategory: remembered.subcategory || refiningSubcategory_(remembered.category, byMcc, byText),
-      source: CATEGORY_SOURCE.MEMORY
-    };
+    if (remembered && context.memoryPriority < (Number(rule.priority) || 0)) {
+      winner = adoptMatch_(winner, remembered, CATEGORY_SOURCE.MEMORY);
+      remembered = null;
+      if (matchIsComplete_(winner)) return winner;
+    }
+
+    if (!ruleMatches_(record, rule)) continue;
+    winner = adoptMatch_(winner, rule, ruleSource_(rule));
+    if (matchIsComplete_(winner)) return winner;
   }
 
-  if (byMcc) {
-    return { category: byMcc.category, subcategory: byMcc.subcategory, source: CATEGORY_SOURCE.MCC };
-  }
-  if (byText) {
-    return { category: byText.category, subcategory: byText.subcategory, source: CATEGORY_SOURCE.RULE };
-  }
+  if (remembered) winner = adoptMatch_(winner, remembered, CATEGORY_SOURCE.MEMORY);
 
-  return { category: '', subcategory: '', source: CATEGORY_SOURCE.UNCLASSIFIED };
-}
-
-function refiningSubcategory_(category, byMcc, byText) {
-  var candidates = [byMcc, byText];
-  for (var i = 0; i < candidates.length; i++) {
-    var rule = candidates[i];
-    if (rule && rule.category === category && rule.subcategory) return rule.subcategory;
-  }
-  return '';
+  return winner || { category: '', subcategory: '', source: CATEGORY_SOURCE.UNCLASSIFIED };
 }
 
 /**
- * Memory, exact first and by containment second.
+ * The verdict so far, plus whatever this candidate adds to it.
  *
- * Containment is what lets a history imported as `esselunga` categorise a bank
- * row that arrives as `esselunga torino`. It matches on whole words only — a
- * key must line up with a token boundary at both ends — and the longest match
- * wins, so `just eat` beats `just` when both are known.
+ * With nothing decided, the candidate decides everything. With a category
+ * already chosen the only thing still open is a missing subcategory, and only a
+ * candidate agreeing about the category may fill it — `Groceries` on a row
+ * already filed as `Transport` is not a detail, it is wrong.
  */
-function lookupMemory_(key, memory) {
-  var exact = memory.byKey[key];
-  if (exact) return exact;
+function adoptMatch_(winner, candidate, source) {
+  var category = String(candidate.category || '');
+  var subcategory = String(candidate.subcategory || '');
 
-  var tokens = key.split(' ');
-  var best = null;
+  if (!winner) return { category: category, subcategory: subcategory, source: source };
+  if (winner.subcategory || !subcategory) return winner;
+  if (category !== winner.category) return winner;
 
-  for (var i = 0; i < tokens.length; i++) {
-    var candidates = memory.byFirstToken[tokens[i]];
-    if (!candidates) continue;
-
-    for (var c = 0; c < candidates.length; c++) {
-      var entry = candidates[c];
-      if (!startsWithTokens_(tokens, i, entry.key)) continue;
-      if (!best || entry.key.length > best.key.length) best = entry;
-    }
-  }
-
-  return best;
+  winner.subcategory = subcategory;
+  return winner;
 }
 
-/** Do the tokens from `start` spell out `phrase` exactly? */
-function startsWithTokens_(tokens, start, phrase) {
-  var wanted = phrase.split(' ');
-  if (start + wanted.length > tokens.length) return false;
-  for (var i = 0; i < wanted.length; i++) {
-    if (tokens[start + i] !== wanted[i]) return false;
-  }
-  return true;
+/** Both halves answered, so nothing later can add anything. */
+function matchIsComplete_(winner) {
+  return Boolean(winner && winner.category && winner.subcategory);
 }
 
-function matchRules_(record, rules) {
-  for (var i = 0; i < rules.length; i++) {
-    if (ruleMatches_(record, rules[i])) {
-      return {
-        category: String(rules[i].category || ''),
-        subcategory: String(rules[i].subcategory || '')
-      };
-    }
-  }
-  return null;
+/**
+ * Which kind of thing decided, for `category_source`.
+ *
+ * The list does not distinguish them and does not need to, but "the bank's own
+ * MCC code decided this" and "a description pattern someone typed decided this"
+ * are different answers to a person asking why, and only one of them is worth
+ * doubting when the category looks wrong.
+ */
+function ruleSource_(rule) {
+  return String(rule.field || '') === 'mcc' ? CATEGORY_SOURCE.MCC : CATEGORY_SOURCE.RULE;
 }
 
 function ruleMatches_(record, rule) {
@@ -837,36 +835,38 @@ function deriveMemory_(records) {
 
     considered++;
     var subcategory = effectiveSubcategory_(record);
-    var bucket = buckets[key] = buckets[key] || { key: key, counts: {}, lastSeen: null };
-    var variant = category + '\u0000' + subcategory;
+    var date = record.booking_date instanceof Date ? record.booking_date : null;
+    var bucket = buckets[key] = buckets[key] || { key: key, categories: {}, lastSeen: null };
 
-    var seen = bucket.counts[variant] = bucket.counts[variant] ||
-      { category: category, subcategory: subcategory, hits: 0, lastSeen: null };
+    var seen = bucket.categories[category] = bucket.categories[category] ||
+      { name: category, hits: 0, lastSeen: null, children: {} };
     seen.hits++;
 
-    var date = record.booking_date instanceof Date ? record.booking_date : null;
+    // Only a named subcategory competes. Counting the blanks as a candidate of
+    // their own is what let ten rows carrying a bare parent out-vote eight that
+    // named a child — and the merchant then lost its subcategory on every
+    // future row, which is the opposite of learning.
+    if (subcategory) {
+      var child = seen.children[subcategory] = seen.children[subcategory] ||
+        { name: subcategory, hits: 0, lastSeen: null };
+      child.hits++;
+      if (date && (!child.lastSeen || date > child.lastSeen)) child.lastSeen = date;
+    }
+
     if (date && (!seen.lastSeen || date > seen.lastSeen)) seen.lastSeen = date;
     if (date && (!bucket.lastSeen || date > bucket.lastSeen)) bucket.lastSeen = date;
   });
 
   var entries = Object.keys(buckets).map(function (key) {
     var bucket = buckets[key];
-    var winner = null;
-
-    Object.keys(bucket.counts).forEach(function (variant) {
-      var candidate = bucket.counts[variant];
-      if (!winner || candidate.hits > winner.hits) { winner = candidate; return; }
-      if (candidate.hits === winner.hits && candidate.lastSeen && winner.lastSeen &&
-        candidate.lastSeen > winner.lastSeen) {
-        winner = candidate;
-      }
-    });
+    var category = mostCounted_(bucket.categories);
+    var child = mostCounted_(category.children);
 
     return {
       merchant_key: key,
-      category: winner.category,
-      subcategory: winner.subcategory,
-      hits: winner.hits,
+      category: category.name,
+      subcategory: child ? child.name : '',
+      hits: category.hits,
       last_seen: bucket.lastSeen || ''
     };
   });
@@ -880,12 +880,39 @@ function deriveMemory_(records) {
 }
 
 /**
+ * The most-counted entry in a `{ name: { hits, lastSeen } }` tally, or null.
+ *
+ * Ties break by the most recent, which is the right way round for both things
+ * this counts: a merchant you have started filing differently is usually a
+ * merchant that has changed rather than one you keep getting wrong.
+ *
+ * A candidate with no date loses a tie to one that has a date and cannot win
+ * one against it, which is a deliberate consequence of comparing only when both
+ * sides have something to compare — the alternative is an ordering that depends
+ * on which row happened to be read first.
+ */
+function mostCounted_(tally) {
+  var winner = null;
+
+  Object.keys(tally || {}).forEach(function (name) {
+    var candidate = tally[name];
+    if (!winner || candidate.hits > winner.hits) { winner = candidate; return; }
+    if (candidate.hits === winner.hits && candidate.lastSeen && winner.lastSeen &&
+      candidate.lastSeen > winner.lastSeen) {
+      winner = candidate;
+    }
+  });
+
+  return winner;
+}
+
+/**
  * Whether a confirmed row is evidence of *your* opinion rather than a rule's.
  *
- * Memory is tier 3 and both rule tiers are below it, so a rule that taught
- * memory its own answer would go on being obeyed *through memory* after the
- * rule itself had been corrected — and the `rules` tab would look like it was
- * being ignored, with the reason two tiers away on a tab nobody edits by hand.
+ * A rule that taught memory its own answer would go on being obeyed *through
+ * memory* after the rule itself had been corrected — and at the default
+ * `memory_priority` memory is offered first, so the `rules` tab would look like
+ * it was being ignored with the reason sitting on a tab nobody edits by hand.
  * So memory takes only what a rule did not already answer.
  *
  * An override is always yours, whatever tier guessed underneath it — that is
@@ -918,8 +945,22 @@ function effectiveCategory_(record) {
   return isBlankCell_(record.category_auto) ? '' : String(record.category_auto);
 }
 
+/**
+ * What the row's subcategory actually is.
+ *
+ * Mirrors `subcategoryFormula()` in 04_setup.gs, in the same order: what you
+ * typed, then nothing if you overruled the category without naming a child —
+ * the auto value belonged to the category you just overruled — then the guess.
+ *
+ * `subcategory_override` has to be read explicitly. On a sheet the `subcategory`
+ * column above already resolves it, so a record read back from `transactions`
+ * never reaches the second line; a record built anywhere else does, and
+ * dropping a subcategory somebody typed is how memory ends up learning a bare
+ * parent from a row that named both halves.
+ */
 function effectiveSubcategory_(record) {
   if (!isBlankCell_(record.subcategory)) return String(record.subcategory);
+  if (!isBlankCell_(record.subcategory_override)) return String(record.subcategory_override);
   if (!isBlankCell_(record.category_override)) return '';
   return isBlankCell_(record.subcategory_auto) ? '' : String(record.subcategory_auto);
 }
