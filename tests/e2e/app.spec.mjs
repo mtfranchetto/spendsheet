@@ -164,6 +164,82 @@ test.describe('the three screens', () => {
 });
 
 /*
+  The account tiles: two rows deep, and the rest sideways.
+
+  The number of accounts belongs to the user and it grows, so the thing worth
+  holding is not a layout at four tiles but the *rule* — height is bounded and
+  width is where the overflow goes. Nine is enough tiles to break it: on a
+  wrapping grid that is five rows and the month disappears below the fold.
+
+  **The extra tiles are cloned in the browser rather than added to the book.**
+  What is being tested is the stylesheet at a tile count, and `book.mjs` is
+  shared by every unit test that asserts a total — growing it to prove a CSS
+  rule would move net worth in thirty other places. Clones are the same nodes
+  the page built, laid out by the same rules, which is the whole of what this
+  can see.
+
+  The straddling tile is the affordance and not an accident of arithmetic: a
+  column that starts inside the visible width and ends outside it is the sliver
+  that says there is more to the right. Sized to exactly two columns it would
+  vanish, the block would look complete, and the accounts past the second would
+  be reachable only by a swipe nobody has a reason to try.
+*/
+test.describe('the account tiles', () => {
+  test('stay two rows deep and put the rest sideways', async ({ page, errors }) => {
+    await open(page);
+
+    // The settled screen, not the first half of it. `renderDashboard` draws the
+    // whole root again when the ledger call lands, which replaces the tiles —
+    // so a measurement taken before that is of a block about to be rebuilt, and
+    // the clones below would be measured on their way out of the document.
+    await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
+
+    const layout = await page.evaluate(() => {
+      const box = document.querySelector('#screens .tiles');
+
+      const original = Array.from(box.children);
+      while (box.children.length < 9) {
+        box.appendChild(original[box.children.length % original.length].cloneNode(true));
+      }
+
+      const boxLeft = box.getBoundingClientRect().left;
+      const tiles = Array.from(box.children).map((tile) => {
+        const rect = tile.getBoundingClientRect();
+        return {
+          top: Math.round(rect.top),
+          left: Math.round(rect.left - boxLeft),
+          right: Math.round(rect.right - boxLeft)
+        };
+      });
+
+      return {
+        tiles: tiles.length,
+        rows: new Set(tiles.map((t) => t.top)).size,
+        visible: box.clientWidth,
+        scrollable: box.scrollWidth,
+        straddling: tiles.filter((t) => t.left < box.clientWidth && t.right > box.clientWidth).length,
+        page: document.documentElement.scrollWidth,
+        viewport: document.documentElement.clientWidth
+      };
+    });
+
+    expect(layout.tiles).toBe(9);
+    expect(layout.rows, 'nine account tiles should occupy two rows').toBe(2);
+    expect(layout.scrollable, 'the tiles should have somewhere to scroll to')
+      .toBeGreaterThan(layout.visible);
+    expect(layout.straddling, 'a tile should be cut by the right edge, so there is visibly more')
+      .toBeGreaterThan(0);
+
+    // And the overflow stays inside the block: the document must not have grown
+    // sideways with it, which is the white-edges failure `html { overflow-x }`
+    // is for and the one a horizontal scroller is most likely to reintroduce.
+    expect(layout.page).toBeLessThanOrEqual(layout.viewport);
+
+    expect(errors).toEqual([]);
+  });
+});
+
+/*
   The category breakdown, on both screens that draw it.
 
   It is one function — `categoryBars` — so Home and Charts cannot disagree, and

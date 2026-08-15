@@ -120,7 +120,32 @@ export function previewPage(answers, options = {}) {
   delete table.__boot;
   delete table.__view;
 
-  return pageSource({ boot, view }).replace('<script>', shim(table, latency) + '\n<script>');
+  return viewportTag() + '\n' +
+    pageSource({ boot, view }).replace('<script>', shim(table, latency) + '\n<script>');
+}
+
+/**
+ * The viewport tag, read out of the server that sends it.
+ *
+ * `page.html` is a fragment: `HtmlService` wraps it and `webAppHtml_` hangs the
+ * meta tag on the wrapper with `addMetaTag`, because Apps Script strips one
+ * written into the file. Nothing here calls `HtmlService`, so a document served
+ * from `pageSource` alone has no viewport tag — and a browser without one lays
+ * the page out at the 980px width it assumes a desktop site wants and then
+ * scales the result down. **A phone-shaped window is not a phone-shaped
+ * layout**: every media query, every percentage and every `vw` in `page.css`
+ * resolves against 980, so the preview would render a wide layout shrunk to fit
+ * and every measurement taken from it would be of a page nobody sees.
+ *
+ * Matched out of `20_webapp.gs` rather than written out here, so the preview
+ * cannot lay out at a width the deployment does not use. A copy of this string
+ * would be the same class of bug it exists to prevent, and quieter.
+ */
+function viewportTag() {
+  const server = readFileSync(join(SRC, '20_webapp.gs'), 'utf8');
+  const found = /addMetaTag\(\s*'viewport'\s*,\s*'([^']+)'\s*\)/.exec(server);
+  if (!found) throw new Error('20_webapp.gs adds no viewport meta tag — has it moved?');
+  return '<meta name="viewport" content="' + found[1] + '">';
 }
 
 /**

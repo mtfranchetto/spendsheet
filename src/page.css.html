@@ -390,21 +390,61 @@
 
     A list row gives one tap target across the full width, which is fine to
     read and useless to act on. A tile is a thing you press, and pressing an
-    account has an obvious meaning — show me what is in it. Two to a row on a
-    phone, more on anything wider, so the grid rather than a fixed count.
+    account has an obvious meaning — show me what is in it.
+
+    **Two rows deep and as wide as it needs to be.** The number of accounts is
+    the user's, and it grows: every bank, every wallet, every asset gets a tile,
+    and a block that wraps downwards turns the top of the first screen into a
+    list of balances you have to scroll past to reach the month. Height is the
+    scarce axis on a phone and sideways is the free one, so the tiles spend the
+    free one — `grid-auto-flow: column` fills a column of two and starts
+    another, and the block is a scroll container rather than a taller box.
+
+    **The column width leaves the next one showing.** `(100% - 34px) / 2` is
+    two columns and one 10px gap inside the visible width, with 24px of the
+    third column left over — enough of a tile edge to say there is more to the
+    right, which is the only thing a horizontal scroller has to say for itself.
+    The `min()` caps it on a wide screen, where the same expression would give
+    two 417px tiles on a page with room for nearly four ordinary ones.
+
+    Measured on the phone the app is opened on, at 390px: a 358px block, 162px
+    columns, two of them and 24px of a third. A 320px screen gets 127px columns
+    and the same two-plus-a-sliver, which is the narrowest this has to work at.
+
+    Snapping is `proximity` rather than `mandatory`: a column is a snap point
+    because both its tiles start at the same edge, and mandatory would fight a
+    short flick that meant to move half a column.
+
+    `overscroll-behavior-x: contain` keeps a fling that runs out of tiles from
+    reaching the document — which is where the white edges of Apps Script's
+    wrapper page live, the same failure `html { overflow-x: clip }` above is
+    for.
 
     The tile is a `div` and the parts you can press are real buttons inside it:
     a cash account carries two different actions, and a button inside a button
-    is not something a keyboard or a screen reader can make sense of.
+    is not something a keyboard or a screen reader can make sense of. That also
+    covers the keyboard here — tabbing to a tile off the right edge scrolls it
+    into view, so the scroller needs no focus of its own.
   */
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-           gap: 10px; margin-bottom: 10px; }
+  .tiles {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(2, auto);
+    grid-auto-columns: min(220px, calc((100% - 34px) / 2));
+    gap: 10px; margin-bottom: 10px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+  }
   .tile {
     display: flex; flex-direction: column; align-items: stretch;
     background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 12px 14px;
     /* The tile is the tap target — see `accountTile`. */
     cursor: pointer;
+    /* Both tiles in a column start at the same edge, so a snap point on a tile
+       is a snap point on the column. */
+    scroll-snap-align: start;
   }
   .tile button.face {
     background: none; border: none; border-radius: 0; padding: 0;
