@@ -59,31 +59,31 @@
 </style>
 
 <!--
-  The first screen, already here.
-
-  Written by `webAppHtml_` from `appInlineBoot_`, and read rather than fetched.
-  A `google.script.run` call costs ~2,700ms of Apps Script startup before any
-  of our code runs; `doGet` is an execution that has already paid it, so the
-  top of the dashboard rides along with the document and draws on parse.
-
-  `type="application/json"` so the browser never executes it, and every `<` in
-  the payload is escaped server-side so nothing can close this element early.
-  It says `null` if the server could not build it, and the boot below falls
-  back to fetching — which is what it did before this existed.
--->
-<script type="application/json" id="boot"><?!= boot ?></script>
-
-<!--
   What this URL asked to see — the screen and the filters it was left on. See
   `webAppView_`, which owns the parameter names and every default.
 
-  It rides in an element of its own rather than inside the boot payload above,
-  because the two fail independently: `boot` says `null` whenever the inline
-  dashboard could not be built, and a deep link must survive that. Same
-  `application/json` for the same reason — the browser never executes it, and
-  the filter values are the one part of this document that came off the URL.
+  `type="application/json"` so the browser never executes it, and every `<` is
+  escaped server-side so nothing can close this element early. The filter values
+  are the one part of this document that came off the URL, which is exactly why
+  the escaping is not optional.
 -->
 <script type="application/json" id="view"><?!= view ?></script>
+
+<!--
+  "What you are looking at is the last answer, not a fresh one."
+
+  A sibling *before* `#screens` rather than a child of it, because `render()`
+  clears that element wholesale and would take this with it — and this is at its
+  most useful during exactly the redraws `render()` is doing.
+
+  In the flow rather than fixed over it, which `#toast` and `#pull` both are.
+  Those two appear over content you are already looking at; this one is up for
+  the first few seconds of every open, when the thing directly beneath it is the
+  top of the screen — and fixed, it sat across the heading. `hidden` is
+  `display: none`, so it reserves nothing when there is nothing to say, and
+  `sticky` keeps it in view if you scroll while it is still working.
+-->
+<div id="refresh" hidden></div>
 
 <div id="screens"><div class="spinner">Loading…</div></div>
 

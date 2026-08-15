@@ -183,7 +183,7 @@ It is a normal URL, so:
 - **iOS, Safari** — Share → *Add to Home Screen*.
 - **Android, Chrome** — ⋮ → *Add to Home screen*.
 
-It then opens without browser chrome and looks like an app. There is no service worker and no offline mode: every screen is a server round trip, because every number on it comes out of the Sheet. Typing a cash entry underground will fail and say so — the Sheets `cash_entry` tab is still the thing that works offline.
+It then opens without browser chrome and looks like an app. There is no service worker and **no offline mode**, and the cache described below does not make one: it lets the first screen draw from the last answers instead of from a spinner, and every number on it is still confirmed by a round trip that has to succeed. Underground you get last time's figures with the refresh strip stuck at the top, and typing a cash entry will fail and say so — the Sheets `cash_entry` tab is still the thing that works offline.
 
 ### The icon
 
@@ -229,13 +229,19 @@ Nothing, and it stays nothing. Apps Script meters *runtime*, not rows, and there
 
 ### Why it is as fast as it is
 
-Two caches, and neither was written on a guess — both exist because a measurement said so, and the measurement is a menu item you can re-run.
+Three caches, and none was written on a guess — each exists because a measurement said so, and two of the measurements are menu items you can re-run.
 
 **The ledger cache.** `transactions` is read once, serialised, and kept in `CacheService` for six hours; every screen after the first is a fetch of a few hundred milliseconds rather than a four-second read. It is keyed on a counter that every write bumps — the sync, the app, and typing into the tab yourself — so a change invalidates it immediately rather than waiting out the clock. Pull-to-refresh on the dashboard drops it explicitly, which is the answer for the rare edit no trigger sees.
 
 **Reads shared within one request.** Drawing the first screen used to make **35 spreadsheet round trips** over about **seven distinct tabs**: `_config` eight times, `accounts` four, `_status` and `_runs` twice each — every function fetching for itself what the one before it had already read. They are now shared for the length of a request. It is deliberately off outside the app, because `setup()` and the sync write a cell and read it back, and a cache that survives that is a wrong answer rather than a fast one.
 
-Between them, and with the health check no longer scanning 4,615 rows to count them, the first screen went from ~6.2 seconds to ~2.8 with the cache warm.
+Between them, and with the health check no longer scanning 4,615 rows to count them, the server's work on the first screen went from ~6.2 seconds to ~2.8 with the cache warm.
+
+**The phone's own copy of the last answers.** Server time was never the larger half. Profiled from outside the sandboxed iframe, the `/exec` document alone is ~2,400ms of Apps Script spinning up a container, and every `google.script.run` call adds ~2,700ms of fixed overhead before a line of our code runs — so a ~6 second open is under a second of this project and the rest of Google. There is no round trip left to remove, so the app stopped waiting for them: it keeps the last `appOpen` and `appOverview` answers, and the last few Records and Charts slices, in `localStorage`, and draws them the moment the page parses.
+
+Both calls still go out, every time. What the cache removes is the wait in front of them, not the calls — a screen drawn from storage and left there would be a screen that is never right again. While they are out, a strip at the top says **Last updated *n* hours ago**, and it comes down when both have landed and replaced what they drew over. Pull-to-refresh is unchanged and still means "I do not believe this".
+
+Two consequences worth knowing. The **first open after clearing Safari's storage is slower than it used to be** — nothing to draw, and the document no longer carries the top of the dashboard — which is the price of every open after it starting at ~2,400ms. And **signing in as a different Google account wipes the stored copy**: the owner gate refusing is what deletes it, so those balances cannot come back on a reload.
 
 **Spendsheet → Diagnostics → Time the app dashboard** breaks the whole screen down part by part, and **Time a web app query** does the same for one ledger read. Both report every part *inside a single run* — a spreadsheet read on the same book has been seen to take anywhere from 2.0 to 9.4 seconds within one hour, so a number from today compared against one from yesterday proves nothing at all. Divide any part by `configMs` to get its cost in round trips, which is the unit that actually stays still.
 

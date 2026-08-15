@@ -221,7 +221,6 @@ export function previewBook() {
  */
 export function previewAnswers(c = previewBook()) {
   return {
-    __boot: c.appInlineBoot_(),
     __view: JSON.stringify(c.webAppView_({})),
     appOpen: c.appOpen(),
     appOverview: c.appOverview(),

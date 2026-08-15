@@ -37,15 +37,15 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 /** `<?!= include_('page.core') ?>`, in both quote styles and any spacing. */
 const INCLUDE = /<\?!?=\s*include_\(\s*['"]([\w.-]+)['"]\s*\)\s*;?\s*\?>/g;
 
-/** `<?!= boot ?>` — a bare name, which is the only other scriptlet shape here. */
+/** `<?!= view ?>` — a bare name, which is the only other scriptlet shape here. */
 const VARIABLE = /<\?!?=\s*([A-Za-z_$][\w$]*)\s*\?>/g;
 
 /**
  * The document `webAppHtml_` would build, as a string.
  *
- * `values` fills the bare scriptlets — `{boot, view}` — and anything absent
- * becomes `null`, which is what the server itself sends when it could not build
- * the payload, and a case the page is required to survive.
+ * `values` fills the bare scriptlets — `{view}` — and anything absent becomes
+ * `null`, which is what the server itself sends when it could not build the
+ * payload, and a case the page is required to survive.
  *
  * Includes resolve recursively, so a partial may include another. Depth is
  * bounded rather than trusted: a file including itself is a stack overflow with
@@ -113,15 +113,13 @@ export function pageScript(values = {}) {
  */
 export function previewPage(answers, options = {}) {
   const latency = options.latency === undefined ? 60 : options.latency;
-  const boot = answers.__boot === undefined ? 'null' : answers.__boot;
   const view = answers.__view === undefined ? 'null' : answers.__view;
 
   const table = { ...answers };
-  delete table.__boot;
   delete table.__view;
 
   return viewportTag() + '\n' +
-    pageSource({ boot, view }).replace('<script>', shim(table, latency) + '\n<script>');
+    pageSource({ view }).replace('<script>', shim(table, latency) + '\n<script>');
 }
 
 /**

@@ -68,13 +68,15 @@ The consequence for you: never call `range.setFormula()` directly, and never han
 npm run preview
 ```
 
-Serves the phone app on `http://localhost:4321` with a fake `google.script.run` behind it. There is no second copy of the page: `tests/page.mjs` resolves the same `include_` and `boot` scriptlets the server resolves, so what loads is the document Apps Script builds. The answers behind it come from running the real `21`–`23` against the in-memory book in `tests/book.mjs`, so the shapes are the server's — a column added to `recordForPage_` shows up here on the next run rather than needing a fixture updated.
+Serves the phone app on `http://localhost:4321` with a fake `google.script.run` behind it. There is no second copy of the page: `tests/page.mjs` resolves the same `include_` and `view` scriptlets the server resolves, so what loads is the document Apps Script builds. The answers behind it come from running the real `21`–`23` against the in-memory book in `tests/book.mjs`, so the shapes are the server's — a column added to `recordForPage_` shows up here on the next run rather than needing a fixture updated.
 
 The book carries one of each thing the page draws differently: a transfer with both legs, a €0.00 pre-authorisation, labelled rows, an unconfirmed row, a hold, a foreign-currency row with no rate, a cash account and an asset account. A preview full of ordinary expenses would exercise none of the cases this page has been wrong about.
 
 Point a browser or Playwright at it. **This is the only way to check anything about layout, a natively-rendered control, or a gesture** — the vitest suite can prove a CSS rule is written and cannot prove it is honoured, and the two have disagreed here before on the one device the app is for.
 
-`npm run preview -- --out=/tmp/page.html` writes the file instead, and `--port=` moves it. `?answers=cold` serves the page with no boot payload and `?answers=broken` withholds an answer the first screen needs — the two states the page has to survive and that nobody opens the preview to look at.
+`npm run preview -- --out=/tmp/page.html` writes the file instead, and `--port=` moves it. `?answers=cold` serves the page with no view payload, `?answers=broken` withholds an answer the first screen needs, and `?answers=refused` withholds `appOpen`, which is the owner gate saying no — the three states the page has to survive and that nobody opens the preview to look at. The query string is passed through to `webAppView_` as `doGet` would, so a deep link like `?v=records&u=1` opens where it says.
+
+The fourth such state needs no answer set: **an empty cache**. The page draws its own stored copy of the last answers before it asks for anything, and a fresh browser context has nothing stored — so that is what every run gets by default, and a test showing the hydrated path has to seed `localStorage` its way out of it.
 
 ## The browser suite
 

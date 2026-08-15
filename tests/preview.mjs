@@ -42,30 +42,72 @@ import { writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { previewPage } from './page.mjs';
-import { previewAnswers } from './book.mjs';
+import { previewAnswers, previewBook } from './book.mjs';
 
 const argument = (name, fallback) => {
   const found = process.argv.find((a) => a.startsWith('--' + name + '='));
   return found ? found.slice(name.length + 3) : fallback;
 };
 
-const answers = previewAnswers();
+const book = previewBook();
+const answers = previewAnswers(book);
+
+/**
+ * The view payload, built from *this* request's query string.
+ *
+ * In production `doGet` hands `e.parameters` to `webAppView_` and the page is
+ * served already knowing which screen and filters were asked for. The captured
+ * answer above is built once from no parameters at all, so every document this
+ * server produced said "dashboard, defaults" however the URL was written — and
+ * a deep link, which is the whole of `webAppView_`, was the one feature of the
+ * page a browser could not be pointed at.
+ *
+ * Multi-valued, because `webAppView_` takes `e.parameters` rather than
+ * `e.parameter`: the account filter is a set, and `?a=Cash&a=Revolut` has to
+ * arrive as two values rather than as the last one.
+ */
+function viewFor(url) {
+  const parameters = {};
+  for (const key of url.searchParams.keys()) parameters[key] = url.searchParams.getAll(key);
+  return JSON.stringify(book.webAppView_(parameters));
+}
 
 /**
  * The three answer sets, derived from the one book rather than written out.
  *
- * `cold` drops the inline payload the document is normally served with, which
- * is what a browser gets when `appInlineBoot_` threw — the page has to fall
- * back to fetching. `broken` withholds the answer to the call that draws the
- * lower half of the first screen, which is how a missing or renamed entry point
- * presents: not an error page, a screen that has to say so.
+ * `cold` drops the view payload the document is normally served with, so the
+ * page has to fall back to its own defaults — what a browser gets when
+ * `webAppView_` could not be built, and the state a deep link has to survive.
+ * The *other* cold start, an empty cache, needs no answer set at all: a browser
+ * context begins with empty storage, so it is what every run gets by default
+ * and what a test has to seed its way out of.
+ *
+ * `broken` withholds the answer to the call that draws the lower half of the
+ * first screen, which is how a missing or renamed entry point presents: not an
+ * error page, a screen that has to say so.
  */
 const SETS = {
   full: () => answers,
-  cold: () => ({ ...answers, __boot: undefined, __view: undefined }),
+  cold: () => ({ ...answers, __view: undefined }),
   broken: () => {
     const table = { ...answers };
     delete table.appOverview;
+    return table;
+  },
+
+  /*
+    The owner gate saying no.
+
+    `appOpen` is the call that carries the verdict, so withholding it is what a
+    refusal looks like from inside the page — `withFailureHandler` with a
+    message, exactly as a renamed entry point or a wrong Google account
+    presents. It is the state a *stored* screen has to be overruled by: whatever
+    is on the phone belongs to whoever was signed in when it was written, and
+    the one thing that must not happen is those balances staying up.
+  */
+  refused: () => {
+    const table = { ...answers };
+    delete table.appOpen;
     return table;
   }
 };
@@ -104,7 +146,14 @@ if (out) {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store'
     });
-    response.end(previewPage(set()));
+
+    // `cold` withholds the view and must go on withholding it, so this replaces
+    // the payload rather than supplying one: a set that has no `__view` keeps
+    // none, and every other set gets this request's.
+    const table = set();
+    response.end(previewPage(
+      table.__view === undefined ? table : { ...table, __view: viewFor(url) }
+    ));
   }).listen(port, () => {
     process.stdout.write('http://localhost:' + port + '\n');
     if (process.argv.includes('--open')) execFileSync('open', ['http://localhost:' + port]);

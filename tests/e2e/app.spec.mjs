@@ -70,10 +70,10 @@ const tab = (page, label) => page.locator('#tabs button', { hasText: label.slice
 /**
  * Open the app and wait for the whole first screen, not just the fast half.
  *
- * The dashboard is two calls drawn as they land — the top comes from the boot
- * payload templated into the document and the rest waits on `appOverview` — so
- * a test that acted as soon as net worth appeared would be racing the half it
- * came to look at. The spend line is in the second half.
+ * The dashboard is two calls drawn as they land — `appOpen` for the top and
+ * `appOverview` for everything below it — so a test that acted as soon as net
+ * worth appeared would be racing the half it came to look at. The spend line is
+ * in the second half.
  */
 async function open(page, query = '') {
   await page.goto('/' + query);
@@ -100,10 +100,10 @@ test.describe('opening the app', () => {
     expect(errors).toEqual([]);
   });
 
-  test('survives a document served with no boot payload', async ({ page, errors }) => {
-    // What a browser gets when `appInlineBoot_` threw: the two scriptlets come
-    // back `null` and the page has to fetch what it was going to be handed.
-    // `readView` is written to fall back to the first tab, and this is the only
+  test('survives a document served with no view payload', async ({ page, errors }) => {
+    // What a browser gets when `webAppView_` could not be built: the scriptlet
+    // comes back `null` and the page has to fall back to its own defaults.
+    // `readView` is written to land on the first tab, and this is the only
     // place that claim is tested against a parser rather than against a comment.
     await open(page, '?answers=cold');
 
@@ -810,6 +810,197 @@ test.describe('deleting a cash transaction', () => {
     // happened to be filtered to unconfirmed.
     await expect(page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }))
       .toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+/*
+  What the phone already knows, and what it does with it.
+
+  The app opens in ~6.5s and almost none of that is this project: ~2,400ms of
+  Apps Script container spin-up for the document, then ~2,700ms of fixed
+  overhead on every `google.script.run` call before a line of server code runs.
+  There is no round trip left to remove, so the cache removes the *wait* — it
+  draws the last answers straight away and refreshes behind them.
+
+  The claims worth a browser are the ones no file test can reach: that something
+  is on screen while the calls are still out, that it is replaced when they
+  land, that a shape this code does not recognise is not drawn at all, and that
+  a refusal from the gate takes the stored copy with it.
+*/
+test.describe('opening on what the phone already knows', () => {
+  const KEY = 'spendsheet';
+
+  const stored = (page) => page.evaluate((key) => {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }, KEY);
+
+  const store = (page, held) => page.evaluate(([key, copy]) => {
+    localStorage.setItem(key, JSON.stringify(copy));
+  }, [KEY, held]);
+
+  /**
+   * Keep every call in flight for the length of an assertion.
+   *
+   * The shim assigns `window.__latency` as the document parses, which is before
+   * any test code can run and before the boot has fired its two calls — so the
+   * assignment the other tests here use, `page.evaluate` after load, is far too
+   * late to slow a *boot*. A property that refuses to be written keeps its
+   * value through the shim's own assignment, which is the only way to hold the
+   * opening calls open and look at what is on screen without them.
+   */
+  const holdAnswers = (page) => page.addInitScript(() => {
+    Object.defineProperty(window, '__latency', {
+      get: () => 4000,
+      set: () => {},
+      configurable: true
+    });
+  });
+
+  /**
+   * One session's worth of answers on the phone, with a mark in them.
+   *
+   * The mark is an account *name* rather than a number: `money()` formats
+   * through `Intl` in the browser's own locale, so asserting on a total would
+   * be asserting on which side the euro sign lands. A name is drawn as it is
+   * given, and one nothing on the server would produce says exactly where what
+   * is on screen came from.
+   */
+  async function seedFromOneSession(page, mark = 'CACHED ACCOUNT') {
+    await open(page);
+
+    const held = await stored(page);
+    expect(held, 'nothing was stored after a healthy open').not.toBeNull();
+
+    held.open.accounts[0].name = mark;
+    await store(page, held);
+    return held;
+  }
+
+  test('stores what it was told', async ({ page, errors }) => {
+    await open(page);
+    const held = await stored(page);
+
+    // Both halves, because they land independently and the write is a
+    // read-modify-write for exactly that reason — one arriving must not drop
+    // the other.
+    expect(held.open, 'the appOpen half was not stored').toBeTruthy();
+    expect(held.overview, 'the appOverview half was not stored').toBeTruthy();
+    expect(held.at, 'no timestamp, so nothing can say how old this is').toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('draws it before a single answer has come back', async ({ page, errors }) => {
+    await seedFromOneSession(page);
+    await holdAnswers(page);
+    await page.goto('/');
+
+    // On screen with every call still out. `__answered` is pushed when an
+    // answer reaches the page, so an empty one is the whole claim: this was
+    // drawn from storage and from nothing else.
+    await expect(page.locator('#screens')).toContainText('CACHED ACCOUNT');
+    expect(await answered(page), 'an answer landed before the assertion').toEqual([]);
+
+    // And it says so, rather than passing last week's balances off as today's.
+    await expect(page.locator('#refresh')).toBeVisible();
+    await expect(page.locator('#refresh')).toContainText('Last updated');
+    expect(errors).toEqual([]);
+  });
+
+  test('replaces it when the answers land, and stops saying it is old', async ({ page, errors }) => {
+    await seedFromOneSession(page);
+    await page.goto('/');
+
+    // The mark is gone and the strip is down — the two halves of "this is now
+    // the truth". Asserted in that order because the strip clears only once
+    // *both* calls are back, so it is the later of the two.
+    await expect(page.locator('#screens')).not.toContainText('CACHED ACCOUNT');
+    await expect(page.locator('#refresh')).toBeHidden();
+    await expect(page.locator('#screens')).toContainText('Net worth');
+    expect(errors).toEqual([]);
+  });
+
+  test('will not draw a stored copy whose shape it does not know', async ({ page, errors }) => {
+    const held = await seedFromOneSession(page);
+
+    // What a deploy that renamed a field looks like from here. The stored copy
+    // is perfectly readable and is not this version's, and drawing half of it
+    // is the one outcome worse than drawing none.
+    held.v = 999;
+    await store(page, held);
+
+    await holdAnswers(page);
+    await page.goto('/');
+
+    await expect(page.locator('#screens .spinner')).toBeVisible();
+    await expect(page.locator('#screens')).not.toContainText('CACHED ACCOUNT');
+    // No strip either: there is nothing on screen for it to qualify.
+    await expect(page.locator('#refresh')).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test('forgets what it stored when the gate refuses', async ({ page }) => {
+    await seedFromOneSession(page);
+
+    // `appOpen` is the call that carries the verdict. What is stored belongs to
+    // whoever was signed in when it was written, so a refusal has to take the
+    // screen *and* the copy — otherwise the next reload paints their balances
+    // again, ahead of the refusal that is the entire point of the gate.
+    await page.goto('/?answers=refused');
+
+    await expect(page.locator('#screens')).toContainText(/signed in as a different Google account/i);
+    await expect(page.locator('#screens')).not.toContainText('CACHED ACCOUNT');
+    expect(await stored(page), 'the refused session left its copy on the phone').toBeNull();
+  });
+
+  test('draws Charts from storage and still asks whether it is right', async ({ page, errors }) => {
+    /*
+      The one place the cache could quietly stop the app ever being correct.
+
+      `loadAnalytics` returns early on a hit in `state.cache`, which is right
+      for a slice fetched this session — the answer is already in hand and
+      asking again is a round trip for nothing. A slice hydrated out of storage
+      sits in the same map under the same key and is last week's answer, so the
+      same early return would draw a stale total and never once check it.
+    */
+    await open(page);
+    await tab(page, CHARTS).click();
+    await expect(page.locator('#screens .spinner')).toHaveCount(0);
+
+    const held = await stored(page);
+    expect(held.slices.some((slice) => slice.screen === 'analytics'),
+      'Charts was opened and no slice was stored').toBe(true);
+
+    await page.goto('/?v=analytics');
+
+    await expect
+      .poll(async () => (await calls(page)).filter((name) => name === 'appAnalytics').length)
+      .toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps a deep link when the fetched payload lands over the stored one', async ({ page, errors }) => {
+    /*
+      `applyUrlFilters` consumes the query string on its first call, and the
+      stored payload and the fetched one both go through `applyOverview`. A
+      second pass that re-adopted the server's defaults would put them over
+      filters the URL had already set, with nothing left to apply them again —
+      so the screen would show the asked-for slice and then silently revert to
+      the year to date a few seconds later.
+    */
+    await seedFromOneSession(page);
+    await page.goto('/?v=records&u=1');
+
+    await expect(tab(page, RECORDS)).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('#refresh')).toBeHidden();
+
+    // Still the filter the URL asked for, after both answers have landed.
+    const unconfirmed = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appRecords').map((c) => c.args[0].unconfirmedOnly));
+
+    expect(unconfirmed.length, 'Records never fetched for the URL slice').toBeGreaterThan(0);
+    expect(unconfirmed.every(Boolean), 'a fetch went out without the URL filter').toBe(true);
     expect(errors).toEqual([]);
   });
 });
