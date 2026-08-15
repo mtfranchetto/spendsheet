@@ -619,7 +619,29 @@ function appAccounts_() {
         sync: state.sync
       };
     })
-    .sort(function (a, b) { return (b.balance || 0) - (a.balance || 0); });
+    .sort(function (a, b) {
+      var byKind = accountKindRank_(a.kind) - accountKindRank_(b.kind);
+      return byKind || (b.balance || 0) - (a.balance || 0);
+    });
+}
+
+/**
+ * Where an account's kind sits in the dashboard's list: bank, then cash, then
+ * assets, and balance decides the order inside each group.
+ *
+ * Grouped rather than one balance ranking because the three kinds answer
+ * different questions — what the banks say, what I counted, what I estimated —
+ * and interleaving them by size puts a flat asset valuation between two current
+ * accounts, which reads as a sync having lost one of them.
+ *
+ * The order comes from `ACCOUNT_KINDS` rather than a list written out here, so
+ * the vocabulary and its ranking cannot become two lists. A kind that is not in
+ * it sorts last: `indexOf` gives -1, and this maps that to the end rather than
+ * to the front, where an empty `kind` cell would otherwise land above the banks.
+ */
+function accountKindRank_(kind) {
+  var rank = ACCOUNT_KINDS.indexOf(String(kind || ''));
+  return rank === -1 ? ACCOUNT_KINDS.length : rank;
 }
 
 /**

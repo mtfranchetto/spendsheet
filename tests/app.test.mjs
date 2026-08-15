@@ -1631,6 +1631,49 @@ describe('the dashboard the app draws', () => {
     expect(byName.Wallet).toMatchObject({ severity: 0, sync: '—' });
   });
 
+  it('lists the banks, then the cash, then the assets', () => {
+    // Balance alone put a flat asset valuation between two current accounts.
+    // Every balance here is chosen so a pure balance ranking would interleave
+    // the kinds — House and Car would open the list — and so that the order
+    // inside each group is still the balance one.
+    const c = book([]);
+    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'h', name: 'House', kind: 'asset',
+        currency: 'EUR', balance: 500000, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'w', name: 'Wallet', kind: 'cash',
+        currency: 'EUR', balance: 20, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'b', name: 'Revolut', kind: 'bank',
+        currency: 'EUR', balance: 100, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'c', name: 'Car', kind: 'asset',
+        currency: 'EUR', balance: 1000, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 't', name: 'Tin', kind: 'cash',
+        currency: 'EUR', balance: 300, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'f', name: 'Fineco', kind: 'bank',
+        currency: 'EUR', balance: 5, active: true })
+    ]);
+
+    expect(c.appOpen().accounts.map((account) => account.name))
+      .toEqual(['Revolut', 'Fineco', 'Tin', 'Wallet', 'House', 'Car']);
+  });
+
+  it('sorts an account whose kind it does not know to the end', () => {
+    // `indexOf` answers -1 for one, and -1 in front of `bank` would put the
+    // row with the empty `kind` cell above the banks — the one place a row
+    // nobody has finished filling in must not land.
+    const c = book([]);
+    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'x', name: 'Unfilled', kind: '',
+        currency: 'EUR', balance: 900, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'h', name: 'House', kind: 'asset',
+        currency: 'EUR', balance: 500, active: true }),
+      c.toRow_(c.ACCOUNT_COLUMNS, { account_id: 'b', name: 'Revolut', kind: 'bank',
+        currency: 'EUR', balance: 100, active: true })
+    ]);
+
+    expect(c.appOpen().accounts.map((account) => account.name))
+      .toEqual(['Revolut', 'House', 'Unfilled']);
+  });
+
   it('warns rather than alarms about a balance that has not moved', () => {
     // A weekend, a bank holiday and a quiet current account all produce one.
     const c = book([]);
