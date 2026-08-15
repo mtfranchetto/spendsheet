@@ -17,7 +17,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkDoors, isWebFacing, manifestWithAccess, parseArgs, porcelainPaths, ACCESS_HELP } from './deploy.mjs';
+import {
+  checkDoors, isWebFacing, manifestWithAccess, newestVersion, parseArgs, porcelainPaths,
+  settledVersion, ACCESS_HELP
+} from './deploy.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -108,6 +111,52 @@ describe('checkDoors', () => {
  * drops something else, which nothing catches until a scope is missing at the
  * moment of the call.
  */
+/*
+  The stale version list is the second endpoint in this file to lag a write, and
+  the first one it cost something. `clasp create-version` made version 44 from
+  the app door's MYSELF manifest; `list-versions` still said 43; 43 is a real
+  number and a plausible one, so the app door was redeployed to the *bank's*
+  version and came back serving as "Anyone". Version 44 is still there, unused.
+
+  What makes it dangerous rather than flaky is that the stale answer is never an
+  error — it is the previous door's version, which is exactly the wrong one.
+*/
+describe('reading back the version that was just created', () => {
+  it('takes the highest number, not the last one listed', () => {
+    expect(newestVersion([{ versionNumber: 43 }, { versionNumber: 41 }])).toBe(43);
+  });
+
+  it('is 0 on an empty list, so a project with no versions still has a floor', () => {
+    expect(newestVersion([])).toBe(0);
+    expect(newestVersion(undefined)).toBe(0);
+  });
+
+  it('refuses a list still answering from before the write', () => {
+    expect(settledVersion([{ versionNumber: 43 }], 43)).toBe(null);
+  });
+
+  it('accepts the first number above the floor', () => {
+    expect(settledVersion([{ versionNumber: 44 }, { versionNumber: 43 }], 43)).toBe(44);
+  });
+
+  it('refuses to go backwards rather than treating a short list as an answer', () => {
+    expect(settledVersion([{ versionNumber: 42 }], 43)).toBe(null);
+  });
+
+  it('gives the second door a floor above the version the first door got', () => {
+    // Both doors reading the same floor is the same incident wearing different
+    // clothes: door two would accept door one's version as its own.
+    expect(script).toMatch(/await createVersion\(message, floor\)/);
+    expect(script).toMatch(/floor = versions\[door\.key\]/);
+  });
+
+  it('polls rather than reading once, like the deployments endpoint already does', () => {
+    const createVersionBody = script.slice(script.indexOf('async function createVersion'));
+    expect(createVersionBody.slice(0, 900)).toMatch(/SETTLE_ATTEMPTS/);
+    expect(createVersionBody.slice(0, 900)).toMatch(/await sleep\(SETTLE_DELAY_MS\)/);
+  });
+});
+
 describe('manifestWithAccess', () => {
   it('sets the access the door asked for', () => {
     expect(JSON.parse(manifestWithAccess(manifestSource, 'MYSELF')).webapp.access).toBe('MYSELF');

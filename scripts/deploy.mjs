@@ -479,17 +479,64 @@ export function parseArgs(argv) {
   return options;
 }
 
+/** The highest version number in what `clasp list-versions` returned. */
+export function newestVersion(list) {
+  return (list || []).reduce((max, version) => Math.max(max, version.versionNumber || 0), 0);
+}
+
 /**
- * clasp prints the new version in prose, so the number is read back from the
- * version list rather than scraped: the list is authoritative whatever the
- * wording does next release.
+ * That number, but only if it is one this call could have produced.
+ *
+ * `floor` is the highest version that existed *before* `clasp create-version`
+ * ran, so anything at or below it is the list answering from before the write.
+ * Null means "ask again", which is the answer a single read cannot give.
  */
-function createVersion(message) {
+export function settledVersion(list, floor) {
+  const latest = newestVersion(list);
+  return latest > floor ? latest : null;
+}
+
+/**
+ * Create a version and return its number, once the list admits it exists.
+ *
+ * clasp prints the number in prose, so it has to be read back from the version
+ * list rather than scraped — and **that list lags the write**, exactly like the
+ * deployments endpoint `settledDeployments` polls. This is the same lesson at a
+ * second endpoint, and it cost a live incident before it was learned twice.
+ *
+ * A single read is what makes it dangerous rather than flaky. The stale answer
+ * is not an error or an empty list: it is the *previous* version — a real
+ * number, and a plausible one. The caller then redeploys its door to whatever
+ * the door before it got, so both doors end up serving the first door's
+ * manifest. On the app door that manifest says `ANYONE_ANONYMOUS`, so the
+ * failure lands as a public door, silently, on the one door where being wrong
+ * costs something. Observed: version 44 was created for the app door and never
+ * used, because the list still said 43.
+ *
+ * Failing after the retries is the right end. A door left on the previous
+ * door's version is the incident this whole file exists to prevent, and no
+ * version at all is a deploy that visibly did not finish.
+ */
+async function createVersion(message, floor) {
   run(['clasp', 'create-version', message]);
-  const versions = JSON.parse(run(['clasp', 'list-versions', '--json'], { capture: true }));
-  const latest = versions.reduce((max, version) => Math.max(max, version.versionNumber || 0), 0);
-  if (!latest) fail('Created a version but could not read its number back.');
-  return latest;
+
+  for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt++) {
+    const listed = JSON.parse(run(['clasp', 'list-versions', '--json'], { capture: true }));
+    const settled = settledVersion(listed, floor);
+    if (settled !== null) return settled;
+
+    if (attempt < SETTLE_ATTEMPTS) {
+      console.log(`    version list still says ${newestVersion(listed)} — retrying (${attempt}/${SETTLE_ATTEMPTS})`);
+      await sleep(SETTLE_DELAY_MS);
+    }
+  }
+
+  fail(
+    `Created a version but the list never reported one above ${floor}.\n` +
+    '  Deploying a door to a version this run did not create would point it at\n' +
+    '  the previous door\'s manifest, so nothing was redeployed. Check\n' +
+    '  `npx clasp list-versions` and re-run.'
+  );
 }
 
 async function main() {
@@ -559,6 +606,12 @@ async function main() {
   const subject = git(['log', '-1', '--format=%s']) || 'deploy';
   const versions = {};
 
+  // What existed before this run wrote anything. Every version created below
+  // has to come back above it, and above whatever the door before it got — a
+  // door deployed to a number this loop did not just create is a door serving
+  // the previous door's manifest.
+  let floor = newestVersion(JSON.parse(run(['clasp', 'list-versions', '--json'], { capture: true })));
+
   try {
     // One pass per door: the manifest states that door's access, the version
     // freezes it, and the redeploy rebuilds the entry point from it. Pushing
@@ -571,7 +624,8 @@ async function main() {
 
       const message = `${commit.slice(0, 7)} ${subject} [${door.key}]`;
       step(`clasp create-version "${message}"`);
-      versions[door.key] = createVersion(message);
+      versions[door.key] = await createVersion(message, floor);
+      floor = versions[door.key];
       console.log(`    version ${versions[door.key]}`);
 
       step(`clasp redeploy ${door.key} -> version ${versions[door.key]}`);
