@@ -168,6 +168,22 @@ window.__calls = [];
 window.__answered = [];
 window.__answers = ${data};
 window.__latency = ${latency};
+
+// A call that fails with a *chosen* message, keyed by name.
+//
+// Withholding an answer already produces a failure, and it produces exactly one
+// wording — which the page reads, because isTransportFailure is the only thing
+// separating "the gate refused you" from "the radio dropped", and the two want
+// opposite handling. A test that cannot choose the wording cannot reach the
+// second case at all.
+//
+// Kept if it is already there, so a test can seed it before this script runs.
+// The three lines above cannot do the same, because a test wants the shipped
+// values by default; this one defaults to empty either way.
+//
+// And no backtick in any of that, for the reason stated further down: this is
+// inside the template literal that builds the tag.
+window.__failures = window.__failures || {};
 window.google = { script: { run: (function () {
   var handlers = {};
 
@@ -242,8 +258,10 @@ window.google = { script: { run: (function () {
         var known = Object.prototype.hasOwnProperty.call(window.__answers, name);
         var answer = known ? JSON.stringify(window.__answers[name]) : null;
         var wait = typeof window.__latency === 'number' ? window.__latency : ${latency};
+        var forced = window.__failures[name];
 
         setTimeout(function () {
+          if (forced) return fail && fail(new Error(forced));
           if (!known) return fail && fail(new Error('no canned answer for ' + name));
           ok && ok(JSON.parse(answer));
           window.__answered.push(name);

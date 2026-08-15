@@ -1004,3 +1004,168 @@ test.describe('opening on what the phone already knows', () => {
     expect(errors).toEqual([]);
   });
 });
+
+/*
+  Pull to refresh, which had no test and stopped working.
+
+  The gesture guarded on `state.refreshing`, a boolean it owned. The opening
+  calls turned that name into an object with a slot each — and an object is
+  always truthy, so `if (state.refreshing) return;` began returning on every
+  touch and the gesture was silently dead. Nothing threw, nothing was logged,
+  every other test stayed green, and it reached the phone.
+
+  A shared name in a shared object is a shared name, and the reason it got past
+  everything is that this file had nothing pointed at the gesture at all.
+*/
+test.describe('pull to refresh', () => {
+  /** A downward drag from the top of the document, in the shape WebKit accepts. */
+  const pull = (page, distance) => page.evaluate((travel) => {
+    const target = document.body;
+    const point = (y) => (document.createTouch
+      ? document.createTouch(window, target, 1, 40, y, 40, y)
+      : new Touch({ identifier: 1, target, clientX: 40, clientY: y }));
+
+    const list = (...points) => (document.createTouchList
+      ? document.createTouchList(...points) : points);
+
+    const touch = (type, y) => {
+      const one = point(y);
+      target.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true,
+        touches: type === 'touchend' ? list() : list(one),
+        targetTouches: type === 'touchend' ? list() : list(one),
+        changedTouches: list(one)
+      }));
+    };
+
+    // In steps, because `touchmove` is where the distance is accumulated and a
+    // single jump would arrive as one move the gesture never followed.
+    touch('touchstart', 10);
+    for (let step = 1; step <= 8; step += 1) touch('touchmove', 10 + (travel * step) / 8);
+    touch('touchend', 10 + travel);
+  }, distance);
+
+  test('a pull past the threshold re-reads the dashboard', async ({ page, errors }) => {
+    await open(page);
+    await page.evaluate(() => { window.__calls.length = 0; });
+
+    // PULL_THRESHOLD is 70; 140 clears it with room for the damping above it.
+    await pull(page, 140);
+
+    await expect.poll(() => calls(page)).toContain('appDashboard');
+
+    // And it asks for the ledger to be re-read, which is the whole difference
+    // between this gesture and simply looking at the screen again.
+    const fresh = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appDashboard').map((c) => c.args[0]));
+    expect(fresh.some(Boolean), 'appDashboard was not asked for a fresh read').toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test('a pull too short to arm sends nothing', async ({ page, errors }) => {
+    await open(page);
+    await page.evaluate(() => { window.__calls.length = 0; });
+
+    await pull(page, 30);
+
+    await page.waitForTimeout(400);
+    expect(await calls(page)).not.toContain('appDashboard');
+    expect(errors).toEqual([]);
+  });
+
+  test('shows the same strip the app opens with, and clears it when the answer lands',
+    async ({ page, errors }) => {
+      // One thing on this page means "being brought up to date". The pill is the
+      // affordance for the drag and goes the moment you let go; the strip
+      // reports the fetch, and is cleared by the answer rather than by a timer.
+      await open(page);
+      // Long enough that the strip is unambiguously up while the call is out,
+      // short enough that "it came down" is not a bet on how loaded the machine
+      // is — the assertions below are ordered, not timed.
+      await page.evaluate(() => { window.__latency = 1200; });
+
+      await pull(page, 140);
+
+      await expect(page.locator('#refresh')).toBeVisible();
+      await expect(page.locator('#refresh')).toContainText('Refreshing');
+      await expect(page.locator('#pull')).toBeHidden();
+
+      await expect(page.locator('#refresh')).toBeHidden({ timeout: 15000 });
+      expect(errors).toEqual([]);
+    });
+});
+
+/*
+  A dropped connection is not the owner gate, and the difference is the cache.
+
+  `withFailureHandler` reports both with nothing to tell them apart but the
+  wording, which is why the page has `isTransportFailure` at all. `openFailed`
+  did not consult it, so one queued Apps Script execution or one lift threw away
+  a perfectly good stored copy — the next open was cold with nothing on screen
+  explaining why, and the one after that was fine again. From the outside: two
+  refreshes give cached data and the third does not.
+*/
+test.describe('a refusal and a dropped connection', () => {
+  const KEY = 'spendsheet';
+
+  const stored = (page) => page.evaluate((key) => {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }, KEY);
+
+  const failWith = (page, message) => page.addInitScript((text) => {
+    window.__failures = { appOpen: text };
+  }, message);
+
+  /**
+   * Wait until the failure has actually been handled, rather than for a while.
+   *
+   * `callOrRetry` sleeps `RETRY_MS` before its second attempt, so `openFailed`
+   * does not run for well over a second — and an assertion made straight after
+   * `goto` is asserting about the hydrated screen with the failure still in the
+   * post. A fixed sleep covers that and turns every one of these into a race
+   * against however loaded the machine is, which is what this suite's "no
+   * retries" rule exists to stop being hidden.
+   *
+   * The toast is the signal: `openFailed` raises one whenever there is a screen
+   * to keep, so its appearance *is* the handler having run.
+   */
+  const failureHandled = (page) => expect(page.locator('#toast')).toBeVisible({ timeout: 15000 });
+
+  test('a dropped connection keeps the stored copy', async ({ page }) => {
+    await open(page);
+    expect(await stored(page), 'nothing was stored by a healthy open').not.toBeNull();
+
+    // The sandbox host's own wording for an XHR that died, which is the string
+    // `isTransportFailure` is written against.
+    await failWith(page, 'http connection failure 0');
+    await page.goto('/');
+    await failureHandled(page);
+
+    expect(await stored(page), 'a dropped connection threw the copy away').not.toBeNull();
+  });
+
+  test('a dropped connection keeps the screen it drew from storage', async ({ page }) => {
+    await open(page);
+    const held = await stored(page);
+    held.open.accounts[0].name = 'CACHED ACCOUNT';
+    await page.evaluate(([key, copy]) => {
+      localStorage.setItem(key, JSON.stringify(copy));
+    }, [KEY, held]);
+
+    await failWith(page, 'http connection failure 0');
+    await page.goto('/');
+
+    // After the handler has run, not before it — asserted straight after
+    // `goto`, this passed against code that wiped the screen, which is the only
+    // thing it exists to catch.
+    await failureHandled(page);
+
+    // Still there. Replacing a working screen with an error page because the
+    // radio dropped throws away the one useful thing the page is holding — and
+    // it must not offer the wrong-account explanation, which is about a refusal.
+    await expect(page.locator('#screens')).toContainText('CACHED ACCOUNT');
+    await expect(page.locator('#screens'))
+      .not.toContainText(/signed in as a different Google account/i);
+  });
+});

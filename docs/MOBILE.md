@@ -239,7 +239,11 @@ Between them, and with the health check no longer scanning 4,615 rows to count t
 
 **The phone's own copy of the last answers.** Server time was never the larger half. Profiled from outside the sandboxed iframe, the `/exec` document alone is ~2,400ms of Apps Script spinning up a container, and every `google.script.run` call adds ~2,700ms of fixed overhead before a line of our code runs — so a ~6 second open is under a second of this project and the rest of Google. There is no round trip left to remove, so the app stopped waiting for them: it keeps the last `appOpen` and `appOverview` answers, and the last few Records and Charts slices, in `localStorage`, and draws them the moment the page parses.
 
-Both calls still go out, every time. What the cache removes is the wait in front of them, not the calls — a screen drawn from storage and left there would be a screen that is never right again. While they are out, a strip at the top says **Last updated *n* hours ago**, and it comes down when both have landed and replaced what they drew over. Pull-to-refresh is unchanged and still means "I do not believe this".
+Both calls still go out, every time. What the cache removes is the wait in front of them, not the calls — a screen drawn from storage and left there would be a screen that is never right again. While they are out, a strip at the top says **Last updated *n* hours ago**, and it comes down when both have landed and replaced what they drew over.
+
+**Pull-to-refresh uses that same strip.** The pill that follows your finger is the affordance for the drag; the moment you let go it goes and the strip takes over, saying *Refreshing* until the answer actually lands. It still means "I do not believe this", and it is still the only thing that makes the server drop its ledger cache and go and look.
+
+**A dropped connection is not a refusal.** If a call fails on the way out — a lift, a queued execution — the screen keeps what it drew, says so, and the stored copy is left alone. Only the owner gate refusing deletes it.
 
 Two consequences worth knowing. The **first open after clearing Safari's storage is slower than it used to be** — nothing to draw, and the document no longer carries the top of the dashboard — which is the price of every open after it starting at ~2,400ms. And **signing in as a different Google account wipes the stored copy**: the owner gate refusing is what deletes it, so those balances cannot come back on a reload.
 

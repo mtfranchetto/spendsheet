@@ -164,9 +164,29 @@
     */
     viewSettled: false,
 
-    // Which of the two opening calls are still out. The refresh indicator is
-    // shown while either is, and `page.boot` clears them as they land.
-    refreshing: { open: false, overview: false },
+    /*
+      What is being re-read right now, and by whom.
+
+      **Named slots rather than a single flag, and that is not tidiness.** This
+      was a boolean owned by `installPullToRefresh`, and the opening calls
+      turned it into an object — which is *always truthy*, so the gesture's own
+      `if (state.refreshing) return;` guard returned on every touch and
+      pull-to-refresh was silently dead. Nothing failed and nothing was logged;
+      it simply stopped happening. Same family as two functions sharing a name
+      in one global scope, and the same lesson: a shared name in a shared object
+      is a shared name.
+
+      `open` and `overview` are the two calls the boot fires. `pull` is the
+      gesture, and it is a third slot rather than a reuse of either, because
+      what the strip says differs — a pull happens over a screen that is already
+      live, where the opening calls happen over one drawn from storage.
+    */
+    refreshing: { open: false, overview: false, pull: false },
+
+    // Which opening calls came back with an *answer*, as against merely coming
+    // back. `fromCache` is cleared when both have replaced what they drew over,
+    // and a call that failed has replaced nothing.
+    landed: { open: false, overview: false },
     // `loaded` rather than counting rows. Records is fetched on first
     // navigation now that the bootstrap no longer prefetches it, and a filter
     // that legitimately matches nothing would otherwise look exactly like a

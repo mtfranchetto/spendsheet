@@ -2454,8 +2454,8 @@ describe('the first screen', () => {
     */
     const page = pageSource();
 
-    expect(page).toContain("whileRefreshing('open', call('appOpen'))");
-    expect(page).toContain("whileRefreshing('overview', call('appOverview'))");
+    expect(page).toContain("whileRefreshing('open', callOrRetry('appOpen'))");
+    expect(page).toContain("whileRefreshing('overview', callOrRetry('appOverview'))");
   });
 
   it('draws what it already holds before it asks for anything', () => {

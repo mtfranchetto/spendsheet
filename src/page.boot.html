@@ -356,7 +356,17 @@
     var written = writeStamp();
     var settle = function () {
       state.dashboard.inFlight = false;
-      if (!state.dashboard.again) return;
+
+      if (!state.dashboard.again) {
+        // The pull is over when the read it asked for is, which is here and
+        // nowhere else — and specifically not when a *queued* re-run is still
+        // to come, or the strip would come down while the work is going on.
+        if (state.refreshing.pull) {
+          state.refreshing.pull = false;
+          renderRefreshing();
+        }
+        return;
+      }
 
       var wanted = state.dashboard.fresh;
       state.dashboard.again = false;
@@ -526,14 +536,27 @@
     var node = document.getElementById('refresh');
     if (!node) return;
 
-    var busy = state.refreshing.open || state.refreshing.overview;
-    node.hidden = !(busy && state.fromCache);
+    var opening = state.refreshing.open || state.refreshing.overview;
+
+    /*
+      The opening calls earn the strip only when there is a stored screen behind
+      them for it to qualify. A cold open already has a spinner where the
+      content is going to be, and two indicators for one wait reads as two
+      things happening.
+
+      A pull always earns it, because the screen behind a pull is full and live
+      — there is nothing else on it that would say the gesture was received.
+      This is also the whole of "the same spinner UI": the drag still has its
+      own pill, which is an affordance rather than a progress report, and the
+      moment you let go the strip takes over.
+    */
+    var busy = (opening && state.fromCache) || state.refreshing.pull;
+    node.hidden = !busy;
     if (node.hidden) return;
 
-    // No age means a stored payload written before `at` was — nothing this
-    // version writes, and not worth a wrong number to cover. The dot alone
-    // still says a refresh is happening.
-    node.textContent = state.cachedAt
+    // The age only means anything about a stored screen. A pull is a re-read of
+    // one that is already current, so it says what it is doing instead.
+    node.textContent = state.fromCache && state.cachedAt
       ? 'Last updated ' + agoWords(state.cachedAt)
       : 'Refreshing';
   }
@@ -590,19 +613,60 @@
       Found by the test rather than by reading: the storage after a refused open
       still held `overview`, and the screen said `Loading…`.
     */
-    state.refused = true;
+    /*
+      **A refusal and a dropped connection arrive through the same handler, and
+      treating the second as the first is what made this intermittent.**
 
-    if (state.fromCache) cacheForget();
-    state.data.open = null;
-    state.data.overview = null;
-    state.fromCache = false;
+      `withFailureHandler` reports both with nothing to tell them apart but the
+      wording — which is why `page.api` already has `isTransportFailure`, and
+      why every other fetch on this page goes through `callOrRetry`. These two
+      did not. So one queued Apps Script execution, or one lift, and this
+      function called `cacheForget()` on a perfectly good copy: the *next* open
+      was cold with nothing on screen explaining why, and the one after it was
+      fine again. Reported as "two refreshes give cached data and the third
+      doesn't", which is exactly what it looks like from the outside.
+
+      Only a refusal is final. A dropped connection is the case the retry above
+      exists for, and what is already on screen is still the last thing the
+      server said.
+    */
+    var refused = !isTransportFailure(error);
+
+    if (refused) {
+      state.refused = true;
+
+      /*
+        Unconditionally, and **not** behind `state.fromCache`.
+
+        That guard was here and it was ordering-dependent in the one direction
+        that matters. `whileRefreshing` clears the flag in its own arm, which
+        runs *before* this `.catch` further down the same chain — so whenever
+        the other call settled first, `fromCache` was already false by the time
+        a refusal arrived and the forget quietly did not happen. Which call
+        lands last decided whether the previous owner's balances stayed on the
+        phone. Forgetting a cache that was not there costs nothing.
+      */
+      cacheForget();
+      state.data.open = null;
+      state.data.overview = null;
+      state.fromCache = false;
+    }
+
+    // Something is on screen and the radio dropped. Say so and keep it —
+    // replacing a working screen with an error page would throw away the one
+    // useful thing this page is holding.
+    if (!refused && state.data.open) {
+      toast(error.message);
+      return render();
+    }
 
     var root = clear(document.getElementById('screens'));
     add(root, el('h1', null, 'Spendsheet'));
     add(root, add(el('div', 'banner bad'), el('div', null, error.message)));
-    add(root, el('p', 'muted',
-      'If this says "Not available", you are signed in as a different Google account. ' +
-      'Switch accounts and reload.'));
+    add(root, el('p', 'muted', refused
+      ? 'If this says "Not available", you are signed in as a different Google account. ' +
+        'Switch accounts and reload.'
+      : 'The connection dropped before the first screen arrived. Reload to try again.'));
   }
 
   /**
@@ -812,32 +876,40 @@
    * dashboard drawn out of an exception.
    */
   function whileRefreshing(which, promise) {
-    var done = function () {
+    var done = function (ok) {
       state.refreshing[which] = false;
+      if (ok) state.landed[which] = true;
 
       /*
-        The screen stops being cache-backed when **both** halves have landed,
-        not when either one does.
+        The screen stops being cache-backed when both halves have been
+        **replaced**, which is not the same as both having finished.
 
         Clearing this inside `applyOpen` and `applyOverview` was the obvious
         place and it is wrong in both directions. `appOverview` landing first
         would take the strip down while net worth and every balance were still
         the stored ones; `appOpen` landing first would leave it up saying the
-        top of the screen is old, which by then it is not. Neither is a lie
-        anyone would catch, which is exactly why it has to be got right here.
+        top of the screen is old, which by then it is not.
+
+        Counting a *failure* as a landing is the third way to get it wrong, and
+        the quietest: a call that dropped has replaced nothing, so the screen is
+        still the stored copy and has to go on saying so.
       */
-      if (!state.refreshing.open && !state.refreshing.overview) state.fromCache = false;
+      if (state.landed.open && state.landed.overview) state.fromCache = false;
       renderRefreshing();
     };
 
     return promise.then(
-      function (value) { done(); return value; },
-      function (error) { done(); throw error; }
+      function (value) { done(true); return value; },
+      function (error) { done(false); throw error; }
     );
   }
 
-  whileRefreshing('open', call('appOpen')).then(applyOpen).catch(openFailed);
-  whileRefreshing('overview', call('appOverview')).then(applyOverview).catch(overviewFailed);
+  // `callOrRetry`, like every other fetch on this page. These two were the only
+  // ones still on a bare `call`, which put the opening screen — the one request
+  // a phone makes with its radio still waking up — on the single path with no
+  // second attempt behind it.
+  whileRefreshing('open', callOrRetry('appOpen')).then(applyOpen).catch(openFailed);
+  whileRefreshing('overview', callOrRetry('appOverview')).then(applyOverview).catch(overviewFailed);
 
   // Bound once to the document, so it survives every `render()` — which wipes
   // `#screens` wholesale and would take any listener attached inside it.
