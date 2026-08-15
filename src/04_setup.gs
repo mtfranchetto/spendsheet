@@ -757,13 +757,6 @@ function categoryFormula() {
 }
 
 /**
- * subcategory — cleared when you override the category.
- *
- * A subcategory left over from a different parent category is worse than no
- * subcategory: it reads as real and rolls up wrongly. There is deliberately
- * no subcategory_override column; if you need that precision, put it in notes.
- */
-/**
  * subcategory — yours, then blank, then the cascade's.
  *
  * The middle branch is the one worth explaining. A `category_override` you

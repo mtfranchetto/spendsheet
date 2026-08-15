@@ -90,51 +90,36 @@ describe('normalizeMerchant', () => {
 describe('memory lookup', () => {
   const index = (entries) => ctx.buildMemoryIndex_(entries);
 
-  it('takes an exact key first', () => {
+  it('is a flat map keyed by the merchant key, so a hit costs one lookup', () => {
+    // What lets memory sit inside the rule loop at a priority rather than in
+    // front of it: it contributes at most one candidate, found without a scan.
     const memory = index([
       { merchant_key: 'esselunga', category: 'Food & Drink', subcategory: 'Groceries', hits: 40 }
     ]);
-    expect(ctx.lookupMemory_('esselunga', memory).category).toBe('Food & Drink');
+    expect(memory.esselunga.category).toBe('Food & Drink');
+    expect(memory.esselunga.subcategory).toBe('Groceries');
   });
 
-  it('bridges an imported key to a longer bank key by containment', () => {
-    // This is what makes the BudgetBakers history pay off. Their export says
-    // `Esselunga`; the bank says `PAGAMENTO POS ... ESSELUNGA SPA TORINO`. The
-    // keys differ and the merchant does not.
+  it('matches a key whole, so a longer key is a different merchant', () => {
+    // `esselunga torino` earns its own confirmation rather than inheriting the
+    // answer given to `esselunga`. A merchant whose rendering varies more than
+    // that is what a `contains` rule is for.
     const memory = index([
       { merchant_key: 'esselunga', category: 'Food & Drink', subcategory: 'Groceries', hits: 40 }
     ]);
-    expect(ctx.lookupMemory_('esselunga torino', memory).category).toBe('Food & Drink');
+    expect(memory['esselunga torino']).toBeUndefined();
   });
 
-  it('matches whole words only, so a key never lands inside another word', () => {
+  it('lowercases and trims the key, since the tab is yours to edit', () => {
     const memory = index([
-      { merchant_key: 'eatery', category: 'Food & Drink', subcategory: 'Restaurants', hits: 5 }
+      { merchant_key: '  Q8 Rivoli ', category: 'Transport', subcategory: 'Fuel', hits: 9 }
     ]);
-    expect(ctx.lookupMemory_('greateryard supplies', memory)).toBe(null);
-  });
-
-  it('prefers the longest match when two keys both fit', () => {
-    const memory = index([
-      { merchant_key: 'just', category: 'Other', subcategory: 'Uncategorised', hits: 2 },
-      { merchant_key: 'just eat', category: 'Food & Drink', subcategory: 'Delivery', hits: 30 }
-    ]);
-    expect(ctx.lookupMemory_('just eat milano', memory).category).toBe('Food & Drink');
-  });
-
-  it('refuses to match a very short key by containment', () => {
-    // `q8` inside `q8 rivoli` is fine as an exact key and dangerous as a
-    // substring — three characters of coincidence is not evidence.
-    const memory = index([
-      { merchant_key: 'q8', category: 'Transport', subcategory: 'Fuel', hits: 9 }
-    ]);
-    expect(ctx.lookupMemory_('q8', memory).category).toBe('Transport');
-    expect(ctx.lookupMemory_('q8 rivoli', memory)).toBe(null);
+    expect(memory['q8 rivoli'].category).toBe('Transport');
   });
 
   it('skips an entry with no category, which would categorise a row as blank', () => {
     const memory = index([{ merchant_key: 'mystery', category: '', subcategory: '', hits: 3 }]);
-    expect(ctx.lookupMemory_('mystery', memory)).toBeFalsy();
+    expect(memory.mystery).toBeUndefined();
   });
 });
 
@@ -280,14 +265,20 @@ describe('transfer detection', () => {
 });
 
 describe('the cascade order', () => {
-  const context = () => ({
+  // One ordered list. `memoryPriority` is the only thing deciding where the
+  // learned entry sits in it, which is the point of the arrangement — every
+  // test below that changes the answer changes that number and nothing else.
+  const context = (memoryPriority = 5) => ({
     memory: ctx.buildMemoryIndex_([
       { merchant_key: 'esselunga', category: 'Food & Drink', subcategory: '', hits: 40 }
     ]),
-    mccRules: [{ priority: 10, field: 'mcc', match_type: 'equals', pattern: '5411',
-      category: 'Food & Drink', subcategory: 'Groceries', enabled: true }],
-    textRules: [{ priority: 100, field: 'description', match_type: 'contains', pattern: 'NETFLIX',
-      category: 'Life & Entertainment', subcategory: 'Streaming', enabled: true }],
+    memoryPriority,
+    rules: [
+      { priority: 10, field: 'mcc', match_type: 'equals', pattern: '5411',
+        category: 'Food & Drink', subcategory: 'Groceries', enabled: true },
+      { priority: 100, field: 'description', match_type: 'contains', pattern: 'NETFLIX',
+        category: 'Life & Entertainment', subcategory: 'Streaming', enabled: true }
+    ],
     kindByCategory: { Transfer: 'transfer' },
     transferWindowDays: 4
   });
@@ -297,6 +288,11 @@ describe('the cascade order', () => {
     category_override: '', bank_transaction_code: '', _transferGroup: ''
   }, over);
 
+  // The merchant key comes from `counterparty` when the bank filled it, so
+  // these rows carry the key on one field and the rule's pattern on another.
+  // That is the only way to put memory and a text rule on the same row.
+  const esselunga = (over = {}) => record(Object.assign({ counterparty: 'Esselunga' }, over));
+
   it('puts a matched transfer above everything a rule could say', () => {
     const verdict = ctx.categorizeOne_(
       record({ description: 'NETFLIX', _transferGroup: 'tr:x' }), context());
@@ -304,26 +300,45 @@ describe('the cascade order', () => {
     expect(verdict.category).toBe('Transfer');
   });
 
-  it('puts memory above MCC', () => {
-    const verdict = ctx.categorizeOne_(
-      record({ description: 'ESSELUNGA TORINO', mcc: '5411' }), context());
+  it('lets memory decide when its priority is below every rule', () => {
+    const verdict = ctx.categorizeOne_(esselunga({ mcc: '5411' }), context(5));
     expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.MEMORY);
   });
 
-  it('lets a rule supply the subcategory memory learned without', () => {
+  it('lets a rule win when memory sits below it', () => {
+    // The same row and the same list, with one number moved. This is what
+    // `memory_priority` buys: the answer to "should a rule beat my own
+    // history" is a cell rather than a branch.
+    const verdict = ctx.categorizeOne_(esselunga({ mcc: '5411' }), context(1000));
+    expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.MCC);
+    expect(verdict.subcategory).toBe('Groceries');
+  });
+
+  it('still reaches memory when no rule matches, however low its priority', () => {
+    const verdict = ctx.categorizeOne_(esselunga(), context(1000));
+    expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.MEMORY);
+    expect(verdict.category).toBe('Food & Drink');
+  });
+
+  it('gives a tie to the rule, so ordering never depends on a coincidence', () => {
+    // A tie has to break somewhere, and this way `memory_priority` never has to
+    // dodge a number the seed already uses.
+    const verdict = ctx.categorizeOne_(esselunga({ mcc: '5411' }), context(10));
+    expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.MCC);
+  });
+
+  it('lets a later rule supply the subcategory memory learned without', () => {
     // An imported row carries its category in category_override and its
-    // subcategory nowhere, so memory built from history knows parents. Throwing
-    // away a rule's subcategory when it agrees about the parent would make
-    // tier 3 *lose* detail tier 4 already had.
-    const verdict = ctx.categorizeOne_(
-      record({ description: 'ESSELUNGA TORINO', mcc: '5411' }), context());
+    // subcategory nowhere, so memory built from history knows parents. Stopping
+    // at the first match would make memory *lose* detail the list already had.
+    const verdict = ctx.categorizeOne_(esselunga({ mcc: '5411' }), context(5));
     expect(verdict.category).toBe('Food & Drink');
     expect(verdict.subcategory).toBe('Groceries');
   });
 
-  it('does not borrow a subcategory from a rule that disagrees about the parent', () => {
+  it('does not borrow a subcategory from a match that disagrees about the parent', () => {
     const verdict = ctx.categorizeOne_(
-      record({ description: 'ESSELUNGA TORINO NETFLIX' }), context());
+      esselunga({ description: 'NETFLIX SUBSCRIPTION' }), context(5));
     expect(verdict.category).toBe('Food & Drink');
     expect(verdict.subcategory).toBe('');
   });
@@ -353,6 +368,26 @@ describe('the cascade order', () => {
   });
 });
 
+describe('where memory sits in the list', () => {
+  it('defaults to 5, which is below the lowest seed rule', () => {
+    const lowest = Math.min(...ctx.DEFAULT_RULES.map((row) => row[0]));
+    expect(ctx.configNumber_({}, 'memory_priority')).toBe(5);
+    expect(ctx.configNumber_({}, 'memory_priority')).toBeLessThan(lowest);
+  });
+
+  it('falls back to 5 rather than 0 when the cell is cleared', () => {
+    // `Number('')` is 0 and 0 is a valid priority, so a zero default would make
+    // a cleared cell and a working default the same reading — and this test
+    // could not tell the guard in configNumber_ from its absence.
+    expect(ctx.configNumber_({ memory_priority: '' }, 'memory_priority')).toBe(5);
+    expect(ctx.configNumber_({ memory_priority: '   ' }, 'memory_priority')).toBe(5);
+  });
+
+  it('takes the number you typed', () => {
+    expect(ctx.configNumber_({ memory_priority: 1000 }, 'memory_priority')).toBe(1000);
+  });
+});
+
 describe('deriveMemory_', () => {
   const row = (over = {}) => Object.assign({
     description: 'PAGAMENTO POS ESSELUNGA TORINO', counterparty: '',
@@ -376,11 +411,11 @@ describe('deriveMemory_', () => {
   });
 
   it('learns nothing from a row a rule confirmed', () => {
-    // Memory is tier 3 and both rule tiers are below it, so a rule that taught
-    // memory its own answer would go on being obeyed *through memory* after the
-    // rule had been corrected — with the `rules` tab looking ignored and the
-    // reason two tiers away. Confirming a rule's answer is a decision that
-    // deliberately does not propagate; only overriding it teaches.
+    // A rule that taught memory its own answer would go on being obeyed
+    // *through memory* after the rule had been corrected — and at the default
+    // `memory_priority` memory is offered first, so the `rules` tab would look
+    // ignored with the reason on a tab nobody edits. Confirming a rule's answer
+    // is a decision that deliberately does not propagate; only overriding teaches.
     expect(ctx.deriveMemory_([row({ category_source: 'rule' })]).entries).toHaveLength(0);
     expect(ctx.deriveMemory_([row({ category_source: 'mcc' })]).entries).toHaveLength(0);
   });
@@ -425,6 +460,45 @@ describe('deriveMemory_', () => {
       row({ category: 'Shopping' })
     ]);
     expect(derived.entries[0].hits).toBe(1);
+  });
+
+  it('keeps a subcategory even when more rows named only the parent', () => {
+    // A blank is not a candidate. Counting it as one let three bare parents
+    // out-vote two rows that named the child, and the merchant then lost its
+    // subcategory on every future row — the opposite of learning.
+    const derived = ctx.deriveMemory_([
+      row({ subcategory: '' }), row({ subcategory: '' }), row({ subcategory: '' }),
+      row({ subcategory: 'Groceries' }), row({ subcategory: 'Groceries' })
+    ]);
+    expect(derived.entries[0].category).toBe('Food & Drink');
+    expect(derived.entries[0].subcategory).toBe('Groceries');
+  });
+
+  it('counts the category, not the variant, so hits means what it says', () => {
+    const derived = ctx.deriveMemory_([
+      row({ subcategory: '' }), row({ subcategory: 'Groceries' })
+    ]);
+    expect(derived.entries[0].hits).toBe(2);
+  });
+
+  it('picks the subcategory given most often within the winning category', () => {
+    const derived = ctx.deriveMemory_([
+      row({ subcategory: 'Groceries' }), row({ subcategory: 'Groceries' }),
+      row({ subcategory: 'Restaurants' })
+    ]);
+    expect(derived.entries[0].subcategory).toBe('Groceries');
+  });
+
+  it('reads a subcategory_override, which is where half a correction lives', () => {
+    // On a sheet the `subcategory` formula resolves this first, so only records
+    // built anywhere else reach the fallback — and dropping it is how memory
+    // learns a bare parent from a row that named both halves.
+    const derived = ctx.deriveMemory_([
+      row({ category: '', subcategory: '', category_override: 'Housing',
+        subcategory_override: 'Rent' })
+    ]);
+    expect(derived.entries[0].category).toBe('Housing');
+    expect(derived.entries[0].subcategory).toBe('Rent');
   });
 
   it('refuses to learn anything from a transfer', () => {
