@@ -237,6 +237,64 @@ test.describe('the account tiles', () => {
 
     expect(errors).toEqual([]);
   });
+
+  /*
+    The secondary action starts where the tile's own text starts.
+
+    A button centres its label, and every `button.link` on the page is text you
+    read from the left — so the alignment is correct only while the label is
+    narrower than the box, and the box is exactly what the tiles took away: a
+    column went from 174px to 162px when the block became a scroller, which is
+    enough for "↕ Update balance" to wrap on the phone and centre both its
+    lines a few pixels right of the balance above it.
+
+    Measured against the amount rather than against the tile's padding box,
+    because the padding is what the assertion would otherwise be restating; the
+    amount is the thing on screen the eye compares the button to.
+
+    The narrow viewport is the point. At 390px WebKit fits "+ Add transaction"
+    on one line and a centred box lands flush left by arithmetic — the state
+    this is written to catch is invisible there, and passing at that width would
+    prove only that the label happened to be short. 320px is the narrowest the
+    tiles have to work at, and it wraps both labels.
+  */
+  test('left-align the action inside a tile, even when its label wraps', async ({ page, errors }) => {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await open(page);
+    await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
+
+    const actions = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('#screens .tiles .tile'))
+        .filter((tile) => tile.querySelector('button.link'))
+        .map((tile) => {
+          const button = tile.querySelector('button.link');
+
+          // The rendered text, not the button's box: a left-aligned box holding
+          // centred lines has the left edge this is looking for and puts the
+          // glyphs somewhere else entirely.
+          const text = document.createRange();
+          text.selectNodeContents(button);
+
+          return {
+            label: button.textContent,
+            lines: text.getClientRects().length,
+            textLeft: text.getBoundingClientRect().left,
+            amountLeft: tile.querySelector('.amount').getBoundingClientRect().left
+          };
+        });
+    });
+
+    expect(actions.length, 'no tile carries a secondary action').toBeGreaterThan(0);
+
+    for (const action of actions) {
+      expect(action.lines, `"${action.label}" fits on one line at 320px, so this proves nothing`)
+        .toBeGreaterThan(1);
+      expect(action.textLeft, `"${action.label}" does not start where the balance does`)
+        .toBeCloseTo(action.amountLeft, 0);
+    }
+
+    expect(errors).toEqual([]);
+  });
 });
 
 /*
