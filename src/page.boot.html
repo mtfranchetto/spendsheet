@@ -20,8 +20,45 @@
    */
   function invalidate() {
     state.cache = {};
+    // With it, or the marks outlive the entries they describe: `drawnFromStorage`
+    // would report a hit for a key `state.cache` no longer holds, and the guard
+    // it feeds is the one deciding whether to skip a fetch.
+    state.hydrated = {};
     state.data.analytics = null;
     state.records.loaded = false;
+  }
+
+  /**
+   * Is this slice one we were *told*, or one we merely still remember?
+   *
+   * The two are the same object in the same map under the same key, and they
+   * want opposite handling. An answer fetched this session is the truth and
+   * re-asking for it is a round trip for a value already held. One hydrated out
+   * of storage is last week's answer in this week's shape — drawing it is the
+   * entire point of the cache, and *stopping there* would be a screen that is
+   * never right again.
+   *
+   * So a hydrated slice is drawn and then asked about, once; the answer clears
+   * the mark and it is free for the rest of the session.
+   */
+  function drawnFromStorage(key) {
+    return !!state.hydrated[key];
+  }
+
+  /**
+   * A fresh answer for a slice: store it, and stop calling the old one held.
+   *
+   * `state.cache` is dropped as well as unmarked, because for Records that
+   * entry exists *only* to be hydrated from — nothing reads it once a real
+   * answer is in, and leaving it would keep a 33KB payload alive per set of
+   * filters anyone happened to open. Charts overwrites the same key on the line
+   * above, where the entry is the in-session cache and is read constantly.
+   */
+  function sliceLanded(screen, sig, payload) {
+    var key = screen + ':' + sig;
+    delete state.hydrated[key];
+    if (screen === 'records') delete state.cache[key];
+    cacheKeepSlice(screen, sig, payload);
   }
 
   /**
@@ -188,18 +225,25 @@
 
   function loadAnalytics() {
     var filters = currentFilters('analytics');
-    var key = 'analytics:' + signature(filters);
-    if (state.cache[key]) {
+    var sig = signature(filters);
+    var key = 'analytics:' + sig;
+
+    // Held and fetched this session: this *is* the answer, and asking again
+    // would be a round trip for a value already in hand.
+    if (state.cache[key] && !drawnFromStorage(key)) {
       state.data.analytics = state.cache[key];
       return render();
     }
 
-    state.data.analytics = null;
+    // Held from a previous session: draw it, and go and ask. `null` when there
+    // is nothing, which is what puts the spinner up.
+    state.data.analytics = state.cache[key] || null;
     render();
 
     var stamp = ++state.requests.analytics;
     callOrRetry('appAnalytics', filters).then(function (result) {
       state.cache[key] = result;
+      sliceLanded('analytics', sig, result);
       if (stamp !== state.requests.analytics) return;
 
       state.data.analytics = result;
@@ -208,18 +252,39 @@
   }
 
   function loadRecords() {
+    var filters = currentFilters('records');
+    var sig = signature(filters);
+    var key = 'records:' + sig;
+
     // Clear the rows, not just set the flag. This is a fresh query from offset
     // zero, so what is on screen belongs to the *previous* filter — and the
     // spinner only shows on an empty list, so leaving them there meant a filter
     // change repainted the old answer with no sign anything was happening.
     // `loadMoreRecords` is the one that must keep them: it appends.
-    state.records = { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
-      loading: true, loaded: false };
+    //
+    // A stored slice is the exception, and it is not the same thing: those rows
+    // are not the previous filter's, they are *these* filters' from last time.
+    // Drawn straight away and replaced when the answer lands — `loading` stays
+    // true throughout, so the list says it is working rather than settled.
+    var held = drawnFromStorage(key) ? state.cache[key] : null;
+    state.records = held
+      ? { rows: held.rows.slice(), pending: held.pending || [],
+          offset: held.rows.length, hasMore: held.hasMore, total: held.total,
+          loading: true, loaded: true }
+      : { rows: [], pending: [], offset: 0, hasMore: false, total: 0,
+          loading: true, loaded: false };
     render();
 
     var stamp = ++state.requests.records;
     var written = writeStamp();
-    callOrRetry('appRecords', currentFilters('records'), 0).then(function (result) {
+    callOrRetry('appRecords', filters, 0).then(function (result) {
+      // Stored before the reconciliation below, which mutates `result` in place
+      // — `agreeWithLocalWrites` ticks rows and `reconciledRows` decrements the
+      // total. `cacheWrite` serialises immediately, so what reaches storage is
+      // the server's answer rather than this page's opinion of it. Which is the
+      // rule: `state.writes` dies with the session, and a stored payload
+      // carrying its edits would be a claim nothing left alive can overrule.
+      sliceLanded('records', sig, result);
       if (stamp !== state.requests.records) return;
 
       // Before the assignment, because it corrects `result.total` as well as
@@ -291,7 +356,17 @@
     var written = writeStamp();
     var settle = function () {
       state.dashboard.inFlight = false;
-      if (!state.dashboard.again) return;
+
+      if (!state.dashboard.again) {
+        // The pull is over when the read it asked for is, which is here and
+        // nowhere else — and specifically not when a *queued* re-run is still
+        // to come, or the strip would come down while the work is going on.
+        if (state.refreshing.pull) {
+          state.refreshing.pull = false;
+          renderRefreshing();
+        }
+        return;
+      }
 
       var wanted = state.dashboard.fresh;
       state.dashboard.again = false;
@@ -443,6 +518,49 @@
    * painted at the wrong offset. Only when it actually moved — an unconditional
    * `scrollTo` would fight `go()`, which deliberately sends you to the top.
    */
+  /**
+   * The strip that says what is on screen is the last answer, not a fresh one.
+   *
+   * Shown only while a refresh is out **and** the screen was drawn from
+   * storage. Both halves matter. Without the second, a cold open would put a
+   * banner over a screen that is already the truth as far as anyone knows,
+   * which trains the eye to ignore it; without the first, it would never come
+   * down.
+   *
+   * Not part of `render()`, and not called from it: `#refresh` lives outside
+   * `#screens` precisely so a redraw cannot take it, and its content depends on
+   * nothing a redraw changes. The three places that move `state.refreshing`
+   * call this, which is the whole of its schedule.
+   */
+  function renderRefreshing() {
+    var node = document.getElementById('refresh');
+    if (!node) return;
+
+    var opening = state.refreshing.open || state.refreshing.overview;
+
+    /*
+      The opening calls earn the strip only when there is a stored screen behind
+      them for it to qualify. A cold open already has a spinner where the
+      content is going to be, and two indicators for one wait reads as two
+      things happening.
+
+      A pull always earns it, because the screen behind a pull is full and live
+      — there is nothing else on it that would say the gesture was received.
+      This is also the whole of "the same spinner UI": the drag still has its
+      own pill, which is an affordance rather than a progress report, and the
+      moment you let go the strip takes over.
+    */
+    var busy = (opening && state.fromCache) || state.refreshing.pull;
+    node.hidden = !busy;
+    if (node.hidden) return;
+
+    // The age only means anything about a stored screen. A pull is a re-read of
+    // one that is already current, so it says what it is doing instead.
+    node.textContent = state.fromCache && state.cachedAt
+      ? 'Last updated ' + agoWords(state.cachedAt)
+      : 'Refreshing';
+  }
+
   function render() {
     var at = window.scrollY;
     var root = clear(document.getElementById('screens'));
@@ -465,97 +583,234 @@
   }
 
   /**
-   * Two calls, fired together, drawn as they land.
+   * `appOpen` refused, which is the gate speaking, and it overrules the screen.
    *
-   * This was one call, and before that one call carrying Charts and Records
-   * too — a boot that read the ledger three times for screens you might never
-   * open. Removing the prefetch was right and it was not enough: the remaining
-   * call still bundled the cheap half of the dashboard with the expensive one,
-   * so net worth and the tiles waited ~1,600ms on a ledger they do not use.
+   * **This cannot be the banner below, and the reason is the hydration.**
+   * `state.data.open` used to be empty until the server filled it, so its
+   * presence was a reliable way to ask "has the first half landed". It is now
+   * set by whatever was in storage, so branching on it here would leave a
+   * working-looking dashboard on screen with a note attached — and the one
+   * message that actually helps, *you are signed in as the wrong account*,
+   * would be the one nobody reads.
    *
-   * In parallel, and that was settled by measuring rather than by reasoning.
-   *
-   * They were briefly made sequential, on the theory that two executions
-   * reading the same spreadsheet contend and the cheap call would not finish
-   * first anyway. The evidence for it was "the whole screen arrives at once" —
-   * observed on a deployment that turned out to predate the split entirely and
-   * was making a single call. An inference drawn from a build that could not
-   * have staged anything.
-   *
-   * Measured against the live app, in one session, both orders back to back:
-   *
-   *     sequential ... first paint 3,206ms, everything 7,710ms
-   *     parallel ..... first paint 3,588ms, everything 3,916ms
-   *
-   * They do not contend — `appOverview` came back *sooner* running alongside
-   * `appOpen` (3,916ms) than after it (4,504ms). Sequential nearly doubles the
-   * total and buys nothing.
-   *
-   * The reason the two are so close is the finding under all of this: a
-   * `google.script.run` round trip costs about **2,700ms before any of our
-   * code runs** — `appOpen` does ~800ms of work on the server and takes
-   * ~3,500ms from here, twice in a row, within 10ms of itself. Overlapping
-   * that fixed cost is worth far more than removing server work from either
-   * call.
-   *
-   * A failure before `appOpen` lands is fatal — it carries the gate's verdict
-   * and there is nothing to draw without it. A failure after it is not: what
-   * is on screen is still true.
+   * The stored copy goes with it. It belongs to whoever was signed in when it
+   * was written, and leaving it would paint their balances again on the next
+   * reload, before the refusal that is the entire point of the gate had a
+   * chance to arrive.
    */
-  var fatal = function (error) {
-    // Which half failed decides what this means, and `state.data.open` is how
-    // you tell. Before it lands there is nothing on screen and nothing to say
-    // but the error — it carries the gate's verdict, so "Not available" is the
-    // likely one. After it lands, net worth and the balances are up and still
-    // true, and replacing a working screen with an error would be a lie about
-    // what is known.
-    if (state.data.open) {
-      state.overviewError = error.message;
+  function openFailed(error) {
+    /*
+      Set before anything else, because the other call is still out.
+
+      `appOverview` is issued in parallel and is answered on its own schedule,
+      so a refusal here is routinely followed by a perfectly good overview
+      landing a moment later — and applying it does two things, both wrong.
+      It calls `render()`, and `renderDashboard` with no `open` draws a spinner,
+      so the gate's message is replaced by a screen that looks like it is still
+      loading. And its `cacheWrite` puts the copy this function just deleted
+      back on the phone, missing only the half that failed.
+
+      Found by the test rather than by reading: the storage after a refused open
+      still held `overview`, and the screen said `Loading…`.
+    */
+    /*
+      **A refusal and a dropped connection arrive through the same handler, and
+      treating the second as the first is what made this intermittent.**
+
+      `withFailureHandler` reports both with nothing to tell them apart but the
+      wording — which is why `page.api` already has `isTransportFailure`, and
+      why every other fetch on this page goes through `callOrRetry`. These two
+      did not. So one queued Apps Script execution, or one lift, and this
+      function called `cacheForget()` on a perfectly good copy: the *next* open
+      was cold with nothing on screen explaining why, and the one after it was
+      fine again. Reported as "two refreshes give cached data and the third
+      doesn't", which is exactly what it looks like from the outside.
+
+      Only a refusal is final. A dropped connection is the case the retry above
+      exists for, and what is already on screen is still the last thing the
+      server said.
+    */
+    var refused = !isTransportFailure(error);
+
+    if (refused) {
+      state.refused = true;
+
+      /*
+        Unconditionally, and **not** behind `state.fromCache`.
+
+        That guard was here and it was ordering-dependent in the one direction
+        that matters. `whileRefreshing` clears the flag in its own arm, which
+        runs *before* this `.catch` further down the same chain — so whenever
+        the other call settled first, `fromCache` was already false by the time
+        a refusal arrived and the forget quietly did not happen. Which call
+        lands last decided whether the previous owner's balances stayed on the
+        phone. Forgetting a cache that was not there costs nothing.
+      */
+      cacheForget();
+      state.data.open = null;
+      state.data.overview = null;
+      state.fromCache = false;
+    }
+
+    // Something is on screen and the radio dropped. Say so and keep it —
+    // replacing a working screen with an error page would throw away the one
+    // useful thing this page is holding.
+    if (!refused && state.data.open) {
+      toast(error.message);
       return render();
     }
 
     var root = clear(document.getElementById('screens'));
     add(root, el('h1', null, 'Spendsheet'));
     add(root, add(el('div', 'banner bad'), el('div', null, error.message)));
-    add(root, el('p', 'muted',
-      'If this says "Not available", you are signed in as a different Google account. ' +
-      'Switch accounts and reload.'));
-  };
+    add(root, el('p', 'muted', refused
+      ? 'If this says "Not available", you are signed in as a different Google account. ' +
+        'Switch accounts and reload.'
+      : 'The connection dropped before the first screen arrived. Reload to try again.'));
+  }
 
-  function applyOpen(result) {
+  /**
+   * `appOverview` refused. Net worth and the balances above it are still true,
+   * so the screen stays and says which half is missing.
+   *
+   * With nothing on screen at all there is nothing for a banner to qualify, and
+   * the error is the only thing worth drawing — which is `openFailed`'s job, so
+   * it does it.
+   */
+  function overviewFailed(error) {
+    if (state.refused) return;
+    if (!state.data.open) return openFailed(error);
+
+    state.overviewError = error.message;
+    render();
+  }
+
+  function applyOpen(result, fromStorage) {
+    if (state.refused) return;
+
     state.currency = result.currency;
     state.lists.accounts = result.lists.accounts;
     state.lists.cashAccounts = result.lists.cashAccounts;
     state.lists.assetAccounts = result.lists.assetAccounts || [];
     state.data.open = result;
     state.data.generatedAt = result.generatedAt;
+
+    if (!fromStorage) cacheWrite(function (held) { held.open = result; });
     render();
   }
 
-  /**
-   * The first screen, if the server sent it with the page.
-   *
-   * Every failure here returns null and the fetch below happens instead — a
-   * missing element, `null` because the server could not build it, or JSON that
-   * will not parse. There is no case where a broken payload is worth more than
-   * a round trip.
-   */
-  function inlinedBoot() {
-    try {
-      var node = document.getElementById('boot');
-      var raw = node ? String(node.textContent || '').trim() : '';
-      if (!raw || raw === 'null') return null;
+  function applyOverview(result, fromStorage) {
+    if (state.refused) return;
 
-      var parsed = JSON.parse(raw);
-      // `open` is the half that is always there; `overview` rides along only
-      // when the ledger was already cached. A payload missing the fields the
-      // tiles are built from is treated as absent — a broken screen is worse
-      // than a slow one.
-      if (!parsed || !parsed.open || !parsed.open.lists || !parsed.open.accounts) return null;
-      return parsed;
-    } catch (e) {
-      return null;
+    state.lists.labels = result.lists.labels;
+    state.lists.categories = result.lists.categories;
+    state.lists.periods = result.lists.periods;
+    state.data.overview = result;
+
+    if (result.screens) {
+      /*
+        The server owns the defaults, and they are adopted exactly once —
+        by whichever of the stored payload and the fetched one arrives first.
+
+        Twice is a bug with a very specific shape: `applyUrlFilters` consumes
+        the query string on its first call and is a no-op afterwards, so a
+        second pass through here would assign the *defaults* over filters a deep
+        link had already set, with nothing left to re-apply them. Opening
+        `?v=records&p=year:2024` would show 2024 for three seconds and then
+        silently revert to the year to date.
+      */
+      if (!state.viewSettled) {
+        state.filters.analytics = result.screens.filters.analytics;
+        state.filters.records = result.screens.filters.records;
+      }
+
+      /*
+        Records is re-seeded whenever these rows still answer the question on
+        screen, which is what makes the fetched payload *replace* the stored one
+        rather than merely arrive behind it.
+
+        Compared rather than assumed, because the filters may have moved since
+        the stored copy was written — a URL that named its own, or defaults that
+        changed under a new `_config`. Rows for a slice nobody asked for would
+        be worse than none: `loaded` would go true and `loadScreenData` would
+        ask for nothing.
+      */
+      if (signature(currentFilters('records')) === signature(result.screens.filters.records)) {
+        state.records.rows = result.screens.records.rows;
+        state.records.pending = result.screens.records.pending || [];
+        state.records.offset = result.screens.records.rows.length;
+        state.records.hasMore = result.screens.records.hasMore;
+        state.records.total = result.screens.records.total;
+        state.records.loaded = true;
+      }
     }
+
+    if (!state.viewSettled) {
+      state.viewSettled = true;
+
+      // Last, over both sets of defaults, because the URL is the most specific
+      // thing anyone said about what this page is for. The seed above is for
+      // the server's defaults, so a URL that asked for anything else has just
+      // made those rows the answer to a different question — drop them, and let
+      // `loadScreenData` fetch the slice that was asked for.
+      if (applyUrlFilters() && state.screen === 'records') {
+        state.records = { rows: [], pending: [], offset: 0, hasMore: false,
+                          total: 0, loading: false, loaded: false };
+      }
+    }
+
+    if (!fromStorage) cacheWrite(function (held) { held.overview = result; });
+
+    render();
+    loadScreenData();
+  }
+
+  /**
+   * Draw what this phone was told last time, before asking anything.
+   *
+   * `applyOpen` and `applyOverview` rather than a second pair of appliers, so
+   * there is one description of what each payload means and a field added to
+   * either arrives on both paths. The `fromStorage` flag is the whole of the
+   * difference: it suppresses the write-back, which would otherwise store what
+   * was just read, and it leaves `state.fromCache` standing.
+   *
+   * `open` is required and `overview` is not — the first is what every screen
+   * is drawn from, and a payload without it is treated as absent. `cachedAt` is
+   * lifted out here rather than read off the store later, because the answers
+   * landing behind this will write the store and move a timestamp the screen is
+   * still using to describe something older.
+   */
+  function hydrate() {
+    var held = cacheRead();
+    if (!held || !held.open || !held.open.lists || !held.open.accounts) return false;
+
+    state.fromCache = true;
+    state.cachedAt = held.at || 0;
+
+    /*
+      The Charts and Records slices, into the same map a fetch fills and marked
+      as remembered rather than known.
+
+      Loaded here, all of them, rather than looked up when a screen asks: there
+      are at most `CACHE_SLICES_MAX` of them, they are already parsed, and the
+      alternative is a second read of the store on a path whose entire purpose
+      is to not wait for anything.
+
+      The mark is what stops `loadAnalytics` returning early on one of these and
+      leaving Charts on a total nobody has checked since last week — see
+      `drawnFromStorage`.
+    */
+    (held.slices || []).forEach(function (slice) {
+      if (!slice || !slice.screen || !slice.payload) return;
+
+      var key = slice.screen + ':' + slice.sig;
+      state.cache[key] = slice.payload;
+      state.hydrated[key] = true;
+    });
+
+    applyOpen(held.open, true);
+    if (held.overview) applyOverview(held.overview, true);
+    return true;
   }
 
   // Before the first `render()`, and not through `go()`: there is nothing to
@@ -564,55 +819,97 @@
   // once the lists it needs are here.
   state.screen = opened.screen;
 
-  var inline = inlinedBoot();
-  if (inline) {
-    applyOpen(inline.open);
-  } else {
-    call('appOpen').then(applyOpen).catch(fatal);
+  hydrate();
+
+  /*
+    Two calls, fired together, drawn as they land — and now fired whatever is
+    already on screen.
+
+    This was one call, and before that one call carrying Charts and Records
+    too — a boot that read the ledger three times for screens you might never
+    open. Removing the prefetch was right and it was not enough: the remaining
+    call still bundled the cheap half of the dashboard with the expensive one,
+    so net worth and the tiles waited ~1,600ms on a ledger they do not use.
+
+    In parallel, and that was settled by measuring rather than by reasoning.
+
+    They were briefly made sequential, on the theory that two executions
+    reading the same spreadsheet contend and the cheap call would not finish
+    first anyway. The evidence for it was "the whole screen arrives at once" —
+    observed on a deployment that turned out to predate the split entirely and
+    was making a single call. An inference drawn from a build that could not
+    have staged anything.
+
+    Measured against the live app, in one session, both orders back to back:
+
+        sequential ... first paint 3,206ms, everything 7,710ms
+        parallel ..... first paint 3,588ms, everything 3,916ms
+
+    They do not contend — `appOverview` came back *sooner* running alongside
+    `appOpen` (3,916ms) than after it (4,504ms). Sequential nearly doubles the
+    total and buys nothing.
+
+    The reason the two are so close is the finding under all of this: a
+    `google.script.run` round trip costs about **2,700ms before any of our
+    code runs** — `appOpen` does ~800ms of work on the server and takes
+    ~3,500ms from here, twice in a row, within 10ms of itself. Overlapping
+    that fixed cost is worth far more than removing server work from either
+    call.
+
+    **Unconditional, and that is what the hydration is worth.** A cached screen
+    that skipped the fetch would be a screen that is never right again, so what
+    the cache buys is not a call saved — it is the wait removed from in front of
+    the same two calls. `refreshing` is what says so on screen while they are
+    out; each lands, clears its own flag, and replaces what it drew from.
+  */
+  state.refreshing.open = true;
+  state.refreshing.overview = true;
+  renderRefreshing();
+
+  /**
+   * Clear a call's flag however it ends, and let the answer go on unchanged.
+   *
+   * The rejection arm rethrows rather than returning. Returning the error would
+   * make the rejected promise a *fulfilled* one carrying an `Error` as its
+   * value, so the `.then` below would run `applyOpen(error)` and the `.catch`
+   * behind it would never be reached — a refusal from the gate arriving as a
+   * dashboard drawn out of an exception.
+   */
+  function whileRefreshing(which, promise) {
+    var done = function (ok) {
+      state.refreshing[which] = false;
+      if (ok) state.landed[which] = true;
+
+      /*
+        The screen stops being cache-backed when both halves have been
+        **replaced**, which is not the same as both having finished.
+
+        Clearing this inside `applyOpen` and `applyOverview` was the obvious
+        place and it is wrong in both directions. `appOverview` landing first
+        would take the strip down while net worth and every balance were still
+        the stored ones; `appOpen` landing first would leave it up saying the
+        top of the screen is old, which by then it is not.
+
+        Counting a *failure* as a landing is the third way to get it wrong, and
+        the quietest: a call that dropped has replaced nothing, so the screen is
+        still the stored copy and has to go on saying so.
+      */
+      if (state.landed.open && state.landed.overview) state.fromCache = false;
+      renderRefreshing();
+    };
+
+    return promise.then(
+      function (value) { done(true); return value; },
+      function (error) { done(false); throw error; }
+    );
   }
 
-  function applyOverview(result) {
-    state.lists.labels = result.lists.labels;
-    state.lists.categories = result.lists.categories;
-    state.lists.periods = result.lists.periods;
-    state.data.overview = result;
-
-    // The first view of the other two screens, computed on the server from
-    // rows it already had. Seeded through the same cache a fetch would fill,
-    // and keyed on the server's own defaults — so `go()` finds them present
-    // and asks for nothing, and a filter change still fetches.
-    if (result.screens) {
-      // Both defaults, because the server owns them — but only Records comes
-      // with data. Charts costs ~800ms to precompute and is not opened every
-      // time; see the note on `screens` in 23_api.gs.
-      state.filters.analytics = result.screens.filters.analytics;
-      state.filters.records = result.screens.filters.records;
-
-      state.records.rows = result.screens.records.rows;
-      state.records.pending = result.screens.records.pending || [];
-      state.records.offset = result.screens.records.rows.length;
-      state.records.hasMore = result.screens.records.hasMore;
-      state.records.total = result.screens.records.total;
-      state.records.loaded = true;
-    }
-
-    // Last, over both sets of defaults, because the URL is the most specific
-    // thing anyone said about what this page is for. The prefetch above is for
-    // the server's defaults, so a URL that asked for anything else has just
-    // made those rows the answer to a different question — drop them, and let
-    // `loadScreenData` fetch the slice that was asked for.
-    if (applyUrlFilters() && state.screen === 'records') {
-      state.records = { rows: [], pending: [], offset: 0, hasMore: false,
-                        total: 0, loading: false, loaded: false };
-    }
-
-    render();
-    loadScreenData();
-  }
-
-  // The lower half is always fetched. It was briefly inlined too — see
-  // `appInlineBoot_`, which has the measurement that took it back out.
-  call('appOverview').then(applyOverview).catch(fatal);
+  // `callOrRetry`, like every other fetch on this page. These two were the only
+  // ones still on a bare `call`, which put the opening screen — the one request
+  // a phone makes with its radio still waking up — on the single path with no
+  // second attempt behind it.
+  whileRefreshing('open', callOrRetry('appOpen')).then(applyOpen).catch(openFailed);
+  whileRefreshing('overview', callOrRetry('appOverview')).then(applyOverview).catch(overviewFailed);
 
   // Bound once to the document, so it survives every `render()` — which wipes
   // `#screens` wholesale and would take any listener attached inside it.

@@ -70,7 +70,10 @@
     document.addEventListener('touchstart', function (event) {
       if (event.touches.length !== 1) return hide();
       if (window.scrollY > 0) return;
-      if (state.refreshing) return;
+      // `.pull` and not the object. This guard was `if (state.refreshing)` when
+      // that was a boolean this function owned; an object is always truthy, so
+      // the day it gained named slots the gesture stopped starting at all.
+      if (state.refreshing.pull) return;
 
       startY = event.touches[0].clientY;
       startX = event.touches[0].clientX;
@@ -103,10 +106,25 @@
       if (!pulling) return;
 
       var fired = distance >= PULL_THRESHOLD;
-      if (!fired) return hide();
 
-      show(PULL_THRESHOLD, 'Refreshing\u{2026}', true);
-      state.refreshing = true;
+      /*
+        The pill goes the moment you let go, whether or not it fired.
+
+        It is the affordance for the *drag* — it follows your finger and tells
+        you when you have gone far enough — and it has no business reporting on
+        a fetch. `#refresh` does that, the same strip the app opens with, so one
+        thing means "being brought up to date" everywhere on this page.
+
+        That also retires a timer that was a lie: the pill used to say
+        `Refreshing…` for a flat 900ms and then dismiss itself, having no way to
+        know what the call was doing. The strip is cleared by `loadDashboard`
+        when the answer actually lands.
+      */
+      hide();
+      if (!fired) return;
+
+      state.refreshing.pull = true;
+      renderRefreshing();
 
       // Everything, not just the dashboard: a pull is the gesture for "this is
       // stale", and refreshing only the screen behind the indicator would leave
@@ -114,15 +132,6 @@
       invalidate();
       loadDashboard(true);
       refreshCurrentScreen();
-
-      // Nothing here returns a promise the gesture can wait on — `loadDashboard`
-      // renders when it lands — so the indicator is dismissed on a timer rather
-      // than pretending to know. Long enough to be legible, short enough not to
-      // sit there after the screen has already redrawn beneath it.
-      setTimeout(function () {
-        state.refreshing = false;
-        hide();
-      }, 900);
     }, { passive: true });
 
     document.addEventListener('touchcancel', hide, { passive: true });

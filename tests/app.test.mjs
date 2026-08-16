@@ -2386,25 +2386,24 @@ describe('the ledger cache', () => {
  * of its `<script>` element, and the payload being absent in a way that leaves
  * a blank screen rather than a fetch.
  */
-describe('the first screen, inlined into the page', () => {
-  it('sends the shape appOpen would have, and only that', () => {
+describe('the first screen', () => {
+  it('is served with no data in it at all', () => {
+    /*
+      The document is the shell and nothing else, which is what lets it arrive
+      in ~2,400ms — measured against a `doGet` doing no work: 2,457/2,425/2,102ms
+      to `domcontentloaded`. What fills it is the page's own stored copy, drawn
+      before anything is asked for; see `hydrate` in `page.boot`.
+
+      The view is the exception and stays, because it is not data — it is what
+      *this URL* asked to see, and the alternative is reading the parent
+      location asynchronously and drawing the wrong filters first.
+    */
     const c = book([tx()]);
-    const inlined = JSON.parse(c.appInlineBoot_());
+    const html = c.webAppHtml_().getContent();
 
-    expect(Object.keys(inlined)).toEqual(['open']);
-    expect(Object.keys(inlined.open).sort()).toEqual(Object.keys(c.appOpen()).sort());
-  });
-
-  it('does not carry the lower half, however warm the ledger is', () => {
-    // It was inlined here too, gated on the ledger being cached. Measured on
-    // the live app the document went from ~3,400ms to 5,875/7,030/23,928ms —
-    // everything the overview does lands in front of the page, where there is
-    // nothing else to look at. Work belongs in `doGet` only if it is bounded
-    // and small, and only `appOpenData_` is.
-    const c = book([tx()]);
-    c.readLedger_();
-
-    expect(JSON.parse(c.appInlineBoot_()).overview).toBeUndefined();
+    expect(html).not.toContain('id="boot"');
+    expect(html).toContain('id="view"');
+    expect(html).not.toContain('<?!=');          // the scriptlets were evaluated
   });
 
   it('carries the first view of Records and Charts, keyed on the server defaults', () => {
@@ -2442,86 +2441,48 @@ describe('the first screen, inlined into the page', () => {
     expect(screens.filters.analytics).toBeDefined();   // the default still ships
   });
 
-  it('reads the ledger once for the whole inlined boot', () => {
-    // Both halves plus two prefetched screens, from rows fetched once. This is
-    // the premise the returned prefetch rests on — three reads is what got it
-    // removed the first time.
-    const c = book([tx()]);
-    c.readLedger_();
-    c.__resetReads();
+  it('is fetched in two calls, whatever the page already had', () => {
+    /*
+      The cache buys the *wait*, never the call. A hydrated screen that skipped
+      the fetch would be a screen that is never right again — so both round
+      trips are unconditional, and the stored copy stands in front of them
+      rather than instead of them.
 
-    c.appInlineBoot_();
-    expect(c.__reads('transactions')).toBe(0);
-  });
-
-  it('escapes every < so nothing can close the script element', () => {
-    // A merchant name containing the closing-tag sequence would end the element
-    // and put a description into the document as markup. Asserted on `<`
-    // rather than on `</script`, because the narrow guard is the one that
-    // misses — case, whitespace and slashes all have to be got right.
-    // An *account name*, because that is what this payload actually carries —
-    // it holds balances and lists, not descriptions. Testing the escaping on a
-    // field the payload never contains would have proved nothing.
-    const c = book([tx()]);
-    c.appendRows_(c.__spreadsheet.getSheetByName('accounts'), 1, [
-      c.toRow_(c.ACCOUNT_COLUMNS, {
-        account_id: 'a', name: 'ACME </script><script>x</script> LTD',
-        kind: 'cash', currency: 'EUR', balance: 5, active: true,
-        include_in_net_worth: true
-      })
-    ]);
-
-    const json = c.appInlineBoot_();
-    expect(json).toContain('ACME');
-
-    expect(json).not.toContain('<');
-    expect(json).toContain('\\u003c');
-    // Still valid JSON, because \u003c is a legal string escape — so the parse
-    // on the page is unchanged by the escaping.
-    expect(() => JSON.parse(json)).not.toThrow();
-  });
-
-  it('falls back to a fetch rather than failing the page', () => {
-    // This runs inside doGet, where a throw is a blank page for the only
-    // person allowed to open it. A dashboard that loads slowly beats one that
-    // does not load.
-    const c = book([tx()]);
-    c.SpreadsheetApp.getActiveSpreadsheet = () => { throw new Error('sheets is down'); };
-
-    expect(c.appInlineBoot_()).toBe('null');
-  });
-
-  it('is written into the served page, not just computed', () => {
-    const c = book([tx()]);
-    const html = c.webAppHtml_().getContent();
-
-    expect(html).toContain('id="boot"');
-    expect(html).not.toContain('<?!=');          // the scriptlet was evaluated
-    expect(html).toContain('"netWorth"');
-    expect(html).toContain('"open"');
-  });
-
-  it('serves a page that still boots when 23 is missing', () => {
-    // `appInlineBoot_` is in 23, which is above 20, so it is called through
-    // `functionExists_`. A checkout without it must still serve a page that
-    // fetches — which is what this did before inlining existed.
-    const c = book([tx()]);
-    c.appInlineBoot_ = undefined;
-
-    const html = c.webAppHtml_().getContent();
-    expect(html).toContain('id="boot"');
-    expect(html).toContain("call('appOpen')");
-  });
-
-  it('keeps the page able to fetch the first screen for itself', () => {
-    // The inline path is an optimisation, not a replacement. If the page ever
-    // stops being able to fetch `appOpen`, a payload that fails to parse is a
-    // blank dashboard with no way back.
+      Asserted as text because the page is invisible to the harness. What that
+      can prove is that the two calls are still issued and are not sitting
+      behind a condition, which is the shape this mistake would take.
+    */
     const page = pageSource();
 
-    expect(page).toContain("call('appOpen')");
-    expect(page).toContain("call('appOverview')");
-    expect(page).toContain('function inlinedBoot()');
+    expect(page).toContain("whileRefreshing('open', callOrRetry('appOpen'))");
+    expect(page).toContain("whileRefreshing('overview', callOrRetry('appOverview'))");
+  });
+
+  it('draws what it already holds before it asks for anything', () => {
+    const page = pageSource();
+
+    expect(page).toContain('function hydrate()');
+    expect(page).toContain('cacheRead()');
+    // The write-back, without which the first open is the only fast one.
+    expect(page).toContain('cacheWrite(');
+  });
+
+  it('discards a stored copy whose shape it does not recognise', () => {
+    // A deploy that renames a field would otherwise hydrate a screen out of a
+    // shape this code cannot read, from a store nobody holding the phone can
+    // clear. The version is checked on the way in and a mismatch drops the
+    // whole thing rather than merging what still fits.
+    expect(pageSource()).toMatch(/held\.v !== CACHE_SHAPE/);
+  });
+
+  it('forgets the stored copy when the owner gate refuses', () => {
+    // What is stored belongs to whoever was signed in when it was written.
+    // Left alone it would paint their balances again on the next reload, ahead
+    // of the refusal that is the entire point of the gate.
+    const failed = pageSource().match(/function openFailed\(error\) \{[\s\S]*?\n  \}/);
+
+    expect(failed, 'page.boot no longer declares openFailed').not.toBeNull();
+    expect(failed[0]).toContain('cacheForget()');
   });
 
   /*

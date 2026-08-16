@@ -181,7 +181,7 @@ describe('the browser tab icon', () => {
     // blank screen for the only person allowed to open it.
     const page = withFavicon('nonsense').webAppHtml_();
     expect(page.getTitle()).toBe('Spendsheet');
-    expect(page.getContent()).toContain('id="boot"');
+    expect(page.getContent()).toContain('id="view"');
   });
 });
 

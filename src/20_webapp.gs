@@ -186,11 +186,18 @@ function webAppRoute_(params) {
  *
  * The app renders inside Apps Script's sandboxed iframe, so nothing it does to
  * its *own* location survives anything — a refresh reloads the top-level
- * `/exec` document and the iframe is rebuilt from nothing. `sessionStorage` in
- * that frame is a Google origin the app does not own, and a `_config` cell
+ * `/exec` document and the iframe is rebuilt from nothing. A `_config` cell
  * would make one book's phone dictate what the other one opens on. The query
  * string on the **parent** URL is the one piece of state that crosses the
  * boundary, and it is also the one a person can bookmark, edit and send.
+ *
+ * **This is not an argument that the frame cannot store anything**, and the
+ * distinction is worth keeping straight now that `page.core`'s cache does store
+ * there. Measured on the live platform: the sandbox origin is stable across
+ * loads and `localStorage` survives the app being quit, so a private copy of an
+ * answer keeps perfectly well. What it cannot be is *this* — a view is a thing
+ * you bookmark, edit and send to yourself, and storage has none of those
+ * properties. The URL was chosen for what it is, not for what storage lacked.
  *
  * So the round trip is: change a filter, the page writes
  * `…/exec?v=records&p=year:2024&a=Revolut` through `google.script.history`,
@@ -495,39 +502,29 @@ function seedWebAppOwner_(ss) {
  * project has already learned that the narrow guard is the one that misses.
  * Every `<` costs a few bytes and cannot be wrong.
  *
- * It lives here rather than beside `appInlineBoot_`, which was its first
- * caller, because the second caller is `webAppHtml_` a few lines below and one
- * escaper with two callers beats two escapers — see the note left in 23.
+ * It lives beside `webAppHtml_`, the caller a few lines below, in the file that
+ * owns the page it is escaping for.
  */
 function htmlSafeJson_(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
 /**
- * The page itself, from `src/page.html`, with the first screen already in it.
+ * The page itself, from `src/page.html`, with the view this URL asked for in it.
  *
- * **This was deliberately a static file, and the reasoning has been overtaken
- * by a measurement.** The argument was that everything arrives through
- * `google.script.run` anyway, so there is nothing to interpolate and therefore
- * nothing that can be interpolated wrong — a good trade when interpolation buys
- * nothing. It buys about two seconds.
+ * **Exactly one value is interpolated, and it is the one that cannot arrive any
+ * other way.** Everything the app draws comes through `google.script.run`; which
+ * screen and which filters this URL names does not, because the alternative —
+ * `google.script.url.getLocation` — reads the parent URL from inside the iframe
+ * and does it asynchronously, so the page would draw the dashboard on last
+ * month's filters before learning what it was meant to be showing. The document
+ * already knows the answer. See `webAppView_`.
  *
- * A `google.script.run` call costs ~2,700ms of Apps Script startup before any
- * of our code runs; this function is already inside an execution that has paid
- * that. So the dashboard's first screen is templated into the document and
- * draws as the page parses, with no round trip at all.
- *
- * The escaping boundary that worried the original note is real and it is
- * exactly one line — `htmlSafeJson_`, which lives next to the data rather than
- * here. The payload goes into a `<script type="application/json">` element, so
- * it is never executed and never parsed as markup; the only way out of that
- * element is a literal `<`, and every one of them is escaped.
- *
- * **`appInlineBoot_` is in `23_api.gs`, which is above this file**, and the
- * numbering says nothing lower may depend on anything higher. It is called
- * through `functionExists_` for that reason: the dependency is real — a page
- * server that inlines data needs the data — and a partial checkout without 23
- * still serves a page that fetches, which is what it did before.
+ * The escaping boundary that comes with interpolating anything at all is real
+ * and it is exactly one line — `htmlSafeJson_`, a few lines above. The value
+ * goes into a `<script type="application/json">` element, so it is never
+ * executed and never parsed as markup; the only way out of that element is a
+ * literal `<`, and every one of them is escaped.
  *
  * `viewport` is what makes a phone lay the page out at its own width instead
  * of pretending to be a 980px desktop and zooming out. Apps Script strips the
@@ -598,21 +595,11 @@ function include_(name) {
 
 function webAppHtml_(parameters) {
   var template = HtmlService.createTemplateFromFile('page');
-  template.boot = functionExists_('appInlineBoot_') ? appInlineBoot_() : 'null';
 
-  /*
-    Which screen to open on and with what filters, decided here rather than by
-    the page.
-
-    The alternative was `google.script.url.getLocation`, which reads the parent
-    URL from inside the iframe — and does it asynchronously, so the page would
-    have drawn the dashboard on last month's filters before learning what it
-    was meant to be showing. A visible flip on every refresh, to avoid a value
-    the document already knows.
-
-    Unlike `boot` this is never skipped: a deep link has to survive the inline
-    dashboard failing, and it costs a parse of the query string.
-  */
+  // Which screen to open on and with what filters — see the header, and
+  // `webAppView_` for what the query string is allowed to say. Never skipped:
+  // it costs a parse of the query string, and a deep link that arrives on the
+  // dashboard is a deep link that did not work.
   template.view = htmlSafeJson_(webAppView_(parameters));
 
   var page = template.evaluate()

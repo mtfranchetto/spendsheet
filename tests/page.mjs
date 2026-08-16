@@ -3,8 +3,8 @@
  *
  * `src/page.html` is a *template*: `webAppHtml_` runs it through
  * `HtmlService.createTemplateFromFile`, which resolves two kinds of scriptlet —
- * the `boot` and `view` payloads, and `include_('page.x')` for each partial the
- * page is split across. None of that happens in a file test, which is why
+ * the `view` payload, and `include_('page.x')` for each partial the page is
+ * split across. None of that happens in a file test, which is why
  * `page.html` has been described here as the one file the harness cannot load.
  *
  * It can load it. What it could not do is *evaluate* it, and that is a
@@ -37,15 +37,15 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 /** `<?!= include_('page.core') ?>`, in both quote styles and any spacing. */
 const INCLUDE = /<\?!?=\s*include_\(\s*['"]([\w.-]+)['"]\s*\)\s*;?\s*\?>/g;
 
-/** `<?!= boot ?>` — a bare name, which is the only other scriptlet shape here. */
+/** `<?!= view ?>` — a bare name, which is the only other scriptlet shape here. */
 const VARIABLE = /<\?!?=\s*([A-Za-z_$][\w$]*)\s*\?>/g;
 
 /**
  * The document `webAppHtml_` would build, as a string.
  *
- * `values` fills the bare scriptlets — `{boot, view}` — and anything absent
- * becomes `null`, which is what the server itself sends when it could not build
- * the payload, and a case the page is required to survive.
+ * `values` fills the bare scriptlets — `{view}` — and anything absent becomes
+ * `null`, which is what the server itself sends when it could not build the
+ * payload, and a case the page is required to survive.
  *
  * Includes resolve recursively, so a partial may include another. Depth is
  * bounded rather than trusted: a file including itself is a stack overflow with
@@ -113,15 +113,13 @@ export function pageScript(values = {}) {
  */
 export function previewPage(answers, options = {}) {
   const latency = options.latency === undefined ? 60 : options.latency;
-  const boot = answers.__boot === undefined ? 'null' : answers.__boot;
   const view = answers.__view === undefined ? 'null' : answers.__view;
 
   const table = { ...answers };
-  delete table.__boot;
   delete table.__view;
 
   return viewportTag() + '\n' +
-    pageSource({ boot, view }).replace('<script>', shim(table, latency) + '\n<script>');
+    pageSource({ view }).replace('<script>', shim(table, latency) + '\n<script>');
 }
 
 /**
@@ -170,6 +168,22 @@ window.__calls = [];
 window.__answered = [];
 window.__answers = ${data};
 window.__latency = ${latency};
+
+// A call that fails with a *chosen* message, keyed by name.
+//
+// Withholding an answer already produces a failure, and it produces exactly one
+// wording — which the page reads, because isTransportFailure is the only thing
+// separating "the gate refused you" from "the radio dropped", and the two want
+// opposite handling. A test that cannot choose the wording cannot reach the
+// second case at all.
+//
+// Kept if it is already there, so a test can seed it before this script runs.
+// The three lines above cannot do the same, because a test wants the shipped
+// values by default; this one defaults to empty either way.
+//
+// And no backtick in any of that, for the reason stated further down: this is
+// inside the template literal that builds the tag.
+window.__failures = window.__failures || {};
 window.google = { script: { run: (function () {
   var handlers = {};
 
@@ -244,8 +258,10 @@ window.google = { script: { run: (function () {
         var known = Object.prototype.hasOwnProperty.call(window.__answers, name);
         var answer = known ? JSON.stringify(window.__answers[name]) : null;
         var wait = typeof window.__latency === 'number' ? window.__latency : ${latency};
+        var forced = window.__failures[name];
 
         setTimeout(function () {
+          if (forced) return fail && fail(new Error(forced));
           if (!known) return fail && fail(new Error('no canned answer for ' + name));
           ok && ok(JSON.parse(answer));
           window.__answered.push(name);

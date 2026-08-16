@@ -116,6 +116,77 @@
     // Keyed by the filter signature, so going back to a slice you have already
     // looked at is instant and costs no request.
     cache: {},
+
+    /*
+      Which entries in `cache` came out of `localStorage` rather than off the
+      server this session, keyed the same way.
+
+      The distinction is the whole of `drawnFromStorage` and it is not
+      cosmetic. An entry fetched this session is *the* answer and re-asking for
+      it would be a round trip for a value already held — which is why
+      `loadAnalytics` returns early on a hit. An entry hydrated from storage is
+      last week's answer wearing the same shape, and returning early on one of
+      those would mean Charts drew a stale total and never once asked whether it
+      was still true. Same object, same key, opposite correct behaviour.
+
+      An entry is dropped from here the moment a real answer replaces it, so a
+      slice is revalidated once per session and is free thereafter.
+    */
+    hydrated: {},
+
+    /*
+      What is on screen came out of storage and has not been confirmed yet.
+
+      `cachedAt` is read once at hydration rather than off the store, because
+      every landing answer writes the store and would move a timestamp the
+      screen is still using to describe something older.
+    */
+    fromCache: false,
+    cachedAt: 0,
+
+    /*
+      The owner gate said no, and nothing may land after it.
+
+      `appOpen` carries the verdict and `appOverview` is out alongside it, so an
+      answer that was already on its way arrives *after* the refusal — and both
+      applying it and storing it undo what the refusal is for. See `openFailed`.
+    */
+    refused: false,
+
+    /*
+      Whether the server's default filters have been adopted and the URL applied
+      over them.
+
+      Once, by whichever of the stored payload and the fetched one gets here
+      first. `applyUrlFilters` consumes the query string on its first call, so a
+      second pass that re-assigned the defaults would have nothing left to put a
+      deep link's filters back with — see the note in `applyOverview`.
+    */
+    viewSettled: false,
+
+    /*
+      What is being re-read right now, and by whom.
+
+      **Named slots rather than a single flag, and that is not tidiness.** This
+      was a boolean owned by `installPullToRefresh`, and the opening calls
+      turned it into an object — which is *always truthy*, so the gesture's own
+      `if (state.refreshing) return;` guard returned on every touch and
+      pull-to-refresh was silently dead. Nothing failed and nothing was logged;
+      it simply stopped happening. Same family as two functions sharing a name
+      in one global scope, and the same lesson: a shared name in a shared object
+      is a shared name.
+
+      `open` and `overview` are the two calls the boot fires. `pull` is the
+      gesture, and it is a third slot rather than a reuse of either, because
+      what the strip says differs — a pull happens over a screen that is already
+      live, where the opening calls happen over one drawn from storage.
+    */
+    refreshing: { open: false, overview: false, pull: false },
+
+    // Which opening calls came back with an *answer*, as against merely coming
+    // back. `fromCache` is cleared when both have replaced what they drew over,
+    // and a call that failed has replaced nothing.
+    landed: { open: false, overview: false },
     // `loaded` rather than counting rows. Records is fetched on first
     // navigation now that the bootstrap no longer prefetches it, and a filter
     // that legitimately matches nothing would otherwise look exactly like a
@@ -205,10 +276,183 @@
     return parts.length > 2 ? Number(parts[2]) + ' ' + month : month + ' ' + parts[0];
   }
 
+  /**
+   * How long ago, in the least precise words that are still true.
+   *
+   * The point of this string is to be *doubted* — it sits beside numbers that
+   * have not been confirmed yet, and its job is to stop someone reading a
+   * month-to-date total as today's. So the wording rounds outward and never
+   * offers a precision it has not got: "2 hours ago" invites a second look in a
+   * way that "14:07" does not, and the sharp case is opening the app on the 1st
+   * of a month, where every figure is captioned with last month's word for it
+   * and only the age says so.
+   */
+  function agoWords(at) {
+    var seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+    if (seconds < 90) return 'a moment ago';
+
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + ' min ago';
+
+    var hours = Math.round(minutes / 60);
+    if (hours < 24) return hours === 1 ? 'an hour ago' : hours + ' hours ago';
+
+    var days = Math.round(hours / 24);
+    return days === 1 ? 'yesterday' : days + ' days ago';
+  }
+
   function toast(message) {
     var node = document.getElementById('toast');
     node.textContent = message;
     node.hidden = false;
     clearTimeout(toast.timer);
     toast.timer = setTimeout(function () { node.hidden = true; }, 4000);
+  }
+
+  // -------------------------------------------------------------------------
+  // What this phone already knows
+  // -------------------------------------------------------------------------
+
+  /*
+    The last answers the server gave, kept so the next open can draw before it
+    asks anything.
+
+    ## Why this is worth having at all
+
+    Opening the app is ~6.5s and almost none of it is this project. The `/exec`
+    document is ~2,400ms of Apps Script container spin-up before a line of page
+    code runs, and every `google.script.run` call adds ~2,700ms of fixed
+    overhead on top of whatever the server actually does. There is no round trip
+    left to remove — what is left is to stop *waiting* for them.
+
+    ## Why storing it here works, which is not obvious
+
+    The app renders in Apps Script's sandboxed iframe, on a
+    `…-script.googleusercontent.com` origin this project does not own, and the
+    reasonable assumption is that nothing written there survives. Measured on
+    the live platform, in WebKit with an iPhone descriptor and a persistent
+    profile, across three separate browser processes: the origin came back
+    **identical** every time, and a value written by the first process was read
+    back by the second and the third. So it keeps.
+
+    What that measurement cannot settle is iOS Safari, where this is
+    *third-party storage in a cross-site iframe* and therefore exactly what ITP
+    targets. Which is why every access below is wrapped: a refusal, a quota
+    error, a partitioned bucket and a value someone cleared are all the same
+    answer — **no cache**, and the app behaves as it did before this existed.
+    There is no failure here worth reporting to anyone, because the fallback is
+    a working app.
+
+    ## Why the version, and why a mismatch discards
+
+    A deploy that renames a field in one of these payloads would otherwise
+    hydrate a screen out of a shape the current code cannot read, from a store
+    the person holding the phone has no way to clear. `CACHE_SHAPE` is bumped
+    whenever a cached payload's shape changes, and a mismatch drops the whole
+    thing rather than merging what still fits — a half-recognised payload is the
+    one outcome worse than an empty one.
+  */
+  var CACHE_KEY = 'spendsheet';
+  var CACHE_SHAPE = 1;
+
+  /*
+    How many Charts and Records slices are kept between them.
+
+    Not about the 5MB quota, which none of this comes close to. Two other costs
+    bound it. Nothing bounds the number of distinct filter signatures a person
+    can produce — every period against every account against every label — and
+    an unbounded list in a store with no eviction of its own eventually fails a
+    write, which under the wrapping above silently means no cache at all. And
+    `cacheWrite` is a read-modify-write of the *whole* store, so every slice
+    kept is a slice parsed and re-serialised on every screen that lands: a
+    Records page is ~33KB, and this is deliberately small enough that the round
+    trip stays a few milliseconds beside a ~2,700ms call.
+
+    Shared between the two screens rather than a cap each, so what survives is
+    what was looked at most recently — which is the only ranking either of them
+    has an opinion about.
+  */
+  var CACHE_SLICES_MAX = 8;
+
+  /**
+   * Everything stored, or null if there is nothing usable.
+   *
+   * Null covers every way this can go wrong on purpose. A caller that wants to
+   * know *why* there is no cache does not exist and should not: the answer is
+   * the same in all of them.
+   */
+  function cacheRead() {
+    try {
+      var raw = window.localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+
+      var held = JSON.parse(raw);
+      if (!held || held.v !== CACHE_SHAPE) return null;
+      return held;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Change what is stored, through a function that is handed the whole of it.
+   *
+   * Read-modify-write rather than a setter per field, because the two halves of
+   * the first screen land independently and a write of one must not drop the
+   * other. `at` is stamped here, so there is exactly one place a stored payload
+   * gets its age.
+   *
+   * **`at` is this browser's clock and deliberately not `generatedAt`.** That
+   * field is a day key meaning "today, on the server" — `page.add` fills the
+   * date input from it and `page.records` compares against it to write "Today".
+   * Reusing it for freshness would give both of those a millisecond timestamp
+   * and produce a cash form defaulting to a date nothing can parse.
+   */
+  function cacheWrite(change) {
+    try {
+      var held = cacheRead() || { v: CACHE_SHAPE, slices: [] };
+      change(held);
+      held.v = CACHE_SHAPE;
+      held.at = Date.now();
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify(held));
+    } catch (e) {
+      // No cache. See the note above: this is a state, not a failure.
+    }
+  }
+
+  /**
+   * Forget everything.
+   *
+   * One caller that matters — the owner gate refusing. What is stored then
+   * belongs to whoever was signed in when it was written, and leaving it would
+   * paint their balances again on the next reload, before the refusal that is
+   * the whole point of the gate had a chance to arrive.
+   */
+  function cacheForget() {
+    try {
+      window.localStorage.removeItem(CACHE_KEY);
+    } catch (e) {
+      // Nothing to do and nobody to tell.
+    }
+  }
+
+  /**
+   * Keep one screen's payload for one set of filters, most-recent-first.
+   *
+   * A list rather than an object keyed by signature, because the cap needs an
+   * order and object key order is a property of the engine rather than of the
+   * data. Most-recent-first also makes the eviction the same line as the insert.
+   *
+   * Nothing reads a single slice back out: `hydrate` takes them all at once, so
+   * a lookup here would be a second parse of the store on the one path whose
+   * whole purpose is to not wait for anything.
+   */
+  function cacheKeepSlice(screen, sig, payload) {
+    cacheWrite(function (held) {
+      var slices = (held.slices || []).filter(function (slice) {
+        return !(slice.screen === screen && slice.sig === sig);
+      });
+      slices.unshift({ screen: screen, sig: sig, payload: payload });
+      held.slices = slices.slice(0, CACHE_SLICES_MAX);
+    });
   }

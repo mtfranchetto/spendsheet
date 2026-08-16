@@ -592,6 +592,47 @@
   #toast[hidden] { display: none; }
 
   /*
+    "The numbers you are looking at are the last ones I was given."
+
+    **Sticky rather than fixed, which is the opposite of `#toast` and `#pull`.**
+    Those appear over content you are already reading, briefly, in the middle of
+    the screen's life. This one is up for the first few seconds of *every* open,
+    and the thing directly beneath it is the top of the screen — fixed, it sat
+    across the `Spendsheet` heading and cut it in half. In the flow it pushes
+    the screen down by its own height while it has something to say and takes no
+    space at all when it does not, since `hidden` is `display: none`.
+
+    The one-off upward shift when it goes is the price, and it is the right way
+    round: the alternative is reserving the space on every screen for a strip
+    that is absent from almost all of them.
+
+    Top rather than bottom, because the bottom is `#toast`'s and the two are
+    live at the same moment often enough to matter: a confirmation toast during
+    the refresh that follows it.
+
+    The dot is `.spinner`'s ring at a size that suits one line of text, rather
+    than `.spinner` itself — that class carries a `45vh` minimum height meant
+    for a screen with nothing on it yet, which is the opposite of this case.
+  */
+  #refresh {
+    position: sticky; top: 0;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: calc(6px + env(safe-area-inset-top, 0px)) 12px 6px;
+    background: var(--bg); color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    font-size: 12px; pointer-events: none; z-index: 16;
+  }
+  #refresh[hidden] { display: none; }
+  #refresh::before {
+    content: ''; width: 12px; height: 12px; flex: none; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin .7s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #refresh::before { animation: pulse 1.4s ease-in-out infinite; }
+  }
+
+  /*
     Pull to refresh.
 
     Fixed rather than in the flow, so nothing below it moves while you drag —
