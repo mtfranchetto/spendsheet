@@ -167,3 +167,17 @@ A browser test is worth writing when it can go red. Break the thing on purpose a
 ## Never
 
 Commit a `.pem`, a `.clasp.json`, or any CSV or export. `.gitignore` covers them; `git add -f` doesn't care. The repo is intended to go public.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues on `mtfranchetto/spendsheet`, via the `gh` CLI — and an issue is as public as the repo, so the "Never" rule above applies to issue bodies too. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name; only `wontfix` exists on the repo so far. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` and one `docs/adr/` at the root, both created lazily and neither present yet. See `docs/agents/domain.md`.
