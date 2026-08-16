@@ -3,8 +3,8 @@
  *
  * `src/page.html` is a *template*: `webAppHtml_` runs it through
  * `HtmlService.createTemplateFromFile`, which resolves two kinds of scriptlet —
- * the `boot` and `view` payloads, and `include_('page.x')` for each partial the
- * page is split across. None of that happens in a file test, which is why
+ * the `view` payload, and `include_('page.x')` for each partial the page is
+ * split across. None of that happens in a file test, which is why
  * `page.html` has been described here as the one file the harness cannot load.
  *
  * It can load it. What it could not do is *evaluate* it, and that is a
