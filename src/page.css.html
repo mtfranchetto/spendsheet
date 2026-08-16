@@ -196,8 +196,18 @@
   button { cursor: pointer; }
   button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent);
                    font-weight: 600; width: 100%; }
+  /* `text-align: left` because a button centres its text and every one of these
+     is a label you read from the left — "← Home", "See all 12 in Records",
+     "+ Add transaction". While the label fits on one line the box shrinks to it
+     and the centring is invisible, which is why this was missing for as long as
+     it was: the alignment looked correct and was only ever an accident of the
+     label being narrower than its container. Give the box a width the text does
+     not fill — a label that wraps, `align-self: flex-start` inside a tile 27px
+     narrower than the one it was authored against — and the lines centre inside
+     it, several pixels right of the amount above them. State the alignment
+     rather than depending on the measurement. */
   button.link { background: none; border: none; color: var(--accent); padding: 8px 0;
-                min-height: auto; }
+                min-height: auto; text-align: left; }
   /* Delete, on the one row kind that has one — see `deleteControl`. Set off by a
      rule rather than by colour alone, because it sits below controls that save
      and is the only thing on the sheet that destroys anything. Outlined until
