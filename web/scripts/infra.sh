@@ -27,9 +27,39 @@
 #      is the entire grant — there is no scope, no consent screen, and nothing
 #      in this file can perform it.
 #
-# Run it twice: every step is written to be safe to repeat.
+# ## Two steps are NOT safe to repeat, and that is a wart rather than a design
+#
+# Enabling the API, creating the service account and creating the Pages project
+# all no-op on a second run. Two things do not:
+#
+#   **A new key is minted every run and the old one is never deleted.** Old keys
+#   stay valid indefinitely, so re-running accumulates live credentials to the
+#   spreadsheet — and Google caps a service account at ten, so the eleventh run
+#   fails outright.
+#
+#   **SESSION_SECRET is regenerated every run**, which signs out every device.
+#
+# Both should be behind explicit flags (`--new-key`, `--rotate-secret`) rather
+# than happening as a side effect of re-running setup. Until they are: run this
+# once, and reach for the individual `gcloud` and `wrangler` commands after.
 
 set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export TOOLS_WEB_DIR="$(cd "$HERE/.." && pwd)"
+
+# Preflight, and the reason `lib/tools.sh` exists at all. Everything below
+# creates something — a service account, a key, a Pages project — so finding
+# out half way through that `gcloud` is missing leaves real resources behind
+# and a script that cannot simply be re-run over them. Ask first.
+#
+# shellcheck source=lib/tools.sh
+. "$HERE/lib/tools.sh"
+
+if ! tools_check >/dev/null 2>&1; then
+  echo "This machine is not ready. Run:  ./scripts/tools.sh" >&2
+  exit 1
+fi
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID to your Google Cloud project}"
 SPREADSHEET_ID="${SPREADSHEET_ID:?set SPREADSHEET_ID to the id of the book}"

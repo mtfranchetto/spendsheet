@@ -39,7 +39,9 @@ datastore.
 | `functions/lib/google-identity.ts` | verifying Google's ID token against its JWKS. |
 | `functions/lib/service-account.ts` | the credential that reaches the Sheet. `01_jwt.gs` in WebCrypto. |
 | `functions/api/[[path]].ts` | the only file that knows it is on Cloudflare. Five lines. |
-| `scripts/infra.sh` | accounts and secrets. Idempotent. |
+| `scripts/tools.sh` | is this machine ready, and make it ready. |
+| `scripts/lib/tools.sh` | the table of what "ready" means, sourced by both. |
+| `scripts/infra.sh` | accounts and secrets. |
 
 ## Two deviations from the approved plan
 
@@ -57,6 +59,28 @@ same place, an ID token through `verifyIdToken`. See `functions/lib/oauth.ts`.
 
 **`infra.sh` is under `web/`, not in the repo's `scripts/`,** where the standing
 rule is that every script keeps a test beside it.
+
+## Setting a machine up
+
+```sh
+npm run tools            # what is present, what is missing, what needs signing in
+npm run tools:install    # install whatever is missing
+```
+
+`tools.sh` changes nothing in check mode and exits non-zero if a required tool
+is absent, which is why `infra.sh` runs it first: everything that script does
+*creates* something, so discovering a missing `gcloud` half way through leaves a
+real service account behind and a script that cannot simply be re-run over it.
+
+It will not install Homebrew — that means piping a script off the internet into
+a shell, and there is no reason that becomes acceptable because it is
+convenient. It also never signs you in; `gcloud auth login` and
+`wrangler login` want a browser and a human. It reports which of them still do.
+
+Watch for one trap it now handles: **`wrangler whoami` exits 0 while telling you
+it is not authenticated**, so the check looks for an Account ID in the output
+rather than trusting the exit code. It is biased towards a false "sign in" over
+a false "ok", because the second one fails in the middle of `infra.sh`.
 
 ## Running it
 
