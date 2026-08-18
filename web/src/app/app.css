@@ -1,0 +1,116 @@
+/*
+  Phase 1's stylesheet. Deliberately small — the real one arrives in phase 3
+  when `page.css.html` is ported, and anything invented here would be thrown
+  away or, worse, quietly kept.
+
+  Two things are not placeholder, because they are the documented traps:
+
+  `-webkit-appearance: none` on any control the phone renders natively. An
+  `input[type="date"]` on iOS Safari sizes to its own content while the native
+  appearance is on and ignores `width` entirely — honoured by every desktop
+  browser and silently dropped by the only device this is for, which put half
+  a field off the right edge. No date input exists yet; the rule is here so
+  that when one arrives it is already covered.
+
+  `overflow-x: clip` and `overscroll-behavior: none` on `html`. Anything wider
+  than the phone makes the view slide sideways and show white — and the white
+  is the wrapper page behind the document, which the document cannot paint.
+  That specific cause is gone with Apps Script's iframe, but a document wider
+  than its viewport is still a document that slides.
+*/
+
+html {
+  overflow-x: clip;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+:root {
+  --ground: #ffffff;
+  --ink: #111417;
+  --muted: #5c6672;
+  --line: #e2e6ea;
+  --accent: #16624c;
+  --notice: #8a4b12;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #101315;
+    --ink: #e8edf0;
+    --muted: #93a0aa;
+    --line: #242b30;
+    --accent: #5cc4a3;
+    --notice: #d79a58;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* The safe areas, because `viewport-fit=cover` means the notch is ours now. */
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 24px;
+}
+
+section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+button {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--accent);
+  color: var(--ground);
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font: inherit;
+  font-weight: 600;
+
+  /* 44px is Apple's own minimum touch target, and a sign-in button that is
+     hard to hit is the first thing anyone touches. */
+  min-height: 44px;
+}
+
+input,
+select,
+textarea {
+  -webkit-appearance: none;
+  appearance: none;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.notice {
+  color: var(--notice);
+  border-left: 3px solid var(--notice);
+  padding-left: 12px;
+}
+
+footer {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+footer p {
+  margin: 4px 0;
+  word-break: break-word;
+}
