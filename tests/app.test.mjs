@@ -150,82 +150,203 @@ describe('the gate on every entry point', () => {
   });
 });
 
-describe('the gate on every function the Sheet reaches', () => {
+
+describe('the gate on every public function in the project', () => {
   // `23_api.gs` is not the whole browser-reachable surface, and treating it as
   // one is the hole this block exists to keep shut. `google.script.run` can call
   // *any* global whose name lacks a trailing `_`, and Door 1 — the consent
   // redirect — is served to anyone by necessity, bridge and all. So a stranger
-  // who loads that URL can call a menu handler or a diagnostic and it runs with
-  // the owner's authority: that is how the ungated `ebGet*` wrappers returned
-  // balances and `saveCredentials` overwrote the PEM to an anonymous caller.
+  // who loads that URL can call any public function, and it runs with the
+  // owner's authority. That is how the ungated `ebGet*` wrappers once returned
+  // balances and `saveCredentials` overwrote the PEM, and how `syncAll` could
+  // spend the bank's daily allowance with nobody at the keyboard.
   //
-  // The rule is derived, not remembered, exactly as the `23_api.gs` block above
-  // derives its list by reading the file. The set that must be gated is every
-  // function the *menu* names and every function a *dialog* calls back into —
-  // read out of `19_menu.gs` and the `google.script.run` calls in `src/*.gs`, so
-  // a menu item added later drags its handler into this test whether or not
-  // anyone remembered to gate it.
+  // So the rule covers every public function rather than a list of them. Each
+  // one must do one of three things:
+  //
+  //   - gate on its first statement (`requireInteractive_`, `requireOwner_` or
+  //     `requireScheduled_`);
+  //   - be an entry point Google reserves by name (`doGet`, `onOpen`, `onEdit`);
+  //   - reach no Google service at all, **transitively**.
+  //
+  // "Transitively" is the point. `syncScheduled` touched nothing itself and
+  // handed straight to a sync. The walk follows every name a body mentions,
+  // strings included, since `functionExists_` and the menu call by string. It
+  // stops at a function that gates, because nothing past that gate runs for a
+  // stranger. Over-approximating the call graph errs toward flagging, which is
+  // the safe direction.
+  //
+  // Break it on purpose to see it work: drop the `_` from `syncAll_` and this
+  // goes red, naming the path to `LockService`.
 
-  const gs = readdirSync(SRC).filter((f) => f.endsWith('.gs'));
-  const text = Object.fromEntries(gs.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
+  const gs = readdirSync(SRC).filter((f) => f.endsWith('.gs')).sort();
 
-  /** name -> the function body, for every non-`_` global across `src/*.gs`. */
-  const bodies = {};
-  gs.forEach((f) => {
-    const src = text[f];
-    for (const m of src.matchAll(/^function\s+([A-Za-z0-9]+)\s*\(/gm)) {
-      const name = m[1];
-      if (name.endsWith('_')) continue;
-      const from = m.index;
-      const next = src.indexOf('\nfunction ', from + 1);
-      bodies[name] = src.slice(from, next === -1 ? undefined : next);
+  /**
+   * The source with comments blanked, twice over. `code` keeps string and
+   * regex contents, because a function named in a string is still called.
+   * `shape` blanks those too, so a `'{'` in a string cannot unbalance the brace
+   * count. Both keep every offset, so a span found in one reads out of the other.
+   */
+  function scan(src) {
+    const code = src.split('');
+    const shape = src.split('');
+    const blank = (from, to, both) => {
+      for (let k = from; k < to; k++) {
+        if (src[k] === '\n') continue;
+        shape[k] = ' ';
+        if (both) code[k] = ' ';
+      }
+    };
+    let i = 0;
+    let last = '';
+    while (i < src.length) {
+      const c = src[i];
+      const n = src[i + 1];
+      if (c === '/' && n === '*') {
+        const end = src.indexOf('*/', i + 2) + 2;
+        blank(i, end, true);
+        i = end;
+      } else if (c === '/' && n === '/') {
+        const nl = src.indexOf('\n', i);
+        const end = nl === -1 ? src.length : nl;
+        blank(i, end, true);
+        i = end;
+      } else if (c === "'" || c === '"' || c === '`' || (c === '/' && /^$|[(,=:[!&|?{};+\-*%<>~^]$/.test(last))) {
+        let j = i + 1;
+        let inClass = false;
+        while (j < src.length) {
+          if (src[j] === '\\') { j += 2; continue; }
+          if (c === '/' && src[j] === '[') inClass = true;
+          else if (c === '/' && src[j] === ']') inClass = false;
+          else if (src[j] === c && !inClass) break;
+          j++;
+        }
+        blank(i + 1, j, false);
+        i = j + 1;
+        last = 'x';
+      } else {
+        if (!/\s/.test(c)) last = c;
+        i++;
+      }
+    }
+    return { code: code.join(''), shape: shape.join('') };
+  }
+
+  /** Every top-level function in `src/*.gs`: name -> { file, body }. */
+  const fns = {};
+  gs.forEach((file) => {
+    const { code, shape } = scan(readFileSync(join(SRC, file), 'utf8'));
+    for (const m of shape.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)) {
+      const open = shape.indexOf('{', m.index);
+      let depth = 0;
+      let close = open;
+      for (; close < shape.length; close++) {
+        if (shape[close] === '{') depth++;
+        else if (shape[close] === '}' && --depth === 0) break;
+      }
+      fns[m[1]] = { file, start: m.index, end: close, body: code.slice(open, close + 1) };
     }
   });
+  const names = Object.keys(fns);
 
-  const names = (re, src) => [...src.matchAll(re)].map((m) => m[1]);
+  /**
+   * Every global the source reaches through a dot and the scopes tests treat as
+   * a Google service. `Utilities`, `Logger` and `console` are not here: signing
+   * a string or writing a log line spends nothing and reads nothing a caller
+   * could want.
+   */
+  const SERVICES = ['SpreadsheetApp', 'UrlFetchApp', 'ScriptApp', 'MailApp', 'GmailApp', 'DriveApp',
+    'Drive', 'Session', 'PropertiesService', 'CacheService', 'LockService', 'HtmlService', 'ContentService'];
+  const SERVICE = new RegExp('\\b(' + SERVICES.join('|') + ')\\s*\\.');
+  const GATES = ['requireInteractive_', 'requireOwner_', 'requireScheduled_'];
+  const RESERVED = ['doGet', 'onOpen', 'onEdit'];
 
-  /** Every function the menu invokes, by name, out of the menu declaration. */
-  const menuFns = names(/\bfn:\s*'([A-Za-z0-9]+)'/g, text['19_menu.gs']);
+  // First statement, or first statement inside the read cache the app calls
+  // wrap themselves in — which is safe only while that wrapper reaches nothing
+  // before running its callback, and a test below holds it to that.
+  const GATED = new RegExp('^\\{\\s*(?:return\\s+withReadCache_\\(\\s*function\\s*\\(\\)\\s*\\{\\s*)?(?:' +
+    GATES.join('|') + ')\\s*\\(');
+  const gated = (name) => GATED.test(fns[name].body);
 
-  /** Every function a dialog hands back to via `google.script.run`. */
-  const HANDLERS = new Set(['withSuccessHandler', 'withFailureHandler', 'withUserObject', 'withLogger']);
-  const dialogFns = [];
-  gs.forEach((f) => {
-    if (!text[f].includes('google.script.run')) return;
-    for (const m of text[f].matchAll(/\.([A-Za-z][A-Za-z0-9]*)\s*\(/g)) {
-      const name = m[1];
-      if (HANDLERS.has(name)) continue;
-      if (bodies[name] && !dialogFns.includes(name)) dialogFns.push(name);
+  const callees = Object.fromEntries(names.map((name) => {
+    const words = new Set(fns[name].body.match(/[A-Za-z0-9_$]+/g));
+    return [name, names.filter((other) => other !== name && words.has(other))];
+  }));
+
+  /** The shortest path from `name` to a service, not passing through a gate; or null. */
+  function reach(name) {
+    const seen = new Set([name]);
+    const queue = [[name]];
+    while (queue.length) {
+      const path = queue.shift();
+      const here = path[path.length - 1];
+      const hit = fns[here].body.match(SERVICE);
+      if (hit) return [...path, hit[1]];
+      for (const next of callees[here]) {
+        if (seen.has(next) || gated(next) || GATES.includes(next)) continue;
+        seen.add(next);
+        queue.push([...path, next]);
+      }
     }
+    return null;
+  }
+
+  const exposed = names.filter((name) => !name.endsWith('_'));
+
+  it('reads the source it thinks it reads', () => {
+    // If any of these fail the derivation broke, and the rule below is vacuous.
+    expect(exposed.length).toBeGreaterThan(100);
+    const all = gs.map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
+    expect(names.length).toBe(all.match(/^function\s+/gm).length);
+
+    // A brace in a string or a regex that threw the count off would run one
+    // body into the next.
+    gs.forEach((file) => {
+      const spans = names.filter((n) => fns[n].file === file).sort((a, b) => fns[a].start - fns[b].start);
+      spans.slice(1).forEach((name, k) => {
+        expect(fns[spans[k]].end, spans[k] + ' runs into ' + name).toBeLessThan(fns[name].start);
+      });
+    });
+
+    expect(gated('saveCredentials')).toBe(true);
+    expect(gated('appOpen')).toBe(true);
+    expect(reach('readConfig_')).not.toBeNull();
+    expect(reach('normalizeDescription')).toBeNull();
   });
 
-  // A trigger fires by naming a public function, and a trigger has no UI and no
-  // signed-in user — so a UI-or-owner gate on one would break the unattended run
-  // this project exists to keep alive. They are excused here deliberately, and
-  // stay safe by returning nothing a caller could read (counts, a filename, a
-  // health summary — never a balance, a transaction or a credential). Derived
-  // from the schedule so a fourth one is excused only once it is really wired.
-  const triggerFns = names(/\bfn:\s*'([A-Za-z0-9]+)'/g, text['11_triggers.gs']);
-
-  const mustGate = [...new Set([...menuFns, ...dialogFns])].filter((n) => !triggerFns.includes(n));
-
-  it('names a handler for every menu item and dialog callback', () => {
-    // If this is empty the derivation broke and every assertion below is vacuous.
-    expect(mustGate.length).toBeGreaterThan(20);
-    expect(mustGate).toContain('saveCredentials');   // the dialog callback
-    expect(mustGate).toContain('inspectSession');    // a diagnostic
-    expect(mustGate).not.toContain('snapshotToDrive'); // menu *and* trigger — excused
+  it('names every Google service the source uses', () => {
+    // A service added later that is missing here would make every function
+    // using it look pure. Anything ending in `App` or `Service` is one.
+    const all = gs.map((f) => scan(readFileSync(join(SRC, f), 'utf8')).code).join('\n');
+    const used = new Set(all.match(/\b[A-Z][A-Za-z]*(?:App|Service)(?=\s*\.)/g));
+    expect([...used].filter((s) => !SERVICES.includes(s))).toEqual([]);
   });
 
-  it('gates each of them on its first line', () => {
-    mustGate.forEach((name) => {
-      const body = bodies[name];
-      expect(body, name + ' is named by the menu/a dialog but defined nowhere').toBeTruthy();
-      const head = body.slice(0, body.indexOf('\n\n') === -1 ? 200 : body.indexOf('\n\n'));
-      expect(
-        /requireInteractive_\(\)|requireOwner_\(\)/.test(head),
-        name + ' is reachable from the Sheet but does not gate its first line'
-      ).toBe(true);
+  it('lets the read cache sit in front of a gate only because it reaches nothing', () => {
+    expect(reach('withReadCache_')).toBeNull();
+  });
+
+  it('gates every public function that can reach a Google service', () => {
+    const offenders = exposed
+      .filter((name) => !RESERVED.includes(name) && !gated(name))
+      .map((name) => [name, reach(name)])
+      .filter(([, path]) => path)
+      .map(([name, path]) => `${name} (${fns[name].file}): ${path.join(' -> ')}`);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('gates every trigger handler on the event, not on the UI', () => {
+    // A trigger has no UI and no signed-in user, so `requireInteractive_`
+    // alone would pass the rule above and refuse every unattended run. Read
+    // out of the schedule, so a fourth trigger is held to it the day it is wired.
+    const schedule = readFileSync(join(SRC, '11_triggers.gs'), 'utf8');
+    const triggerFns = [...schedule.matchAll(/\bfn:\s*'([A-Za-z0-9_]+)'/g)].map((m) => m[1]);
+    expect(triggerFns).toEqual(['syncScheduled', 'selfCheck', 'snapshotToDrive']);
+
+    triggerFns.forEach((name) => {
+      const src = readFileSync(join(SRC, fns[name].file), 'utf8');
+      expect(src, name).toMatch(new RegExp(`function ${name}\\((\\w+)\\) \\{\\n  requireScheduled_\\(\\1\\);`));
     });
   });
 
@@ -248,6 +369,48 @@ describe('the gate on every function the Sheet reaches', () => {
     // case that must fail — it is the whole reason this gate exists.
     c.Session.getActiveUser = () => ({ getEmail: () => '' });
     expect(() => c.requireInteractive_(), 'anonymous page call').toThrow('Not available');
+  });
+
+  describe('requireScheduled_', () => {
+    /** Door 1's context: no UI, nobody signed in. */
+    function anonymous() {
+      const c = book();
+      c.Session.getActiveUser = () => ({ getEmail: () => '' });
+      c.SpreadsheetApp.getUi = () => { throw new Error('no UI in this context'); };
+      return c;
+    }
+
+    it('lets a real trigger run through with no UI and nobody signed in', () => {
+      const c = anonymous();
+      expect(() => c.requireScheduled_({ authMode: c.ScriptApp.AuthMode.FULL, triggerUid: '1' })).not.toThrow();
+    });
+
+    it('refuses everything a browser can send in place of the event', () => {
+      // `google.script.run` carries JSON, so the enum's name is the closest a
+      // caller can get, in every shape JSON has.
+      const c = anonymous();
+      [undefined, null, 'FULL', { authMode: 'FULL' }, { authMode: ['FULL'] }, { authMode: {} },
+        { authMode: c.ScriptApp.AuthMode.LIMITED }].forEach((e) => {
+        expect(() => c.requireScheduled_(e), JSON.stringify(e)).toThrow('Not available');
+      });
+    });
+
+    it('still lets the Sheet in, so the snapshot menu item and the editor keep working', () => {
+      const c = book();
+      expect(() => c.requireScheduled_(undefined)).not.toThrow();
+    });
+
+    it('stops each trigger handler before it spends anything', () => {
+      const c = anonymous();
+      const forged = { authMode: 'FULL' };
+      c.LockService.getScriptLock = () => { throw new Error('the sync started'); };
+
+      expect(() => c.syncScheduled(forged)).toThrow('Not available');
+      expect(() => c.selfCheck(forged)).toThrow('Not available');
+      expect(() => c.snapshotToDrive(forged)).toThrow('Not available');
+      expect(c.__sentMail).toHaveLength(0);
+      expect(c.__driveFiles).toHaveLength(0);
+    });
   });
 });
 

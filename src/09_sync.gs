@@ -29,14 +29,15 @@
 /** Menu → Sync now. */
 function syncNow() {
   requireInteractive_();
-  var summary = syncAll({ trigger: RUN_TRIGGER.MANUAL });
+  var summary = syncAll_({ trigger: RUN_TRIGGER.MANUAL });
   SpreadsheetApp.getActiveSpreadsheet().toast(summary.message, 'Sync ' + summary.result, 15);
   return summary;
 }
 
-/** Time-driven trigger entry point. Installed in phase 8. */
-function syncScheduled() {
-  return syncAll({ trigger: RUN_TRIGGER.SCHEDULED });
+/** Time-driven trigger entry point. `e` is the trigger's event — see `requireScheduled_`. */
+function syncScheduled(e) {
+  requireScheduled_(e);
+  return syncAll_({ trigger: RUN_TRIGGER.SCHEDULED });
 }
 
 /**
@@ -47,7 +48,7 @@ function syncScheduled() {
  * how you get duplicates that no dedup can prevent — both read the same
  * "already seen" set before either has written.
  */
-function syncAll(options) {
+function syncAll_(options) {
   options = options || {};
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(2000)) {
@@ -385,7 +386,7 @@ function describeSyncError_(account, err) {
   if (err && err.code) {
     logAnomaly_(ANOMALY_KIND.FETCH_FAILED, account.uid,
       err.code + ': ' + err.message, err.body || '');
-    return describeEbError(err.code);
+    return describeEbError_(err.code);
   }
   logAnomaly_(ANOMALY_KIND.FETCH_FAILED, account.uid, String(err && err.message), '');
   return String(err && err.message);
@@ -591,7 +592,7 @@ function recordRun_(summary, config) {
  * over to see whether something works. That is friction bought with no safety.
  */
 function accountCallAllowance_(config) {
-  if (ebEnvironment() === EB_ENV.SANDBOX) return Infinity;
+  if (ebEnvironment_() === EB_ENV.SANDBOX) return Infinity;
   return configNumber_(config, 'max_calls_per_account_per_day');
 }
 

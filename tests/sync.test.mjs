@@ -501,7 +501,7 @@ describe('concurrency', () => {
     c.setup();
     c.__setLockHeld(true);
 
-    expect(() => c.syncAll({})).toThrow(/already running/);
+    expect(() => c.syncAll_({})).toThrow(/already running/);
   });
 });
 

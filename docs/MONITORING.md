@@ -68,7 +68,7 @@ A free Google account allows 100 mail recipients a day. A persistent failure che
 
 **Failure 4 is the one that quietly ruins these systems.** A green run that silently fetched nothing looks exactly like a healthy one from the outside, and you find out months later when a report looks thin.
 
-**Failure 5 is why `selfCheck()` is its own trigger** rather than part of `syncAll()`. If it lived inside the sync, a crash would take the alarm down with it — precisely the failure where you most need to hear something.
+**Failure 5 is why `selfCheck()` is its own trigger** rather than part of `syncAll_()`. If it lived inside the sync, a crash would take the alarm down with it — precisely the failure where you most need to hear something.
 
 ## A formula that stopped spilling
 
@@ -98,7 +98,7 @@ The phone app keeps working throughout, because it reads the stored columns A–
 
 ## The honest limit
 
-`selfCheck()` catches `syncAll()` being broken, hung or crashing. It **cannot** catch both triggers being deleted, or the whole project being disabled: nothing inside the script can report that the script isn't running.
+`selfCheck()` catches `syncAll_()` being broken, hung or crashing. It **cannot** catch both triggers being deleted, or the whole project being disabled: nothing inside the script can report that the script isn't running.
 
 An external dead-man's switch — [healthchecks.io](https://healthchecks.io) has a free tier — is the only real fix. It's deliberately out of scope to keep third-party setup at zero, and will be documented here as a ten-line opt-in for anyone who wants it.
 

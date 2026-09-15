@@ -434,11 +434,9 @@ function webAppOwner_() {
  * `getUi()`, but with the owner as the active user. A page's anonymous call is
  * neither — no UI and no owner — so it is refused by both halves.
  *
- * Not for a function a trigger invokes by name (`syncScheduled`, `selfCheck`,
- * `snapshotToDrive`): a trigger has no UI either, and gating it would break the
- * unattended run this whole project exists to keep working. Those stay reachable
- * and are kept harmless by returning nothing a caller could read — see the note
- * on the sync entry points.
+ * Not on its own for a function a trigger invokes by name: a trigger has no UI
+ * either, so this would refuse the unattended run. Those use
+ * `requireScheduled_`, below.
  */
 function requireInteractive_() {
   try {
@@ -449,6 +447,44 @@ function requireInteractive_() {
     // the identity check, which a dialog callback passes and a stranger fails.
   }
   requireOwner_();
+}
+
+/**
+ * The gate for a function a time-driven trigger names: `syncScheduled`,
+ * `selfCheck`, `snapshotToDrive`.
+ *
+ * A trigger names its handler as a string, so the handler has to be a public
+ * global — and every public global is on Door 1's surface. These three are not
+ * harmless there. Each spends something with the owner's authority: a sync
+ * spends the bank's daily allowance, where an overrun is a penalty measured in
+ * hours; the health check sends mail; the snapshot writes to Drive. And the
+ * last two return what they found.
+ *
+ * ## Why the event object, and why it cannot be forged
+ *
+ * A real trigger run passes an event whose `authMode` is the enum
+ * `ScriptApp.AuthMode.FULL`. A browser can pass arguments through
+ * `google.script.run`, but only JSON — strings, numbers, plain objects and
+ * arrays — so it can send `{ authMode: 'FULL' }` and never the enum itself.
+ * That is why the comparison is `===`. `==` would coerce the enum to its name
+ * and let the string through.
+ *
+ * ## Why not a private name instead
+ *
+ * Renaming the handlers to end in `_` would take them off the surface outright,
+ * like `syncAll_`. But Google does not document whether a trigger will run a
+ * private function, and the triggers already installed on the live book name
+ * the public ones. A rename that fails to fire stops the sync, the alarm and the
+ * backup at once. This gate needs no reinstall, and it fails loudly: a refusal
+ * throws, and Google emails a trigger that throws.
+ *
+ * Anything that is not a trigger run falls back to `requireInteractive_`. That
+ * keeps the menu item for the snapshot, and running any of the three from the
+ * editor, working as before.
+ */
+function requireScheduled_(e) {
+  if (e && e.authMode === ScriptApp.AuthMode.FULL) return;
+  requireInteractive_();
 }
 
 /**

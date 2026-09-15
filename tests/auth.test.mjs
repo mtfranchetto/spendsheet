@@ -170,7 +170,7 @@ describe('beginAuthorization', () => {
 
   it('explains the missing deployment rather than failing obscurely', () => {
     const c = load({ properties: { ...CREDS } });
-    c.webAppUrl = () => '';
+    c.webAppUrl_ = () => '';
     // Simulate an undeployed script by removing the service URL.
     c.ScriptApp.getService = () => ({ getUrl: () => '' });
 
@@ -185,12 +185,12 @@ describe('redirect URL', () => {
     const pinned = 'https://script.google.com/macros/s/REAL/exec';
     const c = load({ properties: { EB_REDIRECT_URL: pinned } });
 
-    expect(c.detectedWebAppUrl()).toBe('https://script.google.com/macros/s/FAKE/exec');
-    expect(c.webAppUrl()).toBe(pinned);
+    expect(c.detectedWebAppUrl_()).toBe('https://script.google.com/macros/s/FAKE/exec');
+    expect(c.webAppUrl_()).toBe(pinned);
   });
 
   it('falls back to detection when nothing is pinned', () => {
-    expect(load().webAppUrl()).toBe('https://script.google.com/macros/s/FAKE/exec');
+    expect(load().webAppUrl_()).toBe('https://script.google.com/macros/s/FAKE/exec');
   });
 
   it('uses the pinned URL as redirect_url in the auth request', () => {
@@ -233,7 +233,7 @@ describe('redirect URL', () => {
     const c = load({ properties: { EB_REDIRECT_URL: 'https://script.google.com/macros/s/OLD/exec' } });
 
     c.saveRedirectUrl('https://script.google.com/macros/s/NEW/exec');
-    expect(c.webAppUrl()).toBe('https://script.google.com/macros/s/NEW/exec');
+    expect(c.webAppUrl_()).toBe('https://script.google.com/macros/s/NEW/exec');
   });
 });
 

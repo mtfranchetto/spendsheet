@@ -194,7 +194,7 @@ describe('failure 6 — rows disappeared', () => {
     c.rememberRowCount_();
     c.__spreadsheet.getSheetByName('transactions').getRange('A8:A11').clearContent();
 
-    expect(() => c.syncAll({})).toThrow(/append-only/);
+    expect(() => c.syncAll_({})).toThrow(/append-only/);
   });
 
   it('can be told the smaller sheet is correct', () => {
@@ -208,7 +208,7 @@ describe('failure 6 — rows disappeared', () => {
     c.acceptRowCount();
 
     expect(kinds(c.runChecks_(NOW))).not.toContain('rows_lost');
-    expect(() => c.syncAll({})).not.toThrow();
+    expect(() => c.syncAll_({})).not.toThrow();
   });
 
   it('does not fire before anything has ever been recorded', () => {
@@ -259,7 +259,7 @@ describe('failure 6 — rows disappeared', () => {
     c.__spreadsheet.getSheetByName('transactions').getRange('A8:A11').clearContent();
 
     expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
-    expect(() => c.syncAll({})).toThrow(/append-only/);
+    expect(() => c.syncAll_({})).toThrow(/append-only/);
   });
 });
 
