@@ -2495,6 +2495,27 @@ describe('the first screen', () => {
     to the harness, so the names are compared as text against the constants the
     server actually uses.
   */
+  /*
+    The one subcategory a Records row does not print.
+
+    `recordRow` names a row by its subcategory, and treats the seed's
+    `Other › Uncategorised` as if there were none, falling back to `Other` —
+    because that child is a real category a rule or an import chose, and
+    printing "Uncategorised" on it reads as a row nothing ever answered. The
+    page holds the name as a literal, which is a copy of the seed with no
+    handshake between them: rename the seed row and the label comes back with
+    every test still green. This is the handshake.
+  */
+  describe('the placeholder subcategory the page hides', () => {
+    it('is the only child the seed gives Other', () => {
+      const declared = pageSource().match(/var PLACEHOLDER_SUBCATEGORY = '([^']*)';/);
+      expect(declared, 'the page no longer declares PLACEHOLDER_SUBCATEGORY').not.toBeNull();
+
+      const other = load().DEFAULT_CATEGORIES.filter((row) => row[0] === 'Other');
+      expect(other.map((row) => row[1])).toEqual([declared[1]]);
+    });
+  });
+
   describe('the query string the page writes', () => {
     const page = pageSource();
 
