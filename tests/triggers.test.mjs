@@ -18,9 +18,12 @@ function built() {
 
 const handlers = (c) => c.__triggers().map((t) => t.getHandlerFunction());
 
-function setHour(c, value) {
+/** Triggers by what they run, never by position: position is install order. */
+const triggersFor = (c, fn) => c.__triggers().filter((t) => t.getHandlerFunction() === fn);
+
+function setHour(c, value, key = 'sync_hour') {
   const config = c.__spreadsheet.getSheetByName('_config');
-  config.getRange(c.readColumn_(config, 1).indexOf('sync_hour') + 2, 2).setValue(value);
+  config.getRange(c.readColumn_(config, 1).indexOf(key) + 2, 2).setValue(value);
 }
 
 describe('installTriggers', () => {
@@ -29,8 +32,8 @@ describe('installTriggers', () => {
     const result = c.installTriggers();
 
     expect(handlers(c)).toContain('syncScheduled');
-    expect(c.__triggers()[0].type).toBe('every 1d');
-    expect(result.installed[0].hour).toBe(4);
+    expect(triggersFor(c, 'syncScheduled')[0].type).toBe('every 1d');
+    expect(result.installed.filter((e) => e.fn === 'syncScheduled')[0].hour).toBe(4);
   });
 
   it('gives the self-check its own trigger, not a step inside the sync', () => {
@@ -59,6 +62,35 @@ describe('installTriggers', () => {
     const at = (fn) => result.installed.filter((e) => e.fn === fn)[0].hour;
 
     expect(at('selfCheck')).toBeGreaterThan(at('syncScheduled'));
+  });
+
+  it('rebuilds memory on its own trigger, before the sync that uses it', () => {
+    // Its own trigger for the self-check's reason: a failure in learning must
+    // not take the sync down. Before it, so tonight's rows are categorised
+    // with today's corrections.
+    const c = built();
+    const result = c.installTriggers();
+    const at = (fn) => result.installed.filter((e) => e.fn === fn)[0].hour;
+
+    expect(triggersFor(c, 'learnScheduled')).toHaveLength(1);
+    expect(triggersFor(c, 'learnScheduled')[0].type).toBe('every 1d');
+    expect(at('learnScheduled')).toBe(3);
+    expect(at('learnScheduled')).toBeLessThan(at('syncScheduled'));
+  });
+
+  it('falls back to each schedule\'s own hour, not one they all share', () => {
+    // A cleared learn_hour that fell back to the sync's hour would put both in
+    // one hour at random minutes — learning after the sync half the time, with
+    // nothing anywhere saying so.
+    const c = built();
+
+    ['', 'midnight', 99].forEach((value) => {
+      setHour(c, value, 'learn_hour');
+      setHour(c, value, 'selfcheck_hour');
+      c.installTriggers();
+      expect(triggersFor(c, 'learnScheduled')[0].hour).toBe(3);
+      expect(triggersFor(c, 'selfCheck')[0].hour).toBe(9);
+    });
   });
 
   it('replaces its own triggers instead of stacking them', () => {
@@ -99,7 +131,7 @@ describe('installTriggers', () => {
 
     c.installTriggers();
 
-    expect(c.__triggers()[0].hour).toBe(23);
+    expect(triggersFor(c, 'syncScheduled')[0].hour).toBe(23);
   });
 
   it('runs twice a day when you ask for two hours', () => {
@@ -151,9 +183,8 @@ describe('installTriggers', () => {
     [99, -1, 'midnight', '', '4,99'].forEach((value) => {
       setHour(c, value);
       c.installTriggers();
-      expect(c.__triggers()[0].hour).toBe(4);
-      expect(c.__triggers().filter((t) => t.getHandlerFunction() === 'syncScheduled'))
-        .toHaveLength(1);
+      expect(triggersFor(c, 'syncScheduled')[0].hour).toBe(4);
+      expect(triggersFor(c, 'syncScheduled')).toHaveLength(1);
     });
   });
 });

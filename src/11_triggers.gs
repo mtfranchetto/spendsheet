@@ -28,6 +28,14 @@
  * the alarm down with it — which is precisely the failure where you most need
  * to hear something. It lands in phase 8; until then it is skipped, because
  * this list is filtered to functions that actually exist.
+ *
+ * `learnScheduled` is separate for the same reason, in the other direction: a
+ * failure while rebuilding memory must not cost the night's transactions. It
+ * runs an hour *before* the sync so the categorisation that follows each fetch
+ * already knows the corrections you made that day.
+ *
+ * The order here is install order, not clock order. The hours come from
+ * `_config`.
  */
 var SCHEDULED = [
   {
@@ -48,6 +56,12 @@ var SCHEDULED = [
     budgeted: false,
     weekly: true,
     describe: 'save a CSV of transactions to Drive'
+  },
+  {
+    fn: 'learnScheduled',
+    hourKey: 'learn_hour',
+    budgeted: false,
+    describe: 'rebuild _memory from your corrections, before the sync uses it'
   }
 ];
 
@@ -65,7 +79,11 @@ function installTriggers() {
   SCHEDULED.forEach(function (entry) {
     if (!functionExists_(entry.fn)) return;
 
-    var hours = parseHours_(config[entry.hourKey], DEFAULT_TRIGGER_HOUR);
+    // Each schedule falls back to its own seeded hour. One shared fallback
+    // would put a cleared `learn_hour` in the sync's hour, where two triggers
+    // take random minutes and learning lands after the sync half the time.
+    // `configNumber_` over an empty object is exactly that seeded value.
+    var hours = parseHours_(config[entry.hourKey], configNumber_({}, entry.hourKey));
     hours.forEach(function (hour) {
       var timed = ScriptApp.newTrigger(entry.fn).timeBased();
       if (entry.weekly) timed.everyWeeks(1).onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(hour).create();
@@ -141,8 +159,6 @@ function removeOwnTriggers_() {
   });
   return removed;
 }
-
-var DEFAULT_TRIGGER_HOUR = 4;
 
 /**
  * The hours a job runs at, from a cell holding `4` or `4,16` or `4, 16, 22`.

@@ -200,7 +200,7 @@ Tick, or pick a different category, or both. Either one writes straight back to 
 
 **A row you have done goes grey and struck through, and stays put.** It leaves when the queue is next refilled — by the nightly sync, or by **Refresh review queue**. That is the snapshot design working, not a failure to notice your tick: see below for why a self-refilling queue would be a trap. The two cells that are yours are blue, the same blue `reports` uses for its filters.
 
-**An override on its own is enough.** Typing the category is a stronger statement than ticking a box next to it, and `Learn from corrections` counts a row carrying one as confirmed either way.
+**An override on its own is enough** — either one, category or subcategory. Picking the category is a stronger statement than ticking a box next to it, and a row carrying one counts as confirmed either way.
 
 ### Why it is filled by a run rather than by a `QUERY`
 

@@ -19,9 +19,12 @@
  * rule, and a value above the highest rule priority makes every rule win.
  *
  * **`_memory` is a lookup, not a model.** It is mined from your own confirmed
- * history by `learnFromCorrections()`, which is why this phase lands after the
- * import rather than before it: four thousand rows you already categorised are
- * a better training signal than any ruleset shipped in this file.
+ * history — every night by `learnScheduled()`, and on demand from the menu by
+ * `learnFromCorrections()` — which is why this phase lands after the import
+ * rather than before it: four thousand rows you already categorised are a
+ * better training signal than any ruleset shipped in this file. A correction
+ * you typed outranks any number of ticks, unless your corrections for that
+ * merchant disagree; `deriveMemory_` argues both halves.
  *
  * `category_source` names the *kind* of thing that decided — `memory`, `mcc`,
  * `rule` — rather than where it sat, because that is the question someone
@@ -605,10 +608,23 @@ function frozenVerdict_(record) {
   };
 }
 
-/** Ticked, or carrying an override — see the `confirmed` note in 00_config. */
+/**
+ * Ticked, or carrying an override — see the `confirmed` note in 00_config.
+ *
+ * Either override counts. `subcategory_override` is the one the review tab asks
+ * you to reach for — picking Groceries sets Food & Drink through the `category`
+ * formula — so a row corrected that way has been looked at exactly as surely as
+ * one corrected in the column beside it. Every caller follows: the row leaves
+ * the review queue and the phone's, and shows as confirmed.
+ */
 function isConfirmedRow_(record) {
   if (isTruthyCell_(record.confirmed)) return true;
-  return !isBlankCell_(record.category_override);
+  return hasOverride_(record);
+}
+
+/** Either half of a correction typed on the row. */
+function hasOverride_(record) {
+  return !isBlankCell_(record.category_override) || !isBlankCell_(record.subcategory_override);
 }
 
 function cellText_(value) {
@@ -770,47 +786,174 @@ function learnFromCorrections() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
-  var memory = ss.getSheetByName(TABS.MEMORY);
-  if (!tx || !memory) {
-    ui.alert('Learn from corrections', 'Run Setup sheet first — a tab is missing.', ui.ButtonSet.OK);
+  var plan = planMemory_();
+  if (plan.error) {
+    ui.alert('Learn from corrections', plan.error, ui.ButtonSet.OK);
     return null;
   }
 
-  var records = readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'));
-  var derived = deriveMemory_(records);
-
-  if (!derived.entries.length) {
-    ui.alert('Learn from corrections',
-      'Nothing to learn from yet.\n\n' + derived.considered + ' rows were confirmed, and none ' +
-      'produced a usable merchant key. Confirm some rows first — tick `confirmed`, or type a ' +
-      '`category_override`, which counts on its own.', ui.ButtonSet.OK);
-    return null;
+  if (plan.unchanged) {
+    ss.toast('Memory already matches your corrections — nothing to rewrite.', 'Memory unchanged', 10);
+    return plan.derived;
   }
 
-  var answer = ui.alert('Learn from corrections', describeMemoryPlan_(derived), ui.ButtonSet.YES_NO);
+  var answer = ui.alert('Learn from corrections', describeMemoryPlan_(plan.derived), ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) {
     ss.toast('Memory left as it was.', 'Cancelled', 5);
     return null;
   }
 
-  writeMemory_(memory, derived.entries);
-  ss.toast(derived.entries.length + ' merchants learned from ' + derived.considered +
+  writeMemory_(plan.memory, plan.derived.entries);
+  ss.toast(plan.derived.entries.length + ' merchants learned from ' + plan.derived.considered +
     ' confirmed rows.', 'Memory rebuilt', 10);
-  return derived;
+  return plan.derived;
+}
+
+/**
+ * Time-driven trigger → the same rebuild, every night, with no one to ask.
+ *
+ * Corrections are mostly made on the phone, where the menu item is out of
+ * reach, so without this a correction sat inert until someone remembered to
+ * open the sheet. It runs before the sync — see `SCHEDULED` in 11_triggers.gs.
+ *
+ * Two guards the menu gets from its dialog, and this path has to get from
+ * `planMemory_` instead. **An empty derivation is never written**: a renamed
+ * tab or a cleared key column reads as a book with nothing confirmed, and
+ * writing that unattended would wipe the learned table with no symptom but a
+ * cascade that quietly stops knowing merchants. **An unchanged one is never
+ * written either**, for `commitCategorize_`'s reason: a free account keeps 100
+ * revisions, and a nightly rewrite of an identical tab spends them.
+ *
+ * No gate, for the reason every trigger entry point has none (20_webapp.gs,
+ * `requireInteractive_`): a trigger has no UI. Like `syncScheduled` it is
+ * reachable from Door 1 by name, and it returns nothing — the most an
+ * anonymous call can do is rebuild a tab that is derived anyway.
+ *
+ * A failure is logged and then **thrown**, which is the opposite of
+ * `categorizeAfterSync_` and deliberately so: that one runs inside the sync and
+ * must not lose fetched transactions, while this runs alone, so throwing costs
+ * nothing and is what makes Google send its trigger-failure email. No
+ * `selfCheck` detector reads `learn_failed`, so that email and `_anomalies` are
+ * the only places a broken rebuild shows. The thrown message names neither the
+ * cause nor the book.
+ */
+function learnScheduled() {
+  try {
+    var plan = planMemory_();
+    if (plan.missing) throw new Error(plan.error);
+    if (plan.error || plan.unchanged) return;
+    writeMemory_(plan.memory, plan.derived.entries);
+  } catch (e) {
+    logAnomaly_(ANOMALY_KIND.LEARN_FAILED, '', e.message);
+    throw new Error('learnScheduled failed — see ' + TABS.ANOMALIES + '.');
+  }
+}
+
+/**
+ * What a rebuild would write, and whether it should: `{error}` or
+ * `{memory, derived, unchanged}`.
+ *
+ * Shared so the menu and the trigger cannot disagree about when writing is
+ * safe. `missing` separates a book that is broken from one that simply has
+ * nothing confirmed yet — the trigger raises the first and ignores the second.
+ */
+function planMemory_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  var memory = ss.getSheetByName(TABS.MEMORY);
+  if (!tx || !memory) return { error: 'Run Setup sheet first — a tab is missing.', missing: true };
+
+  var derived = deriveMemory_(readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid')));
+  if (!derived.entries.length) {
+    return {
+      error: 'Nothing to learn from yet.\n\n' + derived.considered + ' rows were confirmed, and none ' +
+        'produced a usable merchant key. Confirm some rows first — tick `confirmed`, or pick a ' +
+        'category or subcategory override, which counts on its own.'
+    };
+  }
+
+  return {
+    memory: memory,
+    derived: derived,
+    unchanged: memoryUnchanged_(readMemoryRecords_(ss), derived.entries)
+  };
+}
+
+/**
+ * Whether the tab already holds exactly these entries.
+ *
+ * Compared on every column, since each is something the rebuild would write.
+ * A value read back from a sheet is not the value that went in — a date is a
+ * new object and a count may come back as text — so dates compare by the
+ * moment they name and counts as numbers.
+ */
+function memoryUnchanged_(current, entries) {
+  current = current || [];
+  if (current.length !== entries.length) return false;
+
+  var byKey = {};
+  current.forEach(function (row) { byKey[cellText_(row.merchant_key)] = row; });
+
+  return entries.every(function (entry) {
+    var row = byKey[entry.merchant_key];
+    return Boolean(row) &&
+      cellText_(row.category) === cellText_(entry.category) &&
+      cellText_(row.subcategory) === cellText_(entry.subcategory) &&
+      Number(row.hits) === Number(entry.hits) &&
+      sameMoment_(row.last_seen, entry.last_seen);
+  });
+}
+
+function sameMoment_(a, b) {
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  return cellText_(a) === cellText_(b);
 }
 
 /**
  * Confirmed rows → one memory entry per merchant key.
  *
- * The category kept is the one you have given that merchant most often, with
- * ties broken by the most recent — which is the right tiebreak, because a
- * merchant you have started filing differently is usually a merchant that has
- * changed rather than one you keep getting wrong.
+ * **A correction you typed decides the entry outright**, however many ticks
+ * disagree with it. A tick agrees with a guess; a correction is you saying the
+ * guess was wrong, which is the stronger statement and the one memory exists
+ * to hold. So when a merchant carries corrections, the latest one names both
+ * halves of the entry — as a pair, and verbatim: a correction that overrules
+ * the parent without naming a child gives a blank subcategory, as
+ * `subcategoryFormula()` does on the row itself, rather than resurrecting a
+ * child from an earlier correction.
  *
- * `hits` records the winner's count rather than the key's total, so an entry
+ * **Unless your corrections disagree with each other.** The bank's text says
+ * where you bought, never what, so a merchant that sells everything — Amazon,
+ * filed as Gifts one week and Home the next — cannot have one right entry.
+ * Following the latest correction there would flip the guess every time you
+ * correct a row; the most common category is at least steady. So a merchant
+ * whose corrections name more than one category, or more than one named
+ * subcategory, is *mixed*, and every row votes, corrections included. Two is
+ * deliberately the threshold: at three, a merchant that varies between exactly
+ * two would flip for ever, and an unfixed mistake would decide whenever it was
+ * the latest. Mixed is recomputed on every rebuild from what the rows say now,
+ * so a wrong correction you fix on the row is simply gone.
+ *
+ * With no corrections, the category kept is the one given most often, ties to
+ * the most recent — a merchant you have started filing differently is usually
+ * a merchant that has changed rather than one you keep getting wrong.
+ *
+ * **An imported category is not a correction**, even though the import writes
+ * it into `category_override` (13_import.gs), because that column is where an
+ * imported row keeps it. Read as corrections, a five-year history would hand
+ * each merchant to whichever imported row was booked last. Imported rows vote.
+ * The cost is that hand-correcting an imported row votes too — nothing records
+ * what the import originally wrote, so the two cannot be told apart.
+ *
+ * Mixed is judged on corrections only. Judging it on imported history as well
+ * would make a supermarket imported as Groceries and corrected to Shopping a
+ * mixed merchant, and the correction would never decide — which is the case
+ * all of this exists for.
+ *
+ * `hits` is the evidence behind the answer given: the number of corrections
+ * behind a correction-decided entry, the winner's count otherwise. An entry
  * built from a disagreement is visibly weak instead of looking as solid as one
- * built from forty consistent rows.
+ * built from forty consistent rows. `decidedBy` says which rule applied, for
+ * the preview; it is not a column, so it never reaches the tab.
  *
  * Pure: takes records, returns entries. No sheet, so it is tested directly.
  */
@@ -827,7 +970,9 @@ function deriveMemory_(records) {
 
     // A transfer teaches nothing about a merchant — both legs of one move
     // carry whatever the other account is called, and learning that would
-    // categorise real spending at that merchant as a transfer.
+    // categorise real spending at that merchant as a transfer. Load-bearing
+    // twice over now: marking a transfer writes a correction, and a correction
+    // decides its merchant outright.
     if (String(category) === 'Transfer') return;
 
     var key = normalizeMerchant(record.description, record.counterparty);
@@ -836,7 +981,12 @@ function deriveMemory_(records) {
     considered++;
     var subcategory = effectiveSubcategory_(record);
     var date = record.booking_date instanceof Date ? record.booking_date : null;
-    var bucket = buckets[key] = buckets[key] || { key: key, categories: {}, lastSeen: null };
+    var bucket = buckets[key] = buckets[key] ||
+      { key: key, categories: {}, lastSeen: null, corrections: [] };
+
+    if (correctionYouTyped_(record)) {
+      bucket.corrections.push({ category: category, subcategory: subcategory, date: date });
+    }
 
     var seen = bucket.categories[category] = bucket.categories[category] ||
       { name: category, hits: 0, lastSeen: null, children: {} };
@@ -858,17 +1008,7 @@ function deriveMemory_(records) {
   });
 
   var entries = Object.keys(buckets).map(function (key) {
-    var bucket = buckets[key];
-    var category = mostCounted_(bucket.categories);
-    var child = mostCounted_(category.children);
-
-    return {
-      merchant_key: key,
-      category: category.name,
-      subcategory: child ? child.name : '',
-      hits: category.hits,
-      last_seen: bucket.lastSeen || ''
-    };
+    return memoryEntry_(buckets[key]);
   });
 
   entries.sort(function (a, b) {
@@ -877,6 +1017,84 @@ function deriveMemory_(records) {
   });
 
   return { entries: entries, considered: considered };
+}
+
+/** One merchant's tallies → its entry. The rules are argued on `deriveMemory_`. */
+function memoryEntry_(bucket) {
+  var corrections = bucket.corrections;
+  var entry = { merchant_key: bucket.key, last_seen: bucket.lastSeen || '' };
+
+  if (corrections.length && correctionsAgree_(corrections)) {
+    var counts = {};
+    corrections.forEach(function (c) {
+      var pair = correctionPair_(c);
+      counts[pair] = (counts[pair] || 0) + 1;
+    });
+
+    var latest = corrections.reduce(function (best, c) {
+      return laterCorrection_(c, best, counts) ? c : best;
+    });
+
+    entry.category = latest.category;
+    entry.subcategory = latest.subcategory;
+    entry.hits = corrections.length;
+    entry.decidedBy = 'correction';
+    return entry;
+  }
+
+  var category = mostCounted_(bucket.categories);
+  var child = mostCounted_(category.children);
+  entry.category = category.name;
+  entry.subcategory = child ? child.name : '';
+  entry.hits = category.hits;
+  entry.decidedBy = corrections.length ? 'mixed' : 'vote';
+  return entry;
+}
+
+/**
+ * A correction typed on the row, rather than a category the import put there.
+ *
+ * Both overrides count, and a row the import brought in counts as neither —
+ * see `deriveMemory_` for why.
+ */
+function correctionYouTyped_(record) {
+  return hasOverride_(record) && !isImportedSource_(record.source);
+}
+
+/** One category, and at most one named subcategory. A blank child is not a disagreement. */
+function correctionsAgree_(corrections) {
+  var categories = {};
+  var children = {};
+  corrections.forEach(function (c) {
+    categories[c.category] = true;
+    if (c.subcategory) children[c.subcategory] = true;
+  });
+  return Object.keys(categories).length === 1 && Object.keys(children).length <= 1;
+}
+
+function correctionPair_(correction) {
+  return JSON.stringify([correction.category, correction.subcategory]);
+}
+
+/**
+ * Whether correction `a` is later than `b`, among corrections that agree.
+ *
+ * A date beats no date, and a later date beats an earlier one. A same-day tie
+ * is the ordinary case rather than an edge one — two visits in a day, a batch
+ * imported on one date — so it has to resolve without depending on which row
+ * was read first: the pair more corrections name wins, then a correction that
+ * named a child beats one that did not, the rule the vote already follows.
+ * Agreeing corrections differ at most by that child, so nothing is left tied.
+ */
+function laterCorrection_(a, b, counts) {
+  if (a.date && !b.date) return true;
+  if (!a.date && b.date) return false;
+  if (a.date && b.date && a.date.getTime() !== b.date.getTime()) return a.date > b.date;
+
+  var countA = counts[correctionPair_(a)];
+  var countB = counts[correctionPair_(b)];
+  if (countA !== countB) return countA > countB;
+  return Boolean(a.subcategory) && !b.subcategory;
 }
 
 /**
@@ -917,7 +1135,8 @@ function mostCounted_(tally) {
  *
  * An override is always yours, whatever tier guessed underneath it — that is
  * the case where you looked at a rule's answer and disagreed, which is exactly
- * what memory exists to hold.
+ * what memory exists to hold. Either override: picking only a subcategory is a
+ * correction of the pair, and its parent follows.
  *
  * **Confirming a rule's answer is therefore a decision that does not
  * propagate**, and that is the shape rather than a gap in it: the row agreed
@@ -926,7 +1145,7 @@ function mostCounted_(tally) {
  * shadow. Only overriding it teaches.
  */
 function correctionRow_(record) {
-  if (!isBlankCell_(record.category_override)) return true;
+  if (hasOverride_(record)) return true;
 
   var source = cellText_(record.category_source);
   return source !== CATEGORY_SOURCE.RULE && source !== CATEGORY_SOURCE.MCC;
@@ -971,7 +1190,15 @@ function describeMemoryPlan_(derived) {
       (entry.subcategory ? ' / ' + entry.subcategory : '') + '  (' + entry.hits + ')';
   });
 
-  var weak = derived.entries.filter(function (entry) { return entry.hits === 1; }).length;
+  var decidedBy = function (kind) {
+    return derived.entries.filter(function (entry) { return entry.decidedBy === kind; }).length;
+  };
+  // `hits` of 1 on an entry you corrected is one correction, not one example.
+  var weak = derived.entries.filter(function (entry) {
+    return entry.hits === 1 && entry.decidedBy !== 'correction';
+  }).length;
+  var corrected = decidedBy('correction');
+  var mixed = decidedBy('mixed');
 
   var lines = [
     'Rebuild ' + TABS.MEMORY + ' from ' + derived.considered + ' confirmed rows.',
@@ -983,6 +1210,11 @@ function describeMemoryPlan_(derived) {
     lines.push('  … and ' + (derived.entries.length - top.length) + ' more.');
   }
   lines.push('');
+  if (corrected) lines.push(corrected + ' are filed the way you last corrected them.');
+  if (mixed) {
+    lines.push(mixed + ' have corrections that disagree with each other, so the most common ' +
+      'category is used — a merchant like Amazon, where the bank says where you bought but not what.');
+  }
   if (weak) lines.push(weak + ' were seen exactly once, so they are a guess with one example behind it.');
   lines.push(TABS.MEMORY + ' is derived — it is replaced, not merged. Put a categorisation you ' +
     'want to impose in ' + TABS.RULES + ' instead, which is never rewritten.');

@@ -369,6 +369,7 @@ var ANOMALY_KIND = {
   FETCH_FAILED: 'fetch_failed',
   RATE_LIMITED: 'rate_limited',
   CONSENT_DIED: 'consent_died',        // 401 before valid_until — needs you, not a retry
+  LEARN_FAILED: 'learn_failed',        // the nightly memory rebuild threw — see learnScheduled
   RAW_DUMP: 'raw_dump'                 // deliberate capture, for working out a shape
 };
 
@@ -471,6 +472,7 @@ var DEFAULT_CONFIG = [
   ['sync_hour', 4, 'Hour(s) 0-23 the sync runs. Comma-separate for more than one, e.g. 4,16.'],
   ['selfcheck_hour', 9, 'Hour (0-23) the self-check runs. After the sync, so it has something to check.'],
   ['snapshot_hour', 5, 'Hour (0-23) the weekly Drive snapshot runs, on Sundays.'],
+  ['learn_hour', 3, 'Hour (0-23) memory is rebuilt from your corrections. Keep it before sync_hour, so tonight\'s rows use today\'s corrections.'],
   ['import_preset', 'budgetbakers', 'Which _import_map and _category_map rows to use.'],
   ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],

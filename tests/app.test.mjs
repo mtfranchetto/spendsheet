@@ -305,13 +305,19 @@ describe('confirming from the app', () => {
 
   it('counts an override alone as confirmation, without a tick', () => {
     // Typing the category is a stronger statement than ticking a box next to
-    // it — the argument 00_config.gs makes about the `confirmed` column.
-    const c = book([tx({ uid: 'u-1' })]);
-    c.appConfirm([{ uid: 'u-1', subcategory_override: 'Restaurants' }]);
+    // it — the argument 00_config.gs makes about the `confirmed` column. Either
+    // override: picking a subcategory is the correction the review tab asks
+    // for, and its parent follows.
+    const sub = book([tx({ uid: 'u-1' })]);
+    sub.appConfirm([{ uid: 'u-1', subcategory_override: 'Restaurants' }]);
+    expect(sub.isConfirmedRow_(uidRow(sub, 'u-1'))).toBe(true);
 
-    expect(c.isConfirmedRow_(uidRow(c, 'u-1'))).toBe(false);
-    c.appConfirm([{ uid: 'u-1', category_override: 'Food & Drink' }]);
-    expect(c.isConfirmedRow_(uidRow(c, 'u-1'))).toBe(true);
+    const cat = book([tx({ uid: 'u-1' })]);
+    cat.appConfirm([{ uid: 'u-1', category_override: 'Food & Drink' }]);
+    expect(cat.isConfirmedRow_(uidRow(cat, 'u-1'))).toBe(true);
+
+    const neither = book([tx({ uid: 'u-1' })]);
+    expect(neither.isConfirmedRow_(uidRow(neither, 'u-1'))).toBe(false);
   });
 
   it('says which uid it could not find rather than failing the batch', () => {
