@@ -10,6 +10,33 @@
    * server and this form does not reimplement it; the hint is here because the
    * form is where you would otherwise wonder.
    */
+  /**
+   * Today, as a `yyyy-MM-dd` key — the later of the server's day and this
+   * phone's.
+   *
+   * `generatedAt` is the server's today *when `appOpen` last answered*, and
+   * nothing refreshes it while the page sits in a background tab: open the app
+   * in the evening, come back to it the next morning, and it is still
+   * yesterday. As the date field's `max` that is not merely a stale default but
+   * a picker that will not offer the day you spent the money. The phone's own
+   * date is never stale, so the later of the two is today whichever one is
+   * behind.
+   *
+   * Later rather than the phone's alone, because the server is the book's
+   * timezone and the phone may be west of it; and the server accepts one day
+   * past its own today for the phone that is east of it — see
+   * `cashEntryProblem_`.
+   */
+  function latestToday() {
+    var now = new Date();
+    var month = now.getMonth() + 1;
+    var day = now.getDate();
+    var phone = now.getFullYear() + '-' + (month < 10 ? '0' : '') + month + '-' +
+      (day < 10 ? '0' : '') + day;
+    var server = state.data.generatedAt || '';
+    return server > phone ? server : phone;
+  }
+
   function renderAdd(root) {
     // No tab reaches this screen any more, so it owes you the way back that a
     // tab bar used to be.
@@ -66,11 +93,12 @@
     var date = el('input');
     date.type = 'date';
     date.className = 'field';
-    date.value = state.data.generatedAt || '';
-    // Cash you have spent, so not after today — the server's day key, not the
-    // phone's clock. The picker greys the later days out; `cashEntryProblem_`
-    // is what actually refuses one, since a typed date can ignore `max`.
-    if (state.data.generatedAt) date.max = state.data.generatedAt;
+    // Cash you have spent, so today and nothing after it. The picker greys the
+    // later days out; `cashEntryProblem_` is what actually refuses one, since a
+    // native picker can ignore `max`.
+    var today = latestToday();
+    date.value = today;
+    date.max = today;
     add(form, date);
 
     add(form, el('label', null, 'Note'));

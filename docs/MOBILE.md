@@ -32,7 +32,7 @@ Amount fields group digits as you type, the way your phone writes numbers, so `1
 
 On **Update balance** the field arrives holding the current value and tapping it selects the whole number, so what you type replaces it.
 
-The date picker on **Add transaction** stops at today. It's for money you've already spent.
+**Add transaction** won't take a future date. It's for money you've already spent. The picker stops at today, and the server refuses anything later even if a picker lets it through. It does accept tomorrow, because a phone in a timezone east of your book can already be on the next day.
 
 ### Tapping a transaction
 

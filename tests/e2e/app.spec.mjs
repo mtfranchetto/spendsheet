@@ -862,6 +862,29 @@ test.describe('typing an amount', () => {
   });
 
   /*
+    Backspace straight after a separator deletes the digit before it.
+
+    The separator is the field's own, so removing it alone changes no digit and
+    the reformat draws it straight back with the caret where it was — a key that
+    does nothing however often it is pressed. Only reachable with the caret
+    beside a separator, which backspacing from the end never is.
+  */
+  test('backspace beside a separator deletes a digit rather than nothing', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('1234567');
+    await expect(field).toHaveValue('1,234,567');
+
+    await field.evaluate((input) => input.setSelectionRange(6, 6));
+    await page.keyboard.press('Backspace');
+    await expect(field).toHaveValue('123,567');
+
+    // And the caret stayed beside the deletion, so a second press keeps going.
+    await page.keyboard.press('Backspace');
+    await expect(field).toHaveValue('12,567');
+    expect(errors).toEqual([]);
+  });
+
+  /*
     A pre-filled amount is replaced by what you type, not added to.
 
     `renderSetValue` arrives holding the current balance and selects it on
@@ -884,6 +907,28 @@ test.describe('typing an amount', () => {
 
     await expect(field).toHaveValue('33,250');
     await expect(page.locator('#screens .card')).toContainText('recorded as one transaction');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    A page left open overnight still offers today.
+
+    `generatedAt` is the server's day at the moment `appOpen` answered, and it
+    is not refreshed while the page sits in the background. Used alone as the
+    picker's `max`, the morning after would refuse the day you spent the money.
+    The phone's clock is moved two days past the answer the preview was built
+    with, which is that morning.
+  */
+  test('offers today even when the server last answered on an earlier day', async ({ page, errors }) => {
+    const later = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    await page.clock.setFixedTime(later);
+
+    await openAdd(page);
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const phoneToday = later.getFullYear() + '-' + pad(later.getMonth() + 1) + '-' + pad(later.getDate());
+
+    await expect(page.locator('#screens input[type="date"]')).toHaveAttribute('max', phoneToday);
+    await expect(page.locator('#screens input[type="date"]')).toHaveValue(phoneToday);
     expect(errors).toEqual([]);
   });
 

@@ -386,8 +386,26 @@
    * dropped. Counting from the left would land a character early or late on
    * every one of those; the digits after the caret are the thing that did not
    * move.
+   *
+   * **A delete that removes only a separator takes the digit beside it
+   * instead.** The separator is the field's own, so the reformat puts it
+   * straight back and the digits right of the caret are unchanged — the caret
+   * returns to where it was, and Backspace pressed after `1,234,|567` is a dead
+   * key however many times you press it. Deleting the digit it was guarding is
+   * what the key press meant. Told apart by comparing the field with what it
+   * held a moment before, which `beforeinput` records.
    */
   function liveAmount(input) {
+    var before = '';
+    input.addEventListener('beforeinput', function () { before = input.value; });
+
+    var meaningful = function (text) {
+      var sep = amountSeparators();
+      return text.split('').filter(function (ch) {
+        return /\d/.test(ch) || ch === sep.decimal;
+      }).length;
+    };
+
     input.addEventListener('input', function (event) {
       var sep = amountSeparators();
       var text = input.value;
@@ -395,6 +413,21 @@
 
       if (event && (event.data === '.' || event.data === ',') && caret > 0) {
         text = text.slice(0, caret - 1) + sep.decimal + text.slice(caret);
+      }
+
+      var kind = (event && event.inputType) || '';
+      if (kind.indexOf('delete') === 0 && before && text.length < before.length &&
+          meaningful(text) === meaningful(before)) {
+        var backward = kind === 'deleteContentBackward';
+        var gone = backward ? caret - 1 : caret;
+        while (gone >= 0 && gone < text.length &&
+            !(/\d/.test(text.charAt(gone)) || text.charAt(gone) === sep.decimal)) {
+          gone += backward ? -1 : 1;
+        }
+        if (gone >= 0 && gone < text.length) {
+          text = text.slice(0, gone) + text.slice(gone + 1);
+          if (backward) caret = gone;
+        }
       }
 
       // A paste arrives with no key to go by, so it is read the forgiving way.

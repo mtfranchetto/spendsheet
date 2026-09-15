@@ -1413,6 +1413,44 @@ describe('adding cash from the app', () => {
     expect(c.readCell_(entry, 2, c.CASH_ENTRY_COLUMNS, 'note')).toBe('half typed');
   });
 
+  describe('the date', () => {
+    const today = (c) => c.dayNumber_(new Date(2026, 8, 15));
+    const entry = (date) => ({ amount: '3', account: 'Wallet', date: date });
+
+    it('takes today and any day before it', () => {
+      const c = cashBook();
+      expect(c.cashEntryProblem_(entry(new Date(2026, 8, 15)), today(c))).toBeNull();
+      expect(c.cashEntryProblem_(entry(new Date(2024, 0, 1)), today(c))).toBeNull();
+    });
+
+    it('takes tomorrow, because a phone east of the book is already there', () => {
+      const c = cashBook();
+      expect(c.cashEntryProblem_(entry(new Date(2026, 8, 16)), today(c))).toBeNull();
+    });
+
+    it('refuses a day that is not yet today anywhere', () => {
+      const c = cashBook();
+      expect(c.cashEntryProblem_(entry(new Date(2026, 8, 17)), today(c))).toMatch(/in the future/);
+    });
+
+    it('treats a blank date as today rather than as unreadable', () => {
+      // `isBlankCell_` before `toDate_`: a cleared date means "today", and a
+      // guard that only compared would have no date to compare.
+      const c = cashBook();
+      expect(c.cashEntryProblem_(entry(''), today(c))).toBeNull();
+      expect(c.cashEntryProblem_(entry(undefined), today(c))).toBeNull();
+    });
+
+    it('is refused by the endpoint itself, not only by the picker', () => {
+      // A native date picker can ignore `max`, and a page can send anything.
+      const c = cashBook();
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      expect(() => c.appAddCash(entry(nextWeek))).toThrow('in the future');
+      expect(ledger(c)).toHaveLength(0);
+    });
+  });
+
   it('refuses a blank amount rather than booking a zero-euro transaction', () => {
     // Number('') is 0 and isFinite(0) is true, so the obvious guard passes.
     const c = cashBook();
