@@ -20,6 +20,20 @@ Everything it writes goes to `transactions` and `cash_entry`, into the same colu
 
 ## Using it
 
+### The account tiles
+
+**A mark on a tile means something needs you.** 🟠 is a consent about to expire or a balance going stale, 🔴 is a bank that has to be reconnected, and either one also draws a coloured edge and a line saying which. A healthy bank has no mark at all, so a dot is never something your eye learns to skip. Cash tiles carry 💵 and asset tiles 📈, which say what kind of account they are rather than how it is doing — neither has a consent or a sync to check.
+
+Tap a tile for its transactions. **+ Add** on a cash tile and **↕ Update** on an asset tile are the two forms below. The labels are kept to one line on purpose: tiles sit two rows deep and every tile in a row is as tall as the tallest, so one label wrapping would make the whole row taller.
+
+### Typing an amount
+
+Amount fields group digits as you type, the way your phone writes numbers, so `1500000` reads `1,500,000` (or `1.500.000` on an Italian phone) before you've finished. **Either `.` or `,` works as the decimal point**, whichever your keyboard has: the key you pressed is what counts, not the separators the field draws itself. Only two decimals are kept.
+
+On **Update balance** the field arrives holding the current value and tapping it selects the whole number, so what you type replaces it.
+
+**Add transaction** won't take a future date. It's for money you've already spent. The picker stops at today, and the server refuses anything later even if a picker lets it through. It does accept tomorrow, because a phone in a timezone east of your book can already be on the next day.
+
 ### Tapping a transaction
 
 The sheet that opens asks **what the row is** before it asks what to file it under, because those are different questions and only the first changes the second.

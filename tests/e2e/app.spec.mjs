@@ -239,26 +239,32 @@ test.describe('the account tiles', () => {
   });
 
   /*
-    The secondary action starts where the tile's own text starts.
+    The secondary action is one line, starts where the tile's own text starts,
+    and stays inside the tile.
 
-    A button centres its label, and every `button.link` on the page is text you
-    read from the left — so the alignment is correct only while the label is
-    narrower than the box, and the box is exactly what the tiles took away: a
-    column went from 174px to 162px when the block became a scroller, which is
-    enough for "↕ Update balance" to wrap on the phone and centre both its
-    lines a few pixels right of the balance above it.
+    **One line**, because every tile in a grid row is as tall as the tallest: a
+    label that wraps makes its whole row of tiles a line taller, which is the
+    height this block exists to save. "+ Add transaction" and "↕ Update
+    balance" both wrapped at this width and added 23px to every tile beside
+    them.
 
-    Measured against the amount rather than against the tile's padding box,
-    because the padding is what the assertion would otherwise be restating; the
-    amount is the thing on screen the eye compares the button to.
+    **Left-aligned**, because a button centres its label and every
+    `button.link` on the page is text you read from the left. Measured against
+    the amount rather than the tile's padding box, because the padding is what
+    the assertion would otherwise be restating; the amount is the thing on
+    screen the eye compares the button to.
 
-    The narrow viewport is the point. At 390px WebKit fits "+ Add transaction"
-    on one line and a centred box lands flush left by arithmetic — the state
-    this is written to catch is invisible there, and passing at that width would
-    prove only that the label happened to be short. 320px is the narrowest the
-    tiles have to work at, and it wraps both labels.
+    **Inside the tile**, because the one-line half is `white-space: nowrap`,
+    and a nowrap label that outgrows its column does not wrap — it runs out
+    over the border and into the next tile. The bottom edge is checked for the
+    same reason: the button's lower padding is pulled into the tile's own with
+    a negative margin, and a margin larger than that padding would put the hit
+    box outside the thing it is drawn in.
+
+    320px is the narrowest the tiles have to work at, so it is the width where
+    all three can fail.
   */
-  test('left-align the action inside a tile, even when its label wraps', async ({ page, errors }) => {
+  test('keep the action inside a tile to one left-aligned line', async ({ page, errors }) => {
     await page.setViewportSize({ width: 320, height: 800 });
     await open(page);
     await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
@@ -275,10 +281,22 @@ test.describe('the account tiles', () => {
           const text = document.createRange();
           text.selectNodeContents(button);
 
+          // The tile's content box: its border box less the padding, since a
+          // label that reaches the padding is already over the visible edge
+          // of the text column.
+          const box = tile.getBoundingClientRect();
+          const style = getComputedStyle(tile);
+          const glyphs = text.getBoundingClientRect();
+          const hit = button.getBoundingClientRect();
+
           return {
             label: button.textContent,
             lines: text.getClientRects().length,
-            textLeft: text.getBoundingClientRect().left,
+            textLeft: glyphs.left,
+            textRight: glyphs.right,
+            contentRight: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
+            hitBottom: hit.bottom,
+            tileBottom: box.bottom - parseFloat(style.borderBottomWidth),
             amountLeft: tile.querySelector('.amount').getBoundingClientRect().left
           };
         });
@@ -287,10 +305,14 @@ test.describe('the account tiles', () => {
     expect(actions.length, 'no tile carries a secondary action').toBeGreaterThan(0);
 
     for (const action of actions) {
-      expect(action.lines, `"${action.label}" fits on one line at 320px, so this proves nothing`)
-        .toBeGreaterThan(1);
+      expect(action.lines, `"${action.label}" wraps at 320px, so its row of tiles grows a line`)
+        .toBe(1);
       expect(action.textLeft, `"${action.label}" does not start where the balance does`)
         .toBeCloseTo(action.amountLeft, 0);
+      expect(action.textRight, `"${action.label}" runs past the edge of its tile`)
+        .toBeLessThanOrEqual(action.contentRight + 0.5);
+      expect(action.hitBottom, `"${action.label}"'s tap target hangs below its tile`)
+        .toBeLessThanOrEqual(action.tileBottom + 0.5);
     }
 
     expect(errors).toEqual([]);
@@ -770,6 +792,175 @@ test.describe('the gestures', () => {
     expect(fired).toBeGreaterThan(96);
     await expect.poll(() => calls(page)).toContain('appConfirm');
     expect(errors).toEqual([]);
+  });
+});
+
+/*
+  An amount field groups its digits as they are typed.
+
+  Worth a browser for the two things only a browser has: `InputEvent.data`,
+  which is how the field knows a `,` was a key press rather than a separator it
+  drew itself, and the caret, which a reformat moves unless it is put back.
+  The keyboard is `page.keyboard`, so every character arrives as the input
+  event a phone would send — though a synthesised key is still not the iOS
+  decimal pad, and that half is the phone's to prove.
+*/
+test.describe('typing an amount', () => {
+  const openAdd = async (page) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Add transaction');
+    const field = page.locator('#screens input[inputmode="decimal"]');
+    await field.click();
+    return field;
+  };
+
+  test('groups the digits as they arrive', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('1500000');
+    await expect(field).toHaveValue('1,500,000');
+    expect(errors).toEqual([]);
+  });
+
+  test('takes either key as the decimal point, and sends the number', async ({ page, errors }) => {
+    const field = await openAdd(page);
+
+    // A comma on a phone whose own decimal point is a dot: the key pressed is
+    // what counts, so this is one thousand two hundred and thirty-four and a half.
+    await page.keyboard.type('1234,5');
+    await expect(field).toHaveValue('1,234.5');
+
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const sent = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0].amount));
+    expect(sent).toEqual([1234.5]);
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps the caret beside the digit just typed when a separator appears', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('123456');
+    await expect(field).toHaveValue('123,456');
+
+    // Into the middle, after the `1`, in a place where one more digit makes a
+    // new group: `1723,456` regroups to `1,723,456`, putting a separator ahead
+    // of the caret. Inserting where the groups do not change reformats nothing
+    // and would prove nothing — that is how the first version of this test
+    // passed against a page that never put the caret back at all.
+    //
+    // The second digit is the assertion. A caret left at its old offset lands
+    // before the `7`, and one that the browser sent to the end lands after the
+    // `6`; only a restored one puts the `8` after the `7`.
+    await field.evaluate((input) => input.setSelectionRange(1, 1));
+    await page.keyboard.type('7');
+    await expect(field).toHaveValue('1,723,456');
+    await page.keyboard.type('8');
+    await expect(field).toHaveValue('17,823,456');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    Backspace straight after a separator deletes the digit before it.
+
+    The separator is the field's own, so removing it alone changes no digit and
+    the reformat draws it straight back with the caret where it was — a key that
+    does nothing however often it is pressed. Only reachable with the caret
+    beside a separator, which backspacing from the end never is.
+  */
+  test('backspace beside a separator deletes a digit rather than nothing', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('1234567');
+    await expect(field).toHaveValue('1,234,567');
+
+    await field.evaluate((input) => input.setSelectionRange(6, 6));
+    await page.keyboard.press('Backspace');
+    await expect(field).toHaveValue('123,567');
+
+    // And the caret stayed beside the deletion, so a second press keeps going.
+    await page.keyboard.press('Backspace');
+    await expect(field).toHaveValue('12,567');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    A pre-filled amount is replaced by what you type, not added to.
+
+    `renderSetValue` arrives holding the current balance and selects it on
+    focus, so a new number replaces it. A selection made synchronously in
+    `focus` is collapsed by the tap that caused it, the digits go on the end —
+    and two-decimal grouping then drops every one of them, so the field looks
+    as if it ignored the keyboard. `tap` rather than `click`, because a touch
+    is the gesture whose caret placement does the collapsing.
+  */
+  test('replaces a pre-filled balance rather than appending to it', async ({ page, errors }) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: 'Update' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Update balance');
+
+    const field = page.locator('#screens input[inputmode="decimal"]');
+    await expect(field).not.toHaveValue('');
+    await field.tap();
+    await page.waitForTimeout(50);
+    await page.keyboard.type('33250');
+
+    await expect(field).toHaveValue('33,250');
+    await expect(page.locator('#screens .card')).toContainText('recorded as one transaction');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    A page left open overnight still offers today.
+
+    `generatedAt` is the server's day at the moment `appOpen` answered, and it
+    is not refreshed while the page sits in the background. Used alone as the
+    picker's `max`, the morning after would refuse the day you spent the money.
+    The phone's clock is moved two days past the answer the preview was built
+    with, which is that morning.
+  */
+  test('offers today even when the server last answered on an earlier day', async ({ page, errors }) => {
+    const later = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    await page.clock.setFixedTime(later);
+
+    await openAdd(page);
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const phoneToday = later.getFullYear() + '-' + pad(later.getMonth() + 1) + '-' + pad(later.getDate());
+
+    await expect(page.locator('#screens input[type="date"]')).toHaveAttribute('max', phoneToday);
+    await expect(page.locator('#screens input[type="date"]')).toHaveValue(phoneToday);
+    expect(errors).toEqual([]);
+  });
+
+  test('offers no date after today', async ({ page, errors }) => {
+    await openAdd(page);
+    const today = await page.evaluate(() => document.querySelector('#screens input[type="date"]').value);
+    expect(today, 'the date field arrived empty').not.toBe('');
+    await expect(page.locator('#screens input[type="date"]')).toHaveAttribute('max', today);
+    expect(errors).toEqual([]);
+  });
+
+  test.describe('on a phone that writes a comma for the decimal point', () => {
+    test.use({ locale: 'it-IT' });
+
+    /*
+      The case the whole design turns on. In it-IT the thousands separator is
+      a dot, so a field that read every `.` as a decimal point would read its
+      own grouping back as one — and deleting the last digit of `1.234` would
+      leave `1,23`, a thousand turned into one euro twenty-three.
+    */
+    test('does not read its own grouping back as a decimal point', async ({ page, errors }) => {
+      const field = await openAdd(page);
+
+      await page.keyboard.type('1234,50');
+      await expect(field).toHaveValue('1.234,50');
+
+      for (const expected of ['1.234,5', '1.234,', '1.234', '123']) {
+        await page.keyboard.press('Backspace');
+        await expect(field).toHaveValue(expected);
+      }
+      expect(errors).toEqual([]);
+    });
   });
 });
 

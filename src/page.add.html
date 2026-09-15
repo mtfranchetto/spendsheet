@@ -10,6 +10,33 @@
    * server and this form does not reimplement it; the hint is here because the
    * form is where you would otherwise wonder.
    */
+  /**
+   * Today, as a `yyyy-MM-dd` key — the later of the server's day and this
+   * phone's.
+   *
+   * `generatedAt` is the server's today *when `appOpen` last answered*, and
+   * nothing refreshes it while the page sits in a background tab: open the app
+   * in the evening, come back to it the next morning, and it is still
+   * yesterday. As the date field's `max` that is not merely a stale default but
+   * a picker that will not offer the day you spent the money. The phone's own
+   * date is never stale, so the later of the two is today whichever one is
+   * behind.
+   *
+   * Later rather than the phone's alone, because the server is the book's
+   * timezone and the phone may be west of it; and the server accepts one day
+   * past its own today for the phone that is east of it — see
+   * `cashEntryProblem_`.
+   */
+  function latestToday() {
+    var now = new Date();
+    var month = now.getMonth() + 1;
+    var day = now.getDate();
+    var phone = now.getFullYear() + '-' + (month < 10 ? '0' : '') + month + '-' +
+      (day < 10 ? '0' : '') + day;
+    var server = state.data.generatedAt || '';
+    return server > phone ? server : phone;
+  }
+
   function renderAdd(root) {
     // No tab reaches this screen any more, so it owes you the way back that a
     // tab bar used to be.
@@ -35,7 +62,8 @@
     // `3,50`, which a number input silently discards rather than rejecting.
     amount.inputMode = 'decimal';
     amount.className = 'field';
-    amount.placeholder = '3.50';
+    amount.placeholder = formatAmount(3.5);
+    liveAmount(amount);
     add(form, amount);
     add(form, el('div', 'muted',
       'No sign. A bare number is spending; an Income or Transfer category flips it.'));
@@ -65,7 +93,12 @@
     var date = el('input');
     date.type = 'date';
     date.className = 'field';
-    date.value = state.data.generatedAt || '';
+    // Cash you have spent, so today and nothing after it. The picker greys the
+    // later days out; `cashEntryProblem_` is what actually refuses one, since a
+    // native picker can ignore `max`.
+    var today = latestToday();
+    date.value = today;
+    date.max = today;
     add(form, date);
 
     add(form, el('label', null, 'Note'));
@@ -81,8 +114,12 @@
       submit.disabled = true;
       submit.textContent = 'Adding…';
 
+      // The number when there is one; otherwise what was typed, so the server's
+      // own words — "Type an amount", "not a number" — say what is wrong.
+      var typed = parseAmount(amount.value);
+
       call('appAddCash', {
-        amount: amount.value.replace(',', '.'),
+        amount: isFinite(typed) ? typed : amount.value,
         account: account.value,
         subcategory: chosen.subcategory,
         category: chosen.category,
@@ -174,12 +211,26 @@
     // discards silently rather than rejecting.
     value.inputMode = 'decimal';
     value.className = 'field';
+    // Before `describe`'s own `input` listener, so the preview reads the field
+    // after it has been reformatted rather than before.
+    liveAmount(value);
     add(form, value);
 
     // Tapping the field selects what is in it, because the field arrives
     // pre-filled — see `prefill`. Without this, correcting 12,700 to 14,500 on a
     // phone is eight taps of backspace before the first digit of the new number.
-    value.addEventListener('focus', function () { value.select(); });
+    //
+    // Deferred, because the tap that focuses the field is not finished when
+    // `focus` fires: its own caret placement lands afterwards and collapses a
+    // selection made synchronously. The digits then go on the *end* — and since
+    // `liveAmount` keeps two decimals, every one of them is dropped, so typing
+    // appears to do nothing at all. `setSelectionRange` rather than `select()`,
+    // which iOS Safari ignores on a text input.
+    value.addEventListener('focus', function () {
+      setTimeout(function () {
+        if (document.activeElement === value) value.setSelectionRange(0, value.value.length);
+      }, 0);
+    });
 
     var preview = el('div', 'muted');
     add(form, preview);
@@ -209,8 +260,8 @@
         ? 'No value recorded yet.'
         : 'Currently ' + money(was);
 
-      var typed = Number(String(value.value).replace(',', '.'));
-      if (!value.value || !isFinite(typed)) {
+      var typed = parseAmount(value.value);
+      if (!isFinite(typed)) {
         preview.textContent = '';
         submit.disabled = false;
         return;
@@ -247,11 +298,11 @@
      * memory or from the line just above, which is the transcription error this
      * screen exists to avoid. Editing 12,700.00 into 14,500.00 is one gesture.
      *
-     * A plain `toFixed(2)` and not `money()`: this value is read straight back
-     * by `Number(String(...).replace(',', '.'))`, so a currency symbol or a
-     * thousands separator would come back `NaN`. It is written with a dot even
-     * in a decimal-comma locale because that parser takes either, and a dot is
-     * the one of the two that cannot be mistaken for a group separator.
+     * `formatAmount` and not `money()`: this value is read straight back by
+     * `parseAmount`, which takes the grouping and decimal point the field
+     * itself draws but not a currency symbol — and it has to arrive looking
+     * exactly as `liveAmount` would have drawn it, or the first keystroke
+     * reflows the whole number under your thumb.
      *
      * Called on render and on every account change, never from `describe` —
      * `describe` runs on `input`, and prefilling from there would overwrite each
@@ -259,7 +310,7 @@
      */
     var prefill = function () {
       var was = chosen().balance;
-      value.value = was === null ? '' : was.toFixed(2);
+      value.value = was === null ? '' : formatAmount(was);
       pristine = true;
     };
 
@@ -270,8 +321,8 @@
 
     submit.addEventListener('click', function () {
       var was = chosen().balance;
-      var typed = Number(String(value.value).replace(',', '.'));
-      if (!value.value || !isFinite(typed)) return toast('Type the new value.');
+      var typed = parseAmount(value.value);
+      if (!isFinite(typed)) return toast('Type the new value.');
 
       var delta = Number((typed - (was || 0)).toFixed(2));
       if (delta === 0) return toast('That is what it already says.');

@@ -909,8 +909,21 @@ function webAppAddCash_(entry) {
  * project has now had to write down five times: `Number('')` is 0 and
  * `isFinite(0)` is true, so a blank amount passes the obvious guard and becomes
  * a €0 transaction that happened.
+ *
+ * **A date after tomorrow is refused, and tomorrow is not.** A cash entry is
+ * money already spent, so a future date is a mis-tap on the picker — and one
+ * that stays invisible, since every window ending today leaves it out. The day
+ * of grace is the phone: the page offers up to *its own* today, and a phone
+ * east of this book's timezone is already on the next calendar day. No
+ * timezone is more than a day ahead of any other, so tomorrow is the last day
+ * that can be today somewhere, and refusing it would refuse a coffee bought
+ * this morning in Tokyo. A blank date is today, as `cashEntryDate_` says.
+ *
+ * `today` is a day number, passed so the rule can be tested at a fixed date;
+ * left out it is this runtime's, which is the book's timezone. The function
+ * stays pure in everything but that default.
  */
-function cashEntryProblem_(entry) {
+function cashEntryProblem_(entry, today) {
   var request = entry || {};
 
   if (isBlankCell_(request.account)) return 'Pick an account.';
@@ -920,8 +933,12 @@ function cashEntryProblem_(entry) {
   if (!isFinite(amount)) return 'That amount is not a number.';
   if (amount === 0) return 'A zero-euro transaction is not a transaction.';
 
-  if (request.date !== undefined && request.date !== '' && !toDate_(request.date)) {
-    return 'That date cannot be read.';
+  if (isBlankCell_(request.date)) return null;
+  if (!toDate_(request.date)) return 'That date cannot be read.';
+
+  var now = today === undefined ? dayNumber_(new Date()) : today;
+  if (dayNumber_(request.date) > now + 1) {
+    return 'That date is in the future. A cash transaction is money already spent.';
   }
   return null;
 }
