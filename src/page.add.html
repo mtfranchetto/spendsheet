@@ -3,14 +3,6 @@
   // -------------------------------------------------------------------------
 
   /**
-   * A cash transaction.
-   *
-   * Type the amount without a sign — a bare number is spending, and an Income
-   * or Transfer category flips it. That rule lives in `cashEntryAmount` on the
-   * server and this form does not reimplement it; the hint is here because the
-   * form is where you would otherwise wonder.
-   */
-  /**
    * Today, as a `yyyy-MM-dd` key — the later of the server's day and this
    * phone's.
    *
@@ -37,6 +29,14 @@
     return server > phone ? server : phone;
   }
 
+  /**
+   * A cash transaction.
+   *
+   * Type the amount without a sign — a bare number is spending, and an Income
+   * or Transfer category flips it. That rule lives in `cashEntryAmount` on the
+   * server and this form does not reimplement it; the hint is here because the
+   * form is where you would otherwise wonder.
+   */
   function renderAdd(root) {
     // No tab reaches this screen any more, so it owes you the way back that a
     // tab bar used to be.
@@ -89,6 +89,21 @@
     var picker = categorySelect({ firstLabel: 'Uncategorised' });
     add(form, picker.node);
 
+    // The chips the edit sheet draws, starting from none. Hidden while the
+    // category is a Transfer, for the reason that sheet's transfer pane gives —
+    // and not sent then either, since hidden chips still hold what was ticked
+    // and `webAppAddCash_` refuses labels on a transfer. They stay ticked across
+    // an add, like the account and the category: three coffees on one trip is
+    // three entries under the same label.
+    var labels = labelChips({ labels: [] });
+    add(form, labels.node);
+    var isTransfer = function () {
+      return kindOfCategory(picker.chosen().category) === TRANSFER;
+    };
+    picker.node.addEventListener('change', function () {
+      labels.node.hidden = isTransfer();
+    });
+
     add(form, el('label', null, 'Date'));
     var date = el('input');
     date.type = 'date';
@@ -124,7 +139,8 @@
         subcategory: chosen.subcategory,
         category: chosen.category,
         date: date.value,
-        note: note.value
+        note: note.value,
+        labels: isTransfer() ? [] : labels.chosen()
       }).then(function (result) {
         // `inserted` is not necessarily *your* row: the drain takes every
         // complete unprocessed one, including a half-typed entry sitting on

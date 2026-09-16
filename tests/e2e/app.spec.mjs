@@ -317,6 +317,29 @@ test.describe('the account tiles', () => {
 
     expect(errors).toEqual([]);
   });
+
+  test('mark a bank with what it is, and a dot only when it needs one', async ({ page, errors }) => {
+    // 🟢 on every healthy tile was an alert glyph repeated down the screen
+    // saying nothing, and it trains the eye to skip the dots — including the
+    // one that is not green. A kind is not a state: 🏦, 💵 and 📈 say what the
+    // account is, so the coloured dot is still the only one on the row.
+    await open(page);
+    await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
+
+    const marks = await page.evaluate(() => {
+      const of = (name) => Array.from(document.querySelectorAll('#screens .tile'))
+        .find((tile) => tile.textContent.includes(name));
+      return ['Revolut', 'Fineco', 'Wallet', 'Degiro']
+        .map((name) => [name, of(name).querySelector('.who span').textContent]);
+    });
+
+    expect(Object.fromEntries(marks)).toEqual({
+      Revolut: '\u{1F3E6}', Fineco: '\u{1F7E0}',
+      Wallet: '\u{1F4B5}', Degiro: '\u{1F4C8}'
+    });
+    expect(await page.locator('#screens .tiles').textContent()).not.toContain('\u{1F7E2}');
+    expect(errors).toEqual([]);
+  });
 });
 
 /*
@@ -1059,6 +1082,121 @@ test.describe('deleting a cash transaction', () => {
     // happened to be filtered to unconfirmed.
     await expect(page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }))
       .toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('labels on a cash entry', () => {
+  const openAdd = async (page) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Add transaction');
+  };
+
+  const chip = (page, name) => page.locator('#screens .chip', { hasText: name });
+
+  test('sends what is ticked, in the shape the column holds', async ({ page, errors }) => {
+    await openAdd(page);
+    await page.locator('#screens input[inputmode="decimal"]').fill('12');
+    await chip(page, 'travel').click();
+
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const [sent] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    expect(sent.labels).toEqual(['travel']);
+    expect(errors).toEqual([]);
+  });
+
+  test('takes the chips away on a transfer, and sends none', async ({ page, errors }) => {
+    // The rule the edit sheet's transfer pane already keeps, and the server
+    // refuses the same write: a label is an axis over spending, and a transfer
+    // is counted in neither direction.
+    await openAdd(page);
+    await page.locator('#screens input[inputmode="decimal"]').fill('12');
+    await chip(page, 'travel').click();
+
+    // By value rather than by label: the label carries the category's icon.
+    await page.locator('#screens select.field').last()
+      .selectOption('c:Between accounts');
+    await expect(chip(page, 'travel')).toBeHidden();
+
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const [sent] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    expect(sent.labels).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('editing the amount of a cash transaction', () => {
+  const openCash = async (page) => {
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }).click();
+    await expect(page.locator('#sheet')).toBeVisible();
+    return page.locator('#sheet input[inputmode="decimal"]');
+  };
+
+  const sentDecisions = (page) => page.evaluate(() =>
+    window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0][0]));
+
+  test('offers no amount field on a row the bank sent', async ({ page, errors }) => {
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+
+    await expect(page.locator('#sheet')).toBeVisible();
+    await expect(page.locator('#sheet input[inputmode="decimal"]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('arrives holding the size, and sends the corrected one', async ({ page, errors }) => {
+    // The row is −6.50 and the field says 6.50: the sign is not in the amount,
+    // here as everywhere else in this project.
+    await open(page);
+    const field = await openCash(page);
+    await expect(field).toHaveValue('6.50');
+
+    await field.fill('');
+    await page.keyboard.type('8.20');
+    await page.locator('#sheet button.primary').click();
+
+    await expect.poll(() => calls(page)).toContain('appConfirm');
+    expect((await sentDecisions(page))[0].amount).toBe(8.2);
+    expect(errors).toEqual([]);
+  });
+
+  test('sends no amount at all when the field was not touched', async ({ page, errors }) => {
+    // Present-and-unchanged and absent are different requests: the writer
+    // reports an amount it wrote, and a confirm that always sent one would
+    // report a change on every tap.
+    await open(page);
+    await openCash(page);
+
+    await page.locator('#sheet button.primary').click();
+    await expect.poll(() => calls(page)).toContain('appConfirm');
+
+    expect((await sentDecisions(page))[0]).not.toHaveProperty('amount');
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps the sheet open and says so rather than sending a blank', async ({ page, errors }) => {
+    // The sheet closes on an optimistic redraw, so a refusal has to happen
+    // before it does — otherwise the row goes back a round trip later with a
+    // toast, which looks like a tap that did not land.
+    await open(page);
+    const field = await openCash(page);
+
+    await field.fill('');
+    await page.locator('#sheet button.primary').click();
+
+    await expect(page.locator('#toast')).toContainText('Type an amount');
+    await expect(page.locator('#sheet')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await calls(page)).not.toContain('appConfirm');
     expect(errors).toEqual([]);
   });
 });

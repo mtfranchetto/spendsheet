@@ -183,27 +183,27 @@
 
   /**
    * An account's mark, which is a problem when there is one and otherwise
-   * what kind of account it is — or nothing.
+   * what kind of account it is.
    *
-   * **A healthy bank gets no mark at all.** A dot on every tile that means
-   * "nothing is wrong" is an alert glyph repeated down the screen saying
+   * **A healthy bank gets 🏦, not a green dot.** A dot on every tile that
+   * means "nothing is wrong" is an alert glyph repeated down the screen saying
    * nothing, and it trains the eye to skip the dots — including the one that
-   * isn't green. An orange or red one on an otherwise unmarked row is seen
-   * without reading anything, which is the whole job, and the tile's coloured
+   * isn't green. A kind of account is not a state, so an orange or red dot
+   * among 🏦, 💵 and 📈 is still the only coloured disc on the row and is seen
+   * without reading anything, which is the whole job; the tile's coloured
    * edge, its note line and its `aria-label` all say the same thing again.
    *
-   * Cash and assets get a mark of their own rather than a health dot. Neither
-   * has a consent or a sync, so `accountState_` gives both severity 0 by
-   * definition, and a green dot on one would be reporting a check that never
-   * ran. 📈 is the icon the seed gives `Valuation change`, which is how an asset
-   * moves.
+   * Cash and assets get a mark of their own for the same reason. Neither has a
+   * consent or a sync, so `accountState_` gives both severity 0 by definition,
+   * and a green dot on one would be reporting a check that never ran. 📈 is the
+   * icon the seed gives `Valuation change`, which is how an asset moves.
    */
   function accountEmoji(account) {
     if (account.severity === 2) return '\u{1F534}';
     if (account.severity === 1) return '\u{1F7E0}';
     if (isCashAccount(account.name)) return '\u{1F4B5}';
     if (assetAccount(account.name)) return '\u{1F4C8}';
-    return '';
+    return '\u{1F3E6}';
   }
 
   /** The server already knows which accounts take cash entries; it sends the list. */
@@ -245,9 +245,7 @@
     face.type = 'button';
 
     var who = el('div', 'who');
-    // No span at all when there is no mark, or `.who`'s gap indents the name.
-    var mark = accountEmoji(account);
-    if (mark) add(who, el('span', null, mark));
+    add(who, el('span', null, accountEmoji(account)));
     add(who, add(el('div', 'ellipsis grow'), document.createTextNode(account.name)));
     add(face, who);
 
