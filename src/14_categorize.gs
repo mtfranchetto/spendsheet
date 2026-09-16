@@ -863,7 +863,18 @@ function planMemory_() {
   var memory = ss.getSheetByName(TABS.MEMORY);
   if (!tx || !memory) return { error: 'Run Setup sheet first — a tab is missing.', missing: true };
 
-  var derived = deriveMemory_(readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid')));
+  var records = readRecords_(tx, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'));
+
+  // Overrides "Remove synced duplicates" copied from an imported row are the
+  // import's filing on a synced row, not corrections — see inheritedOverrides_.
+  var removedSheet = ss.getSheetByName(TABS.REMOVED);
+  var removed = removedSheet
+    ? readRecords_(removedSheet, TX_COLUMNS, colIndex_(TX_COLUMNS, 'uid'))
+    : [];
+  var inherited = inheritedOverrides_(records, removed,
+    configNumber_(readConfig_(), 'duplicate_window_days'));
+
+  var derived = deriveMemory_(records, inherited);
   if (!derived.entries.length) {
     return {
       error: 'Nothing to learn from yet.\n\n' + derived.considered + ' rows were confirmed, and none ' +
@@ -942,7 +953,11 @@ function sameMoment_(a, b) {
  * imported row keeps it. Read as corrections, a five-year history would hand
  * each merchant to whichever imported row was booked last. Imported rows vote.
  * The cost is that hand-correcting an imported row votes too — nothing records
- * what the import originally wrote, so the two cannot be told apart.
+ * what the import originally wrote, so the two cannot be told apart. The same
+ * goes for the synced row that survives "Remove synced duplicates": the merge
+ * copies the imported category onto it, and `inherited`
+ * (`inheritedOverrides_`, in 15_duplicates.gs) names those copies so they vote
+ * as the imported row would have.
  *
  * Mixed is judged on corrections only. Judging it on imported history as well
  * would make a supermarket imported as Groceries and corrected to Shopping a
@@ -957,7 +972,7 @@ function sameMoment_(a, b) {
  *
  * Pure: takes records, returns entries. No sheet, so it is tested directly.
  */
-function deriveMemory_(records) {
+function deriveMemory_(records, inherited) {
   var buckets = {};
   var considered = 0;
 
@@ -984,7 +999,7 @@ function deriveMemory_(records) {
     var bucket = buckets[key] = buckets[key] ||
       { key: key, categories: {}, lastSeen: null, corrections: [] };
 
-    if (correctionYouTyped_(record)) {
+    if (correctionYouTyped_(record, inherited)) {
       bucket.corrections.push({ category: category, subcategory: subcategory, date: date });
     }
 
@@ -1055,10 +1070,17 @@ function memoryEntry_(bucket) {
  * A correction typed on the row, rather than a category the import put there.
  *
  * Both overrides count, and a row the import brought in counts as neither —
- * see `deriveMemory_` for why.
+ * see `deriveMemory_` for why. Nor does an override "Remove synced duplicates"
+ * copied onto a synced row from the imported one it replaced: `inherited` names
+ * those, column by column, so a row with one copied override and one you typed
+ * beside it is still a correction.
  */
-function correctionYouTyped_(record) {
-  return hasOverride_(record) && !isImportedSource_(record.source);
+function correctionYouTyped_(record, inherited) {
+  if (isImportedSource_(record.source)) return false;
+  var copied = (inherited || {})[cellText_(record.uid)] || {};
+  return ['category_override', 'subcategory_override'].some(function (name) {
+    return !isBlankCell_(record[name]) && !copied[name];
+  });
 }
 
 /** One category, and at most one named subcategory. A blank child is not a disagreement. */

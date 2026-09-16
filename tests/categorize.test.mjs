@@ -676,6 +676,23 @@ describe('deriveMemory_', () => {
       });
     });
 
+    it('does not count an override the duplicate merge copied as a correction', () => {
+      // The survivor of "Remove synced duplicates" carries the imported row's
+      // category on a row whose source is the bank's. It votes, as the
+      // imported row did; a second override you typed beside it still counts.
+      const survivor = corrected('Insurance', '', day(9), { uid: 's1', source: 'enablebanking' });
+      const ticks = [plain('Housing'), plain('Housing')];
+
+      const copied = ctx.deriveMemory_(ticks.concat([survivor]), { s1: { category_override: true } });
+      expect(copied.entries[0].decidedBy).toBe('vote');
+      expect(copied.entries[0].category).toBe('Housing');
+
+      const typedBeside = ctx.deriveMemory_(
+        ticks.concat([Object.assign({}, survivor, { subcategory_override: 'Life', subcategory: 'Life' })]),
+        { s1: { category_override: true } });
+      expect(typedBeside.entries[0].decidedBy).toBe('correction');
+    });
+
     it('learns from a subcategory you picked without ticking anything', () => {
       // The review tab's normal path: pick Groceries and the category follows.
       // It counts as a correction even on a row a rule had answered.

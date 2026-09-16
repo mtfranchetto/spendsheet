@@ -44,6 +44,8 @@ The two rows describe the same money, so neither is more true. The tie used to b
 
 So the survivor is the bank's row, and what the imported row was carrying is copied onto it first. **Blanks only** — if the survivor already has a category you set from the phone, that is newer information about the same money and it wins.
 
+A category copied this way is still your old tool's filing, and memory treats it that way. It votes as the imported row did and never decides a merchant the way a correction you typed does. The row itself can't say where its category came from, so memory pairs it again with the copy kept in `_removed` and compares the two. That's one more reason not to clear `_removed` casually. [How memory decides](CATEGORIES.md#how-memory-decides).
+
 ### The safety rails
 
 - Every removed row is written to **`_removed`** first, with the same columns as `transactions`, so putting one back is a paste. A second run appends rather than overwriting the first run's evidence.
