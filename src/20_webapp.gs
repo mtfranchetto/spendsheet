@@ -466,8 +466,18 @@ function requireInteractive_() {
  * `ScriptApp.AuthMode.FULL`. A browser can pass arguments through
  * `google.script.run`, but only JSON — strings, numbers, plain objects and
  * arrays — so it can send `{ authMode: 'FULL' }` and never the enum itself.
- * That is why the comparison is `===`. `==` would coerce the enum to its name
- * and let the string through.
+ * That is why `==` is not used: it would coerce the enum to its name and let
+ * the string through.
+ *
+ * Identity is accepted first. Google does not document whether the event
+ * holds the *same object* as `ScriptApp.AuthMode.FULL` or a separately
+ * wrapped one, and getting that wrong would stop the sync, the alarm and the
+ * backup together. So a value built on the same prototype as the enum, whose
+ * name is `FULL`, is accepted too. JSON cannot build that either. A plain
+ * object's prototype is `Object.prototype` and it has no `toString` of its own,
+ * so it prints as `[object Object]`. An array's prototype is `Array.prototype`.
+ * A refused value with an `authMode` is logged by type, so a trigger this turns
+ * away says why in its execution log.
  *
  * ## Why not a private name instead
  *
@@ -483,8 +493,23 @@ function requireInteractive_() {
  * editor, working as before.
  */
 function requireScheduled_(e) {
-  if (e && e.authMode === ScriptApp.AuthMode.FULL) return;
+  if (isTriggerEvent_(e)) return;
+  if (e && e.authMode !== undefined) {
+    Logger.log('requireScheduled_: not a trigger event, authMode was a ' + typeof e.authMode);
+  }
   requireInteractive_();
+}
+
+function isTriggerEvent_(e) {
+  var full = ScriptApp.AuthMode.FULL;
+  var mode = e && e.authMode;
+  if (mode === full) return true;
+  if (!mode || typeof mode !== 'object') return false;
+  try {
+    return Object.getPrototypeOf(mode) === Object.getPrototypeOf(full) && String(mode) === String(full);
+  } catch (err) {
+    return false;
+  }
 }
 
 /**

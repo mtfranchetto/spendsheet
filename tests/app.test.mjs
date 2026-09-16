@@ -157,9 +157,9 @@ describe('the gate on every public function in the project', () => {
   // *any* global whose name lacks a trailing `_`, and Door 1 — the consent
   // redirect — is served to anyone by necessity, bridge and all. So a stranger
   // who loads that URL can call any public function, and it runs with the
-  // owner's authority. That is how the ungated `ebGet*` wrappers once returned
-  // balances and `saveCredentials` overwrote the PEM, and how `syncAll` could
-  // spend the bank's daily allowance with nobody at the keyboard.
+  // owner's authority. A function a stranger can reach can return balances,
+  // overwrite the PEM, or spend the bank's daily allowance with nobody at the
+  // keyboard.
   //
   // So the rule covers every public function rather than a list of them. Each
   // one must do one of three things:
@@ -385,12 +385,28 @@ describe('the gate on every public function in the project', () => {
       expect(() => c.requireScheduled_({ authMode: c.ScriptApp.AuthMode.FULL, triggerUid: '1' })).not.toThrow();
     });
 
+    it('lets it through when the runtime wraps the enum afresh rather than handing over the member', () => {
+      // Whether the event holds the member itself is not documented. A copy
+      // with the member's prototype and name has to pass, or the sync, the
+      // alarm and the backup all stop on the day the runtime rewraps it.
+      const c = anonymous();
+      const full = c.ScriptApp.AuthMode.FULL;
+      const rewrapped = Object.freeze(Object.assign(Object.create(Object.getPrototypeOf(full)),
+        { toString: () => 'FULL' }));
+      expect(rewrapped).not.toBe(full);
+      expect(() => c.requireScheduled_({ authMode: rewrapped })).not.toThrow();
+    });
+
     it('refuses everything a browser can send in place of the event', () => {
       // `google.script.run` carries JSON, so the enum's name is the closest a
       // caller can get, in every shape JSON has.
       const c = anonymous();
+      // The last two are JSON as a careless deserialiser might assign it: an
+      // own `toString` that is a string, and `__proto__` set to an array, which
+      // borrows `Array.prototype.toString` to print `FULL`.
       [undefined, null, 'FULL', { authMode: 'FULL' }, { authMode: ['FULL'] }, { authMode: {} },
-        { authMode: c.ScriptApp.AuthMode.LIMITED }].forEach((e) => {
+        { authMode: c.ScriptApp.AuthMode.LIMITED }, { authMode: { toString: 'FULL' } },
+        { authMode: Object.setPrototypeOf({}, ['FULL']) }].forEach((e) => {
         expect(() => c.requireScheduled_(e), JSON.stringify(e)).toThrow('Not available');
       });
     });
