@@ -451,21 +451,25 @@ function requireInteractive_() {
 
 /**
  * The gate for a function a time-driven trigger names: `syncScheduled`,
- * `selfCheck`, `snapshotToDrive`.
+ * `selfCheck`, `snapshotToDrive`, `learnScheduled`.
  *
  * A trigger names its handler as a string, so the handler has to be a public
- * global — and every public global is on Door 1's surface. These three are not
+ * global — and every public global is on Door 1's surface. None of these is
  * harmless there. Each spends something with the owner's authority: a sync
  * spends the bank's daily allowance, where an overrun is a penalty measured in
- * hours; the health check sends mail; the snapshot writes to Drive. And the
- * last two return what they found.
+ * hours; the health check sends mail; the snapshot writes to Drive; the memory
+ * rebuild writes `_memory` and spends a revision of the book's history. The
+ * health check and the snapshot also return what they found.
  *
  * ## Why the event object, and why it cannot be forged
  *
  * A real trigger run passes an event whose `authMode` is the enum
  * `ScriptApp.AuthMode.FULL`. A browser can pass arguments through
  * `google.script.run`, but only JSON — strings, numbers, plain objects and
- * arrays — so it can send `{ authMode: 'FULL' }` and never the enum itself.
+ * arrays — plus a form, whose file inputs arrive as Blobs. None of those is
+ * built on the enum's prototype, so it can send `{ authMode: 'FULL' }` and
+ * never the enum itself. Loosening the check to "any object that is not a
+ * plain one" would let a Blob through; keep it to the enum's own prototype.
  * That is why `==` is not used: it would coerce the enum to its name and let
  * the string through.
  *
