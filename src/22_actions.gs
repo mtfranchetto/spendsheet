@@ -51,9 +51,12 @@
  * `applyProtection_` sets **warning-only** protections, which do not block a
  * script write at all — they are a hint to a person, not a lock on the code.
  * So the rule that code owns `transactions` A–O and you own P onward is kept
- * here by being kept: the only columns written below are `confirmed`,
- * `category_override` and `subcategory_override`. A write to A–O from a page
- * would land silently and break row identity for ever.
+ * here by being kept: what is written below is `confirmed`, `category_override`,
+ * `subcategory_override`, `labels` and `transfer_group` — all of them past O —
+ * plus exactly two cells inside A–O, `description` and `amount`, each gated on
+ * the row's source by a function of its own and each re-asked here rather than
+ * trusted from the page. Anything else written to A–O would land silently and
+ * break row identity for ever.
  */
 
 /**
@@ -72,9 +75,10 @@ var MAX_APP_DECISIONS = 100;
  * Push a batch of decisions from the app back into `transactions`.
  *
  * A decision is `{uid, confirmed?, category_override?, subcategory_override?,
- * labels?}`, and the uid is the whole of the addressing. The same choice
- * `17_review.gs` makes and for the same reason: a list on a phone re-sorts as
- * you act on it, so a position is not a thing you can send back.
+ * labels?, description?, amount?}`, and the uid is the whole of the addressing.
+ * The same choice `17_review.gs` makes and for the same reason: a list on a
+ * phone re-sorts as you act on it, so a position is not a thing you can send
+ * back.
  *
  * The three rules, each one taken from `writeReviewRow_`:
  *
@@ -143,6 +147,34 @@ function applyReviewDecisions_(decisions) {
     var wrote = [];
     var refused = [];
 
+    /*
+      The amount, and it goes first so that a refusal writes nothing at all.
+
+      The other A–O write, beside the description below, and gated the same way
+      for a stricter reason — see `amountIsEditable_`, which is re-read from the
+      sheet here rather than trusted from the page. `editedAmount_` decides
+      what is stored, including the sign, which the page never sends.
+    */
+    if (decision.amount !== undefined && decision.amount !== null) {
+      if (!amountIsEditable_(readCell_(tx, row, TX_COLUMNS, 'source'),
+        readCell_(tx, row, TX_COLUMNS, 'transfer_group'))) {
+        result.skipped++;
+        result.results.push({ uid: uid, ok: false, reason: 'only cash you typed, ' +
+          'and not paired in a transfer, can have its amount changed' });
+        return;
+      }
+
+      var edit = editedAmount_(decision.amount, readCell_(tx, row, TX_COLUMNS, 'amount'));
+      if (edit.problem) {
+        result.skipped++;
+        result.results.push({ uid: uid, ok: false, reason: edit.problem });
+        return;
+      }
+
+      writeCell_(tx, row, TX_COLUMNS, 'amount', edit.amount);
+      wrote.push('amount');
+    }
+
     if (!isBlankCell_(decision.category_override)) {
       writeCell_(tx, row, TX_COLUMNS, 'category_override', decision.category_override);
       wrote.push('category_override');
@@ -187,10 +219,11 @@ function applyReviewDecisions_(decisions) {
     }
 
     /*
-      The description, and **the only write here that can be refused.**
+      The description, and with the amount above **the only writes here that
+      can be refused.**
 
-      It is also the only one that touches A–O, the half of `transactions` the
-      code owns — every other cell above is an override column, which exists
+      They are also the only two that touch A–O, the half of `transactions` the
+      code owns — every other cell is an override column, which exists
       precisely so that your opinion and the bank's can both be on the row. A
       description has no override column, so changing it means changing the
       stored value.
@@ -297,6 +330,49 @@ function resolvesToTransfer_(tx, row, decision, kinds) {
   }
 
   return String(readCell_(tx, row, TX_COLUMNS, 'type')) === TX_TYPE.TRANSFER;
+}
+
+/**
+ * What an amount edit stores, as `{amount}`, or why it cannot, as `{problem}`.
+ *
+ * **The edit changes how much, never which way.** The page sends a size and
+ * the row keeps the sign it already has. The obvious alternative was to
+ * re-run `cashEntryAmount` against the row's category, so that adding and
+ * editing shared one sign rule — and that silently inverts the one case the
+ * rule's minus sign exists for. Cash paid into a bank is typed as `-50` under
+ * Transfer and stored as −50; the field shows it as `50`, and re-deriving the
+ * sign from Transfer on save would store +50: the deposit becomes a
+ * withdrawal because somebody corrected a digit. Direction is decided once,
+ * when the entry is made, and a later category change has never flipped it
+ * either — the sign is never in the amount, here as everywhere else.
+ *
+ * So a typed minus is refused rather than obeyed or dropped. Obeying it would
+ * make the field a sign control half the time; dropping it would ignore
+ * something typed on purpose. A row going the wrong way is deleted and added
+ * again, which is two taps on the one source that can be deleted.
+ *
+ * `isBlankCell_` before `Number`, for the reason every numeric read in this
+ * project has it: `Number('')` is 0, and a cleared field would otherwise be a
+ * zero-euro transaction. A stored amount that is not a number is refused too:
+ * there is no sign to keep, and guessing one is the thing being avoided.
+ */
+function editedAmount_(typed, stored) {
+  if (isBlankCell_(typed)) return { problem: 'an amount cannot be blank' };
+
+  var size = Number(typed);
+  if (!isFinite(size)) return { problem: 'that amount is not a number' };
+  if (size === 0) return { problem: 'a zero-euro transaction is not a transaction' };
+  if (size < 0) {
+    return { problem: 'type the amount without a sign — editing it changes ' +
+      'how much, not which way' };
+  }
+
+  var was = isBlankCell_(stored) ? NaN : Number(stored);
+  if (!isFinite(was) || was === 0) {
+    return { problem: 'this row has no amount to keep the direction of' };
+  }
+
+  return { amount: was < 0 ? -size : size };
 }
 
 /** A `categoryKinds_()` that is only paid for if something asks. */
@@ -417,6 +493,26 @@ function webAppLinkTransfer_(request) {
   }
   if (target && String(target.account_id) === String(source.account_id)) {
     throw new Error('That is the same account the transaction is already on.');
+  }
+
+  // An amount corrected in the same press, checked before anything is written
+  // and applied to `source` before the leg below is built from it — so a leg
+  // written now mirrors the corrected figure, not the mistyped one. A row that
+  // already carries a group is refused: its partner holds the old figure.
+  if (want.amount !== undefined && want.amount !== null) {
+    if (!amountIsEditable_(source.source, source.transfer_group)) {
+      throw new Error('Only cash you typed, and not already paired in a transfer, ' +
+        'can have its amount changed.');
+    }
+    // Sentence-cased on the way out: the same words are a per-row `reason` in
+    // `applyReviewDecisions_` and are a thrown message here, and this endpoint
+    // has no per-field result to report a partial failure through.
+    var edit = editedAmount_(want.amount, source.amount);
+    if (edit.problem) {
+      throw new Error(edit.problem.charAt(0).toUpperCase() + edit.problem.slice(1) + '.');
+    }
+    writeCell_(tx, row, TX_COLUMNS, 'amount', edit.amount);
+    source.amount = edit.amount;
   }
 
   // The category is how this book stores transfer-ness — `type` is a formula
@@ -855,6 +951,26 @@ function webAppAddCash_(entry) {
     cashDirectionProblem_(request, categories.kinds);
   if (problem) throw new Error(problem);
 
+  /*
+    Labels, stored the way a confirmation stores them — `normalizeLabels_`, so
+    an array from the chips and a string typed on the tab both land as
+    `kids, travel` — and **refused on a transfer**, for the reason
+    `applyReviewDecisions_` gives: a label is an axis over spending, and a
+    transfer is excluded from every total a label could filter.
+
+    Thrown rather than dropped, unlike the confirm path, because there is
+    nothing else in this request to save around it: the page hides the chips
+    when a Transfer category is picked, so labels arriving with one are a page
+    that disagrees with this rule, and quietly writing the entry without them
+    would be filing something other than what was asked. Keyed on the parent,
+    which the picker always sends with a child.
+  */
+  var labels = normalizeLabels_(request.labels);
+  var kind = String(categories.kinds[String(request.category || '')]);
+  if (labels && kind === TX_TYPE.TRANSFER) {
+    throw new Error('A transfer takes no labels.');
+  }
+
   // Placed by `lastFilledRow_` rather than through `appendRows_`, because that
   // one needs a key column and this tab has none: it is filled in whatever
   // order you type, which is exactly why `drainCashEntries_` reads it with
@@ -869,7 +985,7 @@ function webAppAddCash_(entry) {
     category: String(request.category || ''),
     subcategory: String(request.subcategory || ''),
     note: String(request.note || ''),
-    labels: String(request.labels || ''),
+    labels: labels,
     processed: ''
   })]);
 

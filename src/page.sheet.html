@@ -655,6 +655,49 @@
       return typed;
     };
 
+    /**
+     * The amount, on cash you typed that is not half of a transfer.
+     *
+     * `editableAmount` is the server's answer and `amountIsEditable_` asks it
+     * again before writing. The field holds the **size** and the row keeps its
+     * direction — see `editedAmount_` for why the sign is not re-derived from
+     * the category — so it arrives as the absolute figure, drawn the way
+     * `liveAmount` would draw it so the first keystroke does not reflow it.
+     */
+    var resize = null;
+    var storedSize = record.rawAmount === null || record.rawAmount === undefined
+      ? NaN : Math.abs(Number(record.rawAmount));
+    if (record.editableAmount) {
+      add(body, el('label', null, 'Amount'));
+      resize = el('input');
+      resize.type = 'text';
+      // `inputmode` rather than `type=number`, for the reason `renderAdd` gives.
+      resize.inputMode = 'decimal';
+      resize.className = 'field';
+      liveAmount(resize);
+      resize.value = isFinite(storedSize) ? formatAmount(storedSize) : '';
+      add(body, resize);
+      add(body, el('div', 'muted', 'How much, not which way \u{2014} the direction stays as it is.'));
+    }
+
+    /**
+     * `{ amount }` to send, `{}` when it was not touched, or `{ problem }` —
+     * checked here, before the sheet closes on an optimistic redraw, in the
+     * server's own terms. Compared at two decimals, because that is all the
+     * field keeps and a float that differs past them is not an edit.
+     */
+    var resizedTo = function () {
+      if (!resize) return {};
+      var typed = parseAmount(resize.value);
+      if (!isFinite(typed)) return { problem: 'Type an amount.' };
+      if (typed < 0) return { problem: 'Type the amount without a sign.' };
+      if (Number(typed.toFixed(2)) === 0) {
+        return { problem: 'A zero-euro transaction is not a transaction.' };
+      }
+      if (isFinite(storedSize) && typed.toFixed(2) === storedSize.toFixed(2)) return {};
+      return { amount: typed };
+    };
+
     // What the row is now, and what you are proposing it should be. They start
     // equal and the tabs move the second one only.
     var was = kindOfRecord(record);
@@ -715,8 +758,11 @@
         if (moving && !picker.answered()) {
           return toast('Pick the category it should be instead.');
         }
+        var resized = resizedTo();
+        if (resized.problem) return toast(resized.problem);
 
         var decision = picker.chosen();
+        if (resized.amount !== undefined) decision.amount = resized.amount;
         decision.uid = record.uid;
         decision.confirmed = true;
         // Always sent, because the chips always show the row's current value —
@@ -775,6 +821,9 @@
       mark.style.marginTop = '16px';
       mark.type = 'button';
       mark.addEventListener('click', function () {
+        var resized = resizedTo();
+        if (resized.problem) return toast(resized.problem);
+
         var destination = where.value();
         var subcategory = kind.value();
         var renamed = renamedTo();
@@ -801,6 +850,9 @@
         var request = { uid: record.uid, destination: destination,
           subcategory: subcategory };
         if (renamed) request.description = renamed;
+        // Not redrawn optimistically, unlike the category: the toast that comes
+        // back says what moved, and the reload carries the figure.
+        if (resized.amount !== undefined) request.amount = resized.amount;
 
         call('appMarkTransfer', request)
           .then(function (result) {
@@ -1067,9 +1119,17 @@
     // view is refetched afterwards rather than assumed.
     var was = { confirmed: record.confirmed, category: record.category,
       subcategory: record.subcategory, labels: record.labels, type: record.type,
-      inReports: record.inReports };
+      inReports: record.inReports, amount: record.amount, rawAmount: record.rawAmount };
 
     record.confirmed = true;
+    // The row keeps its direction, so the new figure takes the old one's sign —
+    // `editedAmount_`'s rule, predicted. Both fields, since a cash row is in the
+    // base currency and `amount_base` is `amount` until the formula says so.
+    if (decision.amount !== undefined) {
+      var signed = Number(record.rawAmount) < 0 ? -decision.amount : decision.amount;
+      record.rawAmount = signed;
+      record.amount = signed;
+    }
     if (decision.subcategory_override) record.subcategory = decision.subcategory_override;
     if (decision.category_override) {
       record.category = decision.category_override;
@@ -1115,6 +1175,8 @@
     record.labels = entry.was.labels;
     record.type = entry.was.type;
     record.inReports = entry.was.inReports;
+    record.amount = entry.was.amount;
+    record.rawAmount = entry.was.rawAmount;
     restoreDropped(record, entry.dropped);
     forgetWrite(record.uid);
 

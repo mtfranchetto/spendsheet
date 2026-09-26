@@ -1039,6 +1039,42 @@ describe('marking a transfer, with somewhere for the money to go', () => {
     expect(leg.notes).toBeFalsy();
     expect(leg.entry_reference).toBeFalsy();
   });
+
+  /*
+    An amount corrected in the same press as the transfer is marked.
+
+    The sheet's Amount field sits above the tabs, so it is on screen on this
+    pane too — and this endpoint builds the leg from the source row's figure,
+    so a correction that arrived a round trip later would leave the leg
+    mirroring the mistyped one for ever.
+  */
+  it('builds the leg from an amount corrected in the same press', () => {
+    const c = withAccounts([tx({ uid: 'c-1', source: 'manual', account_id: 'w-1',
+      account_name: 'Wallet', amount: -100, amount_base: -100,
+      description: 'Contanti a Degiro' })]);
+
+    c.appMarkTransfer({ uid: 'c-1', destination: 'Degiro', amount: 120 });
+
+    const rows = ledger(c);
+    expect(rows.find((r) => String(r.uid) === 'c-1').amount).toBe(-120);
+    expect(rows[rows.length - 1]).toMatchObject({ account_name: 'Degiro', amount: 120 });
+  });
+
+  it('refuses an amount on a row that is not cash you typed', () => {
+    const c = withdrawal();
+
+    expect(() => c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet', amount: 120 }))
+      .toThrow(/cash you typed/);
+    expect(ledger(c).find((r) => String(r.uid) === 'w-tx').amount).toBe(-100);
+  });
+
+  it('refuses it before writing the category, so nothing lands half-done', () => {
+    const c = withdrawal();
+
+    expect(() => c.appMarkTransfer({ uid: 'w-tx', destination: 'Wallet', amount: 120 })).toThrow();
+    expect(ledger(c).find((r) => String(r.uid) === 'w-tx').transfer_group).toBe('');
+    expect(ledger(c)).toHaveLength(1);
+  });
 });
 
 describe('asset accounts, which behave like wallets', () => {
@@ -1519,6 +1555,47 @@ describe('adding cash from the app', () => {
       .some((row) => row.note === 'coffee')).toBe(true);
   });
 
+  /*
+    Labels, which the tab has always had a column for and the form never had a
+    control for. Stored through `normalizeLabels_`, so a confirmation and an add
+    cannot disagree about the shape of the column they both write.
+  */
+  it('stores labels in the shape splitLabels_ reads back', () => {
+    const c = cashBook();
+    c.appAddCash({ amount: '3', account: 'Wallet', labels: ['travel', '', 'travel', 'kids'] });
+
+    expect(ledger(c)[0].labels).toBe('travel, kids');
+  });
+
+  it('takes the string the tab holds, as well as the array the chips send', () => {
+    const c = cashBook();
+    c.appAddCash({ amount: '3', account: 'Wallet', labels: 'travel,kids' });
+
+    expect(ledger(c)[0].labels).toBe('travel, kids');
+  });
+
+  it('refuses a label on a transfer, the way a confirmation does', () => {
+    // A label is an axis over spending and a transfer is not spending. Thrown
+    // rather than dropped: there is nothing else in this request to save around
+    // it, so filing the entry without them would file something else.
+    const c = cashBook();
+
+    expect(() => c.appAddCash({ amount: '3', account: 'Wallet',
+      category: 'Transfer', subcategory: 'Between accounts', labels: ['travel'] }))
+      .toThrow('no labels');
+    expect(ledger(c)).toHaveLength(0);
+  });
+
+  it('still takes a transfer that carries no labels', () => {
+    // The refusal is about labels, not about transfers — "Update balance"
+    // writes `Transfer › Valuation change` through this same endpoint.
+    const c = cashBook();
+    c.appAddCash({ amount: '3', account: 'Wallet', category: 'Transfer',
+      subcategory: 'Between accounts', labels: [] });
+
+    expect(ledger(c)).toHaveLength(1);
+  });
+
   it('stores a real date, not the string the page sent', () => {
     // `drainCashEntries_` copies this cell straight into booking_date, and a
     // string there sorts and filters as text.
@@ -1625,6 +1702,149 @@ describe('deleting a cash transaction', () => {
     c.appDeleteRecord({ uid: 'u-cash' });
 
     expect(c.dataVersion_()).not.toBe(before);
+  });
+});
+
+describe('editing the amount of a cash transaction', () => {
+  /**
+   * The second write in the app that touches A–O, and the one with the most
+   * reasons to say no: an amount is hashed into a synced row's uid, is half of
+   * the `crossSourceKey` that pairs an imported row with its synced twin, and
+   * is mirrored by the leg of a transfer. So most of this is about refusals,
+   * and about the sign, which the page never sends.
+   */
+  const ledger = (c) => c.readRecords_(
+    c.__spreadsheet.getSheetByName('transactions'), c.TX_COLUMNS, 1);
+  const row = (c, uid) => ledger(c).find((r) => String(r.uid) === uid);
+
+  const cash = (over = {}) => book([tx(Object.assign({
+    uid: 'u-cash', source: 'manual', amount: -6.5, amount_base: -6.5,
+    description: 'Caffè e cornetto', category: 'Food & Drink',
+    subcategory: 'Bars & Cafes', type: 'expense'
+  }, over))]);
+
+  it('changes how much without changing which way', () => {
+    const c = cash();
+
+    c.appConfirm([{ uid: 'u-cash', amount: 8 }]);
+
+    expect(row(c, 'u-cash').amount).toBe(-8);
+  });
+
+  it('keeps the direction of a row that goes the other way', () => {
+    // A cash entry stored positive — money into the wallet — stays positive.
+    // Re-deriving the sign from the category is what this deliberately does
+    // not do: `-50` typed under Transfer is cash paid *into* a bank, and
+    // deriving from `transfer` would turn a correction into a deposit.
+    const c = cash({ amount: 50, amount_base: 50, category: 'Transfer',
+      subcategory: 'Between accounts', type: 'transfer', in_reports: false });
+
+    c.appConfirm([{ uid: 'u-cash', amount: 60 }]);
+
+    expect(row(c, 'u-cash').amount).toBe(60);
+  });
+
+  it('refuses a typed minus rather than obeying or dropping it', () => {
+    // Obeying it makes the field a sign control half the time; dropping it
+    // ignores something typed on purpose. Both are worse than saying so.
+    const c = cash();
+
+    const [outcome] = c.appConfirm([{ uid: 'u-cash', amount: -8 }]).results;
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toMatch(/without a sign/);
+    expect(row(c, 'u-cash').amount).toBe(-6.5);
+  });
+
+  it('refuses a blank, a zero and a word', () => {
+    // `Number('')` is 0 and `isFinite(0)` is true, which is the guard this
+    // project has now written down six times.
+    [['', /blank/], [0, /not a transaction/], ['lots', /not a number/]]
+      .forEach(([amount, says]) => {
+        const c = cash();
+
+        const [outcome] = c.appConfirm([{ uid: 'u-cash', amount }]).results;
+
+        expect(outcome.ok, String(amount)).toBe(false);
+        expect(outcome.reason).toMatch(says);
+        expect(row(c, 'u-cash').amount).toBe(-6.5);
+      });
+  });
+
+  it('refuses every source but cash you typed', () => {
+    ['enablebanking', 'csv:budgetbakers', 'transfer-leg'].forEach((source) => {
+      const c = cash({ source });
+
+      const [outcome] = c.appConfirm([{ uid: 'u-cash', amount: 8 }]).results;
+
+      expect(outcome.ok, source).toBe(false);
+      expect(outcome.reason).toMatch(/cash you typed/);
+      expect(row(c, 'u-cash').amount).toBe(-6.5);
+    });
+  });
+
+  it('refuses a cash row that is already half of a transfer', () => {
+    // The other leg mirrors this figure. Changing one side alone leaves a
+    // transfer that nets to something other than zero.
+    const c = cash();
+    // Past column O, so the book helper does not carry it in — the same
+    // reason `writeCashOverrides_` writes this column on its own.
+    c.writeCell_(c.__spreadsheet.getSheetByName('transactions'), 2, c.TX_COLUMNS,
+      'transfer_group', 'tr:u-cash');
+
+    const [outcome] = c.appConfirm([{ uid: 'u-cash', amount: 8 }]).results;
+
+    expect(outcome.ok).toBe(false);
+    expect(row(c, 'u-cash').amount).toBe(-6.5);
+  });
+
+  it('writes nothing at all when it refuses, unlike the description', () => {
+    // The check is first in the loop for this reason: a refused amount must
+    // not leave the category and the tick behind it written.
+    const c = cash();
+
+    c.appConfirm([{ uid: 'u-cash', amount: -8, confirmed: true,
+      category_override: 'Housing' }]);
+
+    expect(row(c, 'u-cash')).toMatchObject({ amount: -6.5, confirmed: '',
+      category_override: '' });
+  });
+
+  it('leaves the amount alone when the key is absent', () => {
+    const c = cash();
+
+    c.appConfirm([{ uid: 'u-cash', confirmed: true }]);
+
+    expect(row(c, 'u-cash').amount).toBe(-6.5);
+  });
+
+  it('tells the page which rows may offer the field', () => {
+    // One rule, two readers, and they must not disagree — the field would
+    // appear on a row the writer then refuses.
+    const c = book();
+    expect(c.amountIsEditable_('manual', '')).toBe(true);
+    expect(c.amountIsEditable_('manual', 'tr:u-1')).toBe(false);
+    ['enablebanking', 'transfer-leg', 'csv:budgetbakers', '', null, undefined]
+      .forEach((source) => {
+        expect(c.amountIsEditable_(source, ''), String(source)).toBe(false);
+      });
+  });
+
+  it('sends that answer with the row', () => {
+    const c = book([tx({ uid: 'u-bank' }), tx({ uid: 'u-cash', source: 'manual' })]);
+    const rows = c.appRecords({ period: { kind: 'last_12' } }, 0).rows;
+
+    expect(rows.find((r) => r.uid === 'u-cash').editableAmount).toBe(true);
+    expect(rows.find((r) => r.uid === 'u-bank').editableAmount).toBe(false);
+  });
+
+  it('hands the row back carrying the figure it now holds', () => {
+    const c = cash();
+
+    const [outcome] = c.appConfirm([{ uid: 'u-cash', amount: 8 }]).results;
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.record.rawAmount).toBe(-8);
   });
 });
 

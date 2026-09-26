@@ -3,22 +3,6 @@
   // -------------------------------------------------------------------------
 
   /**
-   * A cash transaction.
-   *
-   * Expense or Income is two buttons, not a sign in the field: the decimal
-   * keypad a phone raises for `inputmode="decimal"` has no `+`, and a sign is
-   * the wrong place to ask which way money went anyway. The amount goes up
-   * unsigned with a `direction`, and `directedCashAmount_` on the server applies
-   * the sign — this form does not.
-   *
-   * The category list follows the buttons: expense categories under Expense,
-   * income under Income, and Transfer under both, because cash moves into a
-   * wallet (a withdrawal) as often as out of it (a deposit). An income with no
-   * Income or Transfer category is refused by `cashDirectionProblem_` rather
-   * than quietly landing as spending, which is why Income's placeholder asks
-   * for one instead of offering "Uncategorised".
-   */
-  /**
    * Today, as a `yyyy-MM-dd` key — the later of the server's day and this
    * phone's.
    *
@@ -45,6 +29,22 @@
     return server > phone ? server : phone;
   }
 
+  /**
+   * A cash transaction.
+   *
+   * Expense or Income is two buttons, not a sign in the field: the decimal
+   * keypad a phone raises for `inputmode="decimal"` has no `+`, and a sign is
+   * the wrong place to ask which way money went anyway. The amount goes up
+   * unsigned with a `direction`, and `directedCashAmount_` on the server applies
+   * the sign — this form does not.
+   *
+   * The category list follows the buttons: expense categories under Expense,
+   * income under Income, and Transfer under both, because cash moves into a
+   * wallet (a withdrawal) as often as out of it (a deposit). An income with no
+   * Income or Transfer category is refused by `cashDirectionProblem_` rather
+   * than quietly landing as spending, which is why Income's placeholder asks
+   * for one instead of offering "Uncategorised".
+   */
   function renderAdd(root) {
     // No tab reaches this screen any more, so it owes you the way back that a
     // tab bar used to be.
@@ -77,15 +77,27 @@
       }, [['expense', 'Expense'], ['income', 'Income']]));
     };
 
+    var labels;
+    var isTransfer = function () {
+      return kindOfCategory(picker.chosen().category) === TRANSFER;
+    };
+    var showLabels = function () {
+      if (labels) labels.node.hidden = isTransfer();
+    };
+
     // "Category" rather than "Subcategory", because this control offers both
-    // levels.
+    // levels. Redrawn when the tabs change, so whatever listens to it is
+    // attached here rather than once — a listener on the first picker would be
+    // listening to a select that is no longer on the page.
     var drawCategory = function () {
       clear(category);
       picker = categorySelect({
         kind: [direction, TRANSFER],
         firstLabel: direction === 'income' ? 'Choose a category' : 'Uncategorised'
       });
+      picker.node.addEventListener('change', showLabels);
       add(category, el('label', null, 'Category'), picker.node);
+      showLabels();
     };
 
     drawTabs();
@@ -117,6 +129,15 @@
 
     drawCategory();
     add(form, category);
+
+    // The chips the edit sheet draws, starting from none. Hidden while the
+    // category is a Transfer, for the reason that sheet's transfer pane gives —
+    // and not sent then either, since hidden chips still hold what was ticked
+    // and `webAppAddCash_` refuses labels on a transfer. They stay ticked across
+    // an add, like the account and the category: three coffees on one trip is
+    // three entries under the same label.
+    labels = labelChips({ labels: [] });
+    add(form, labels.node);
 
     add(form, el('label', null, 'Date'));
     var date = el('input');
@@ -154,7 +175,8 @@
         subcategory: chosen.subcategory,
         category: chosen.category,
         date: date.value,
-        note: note.value
+        note: note.value,
+        labels: isTransfer() ? [] : labels.chosen()
       }).then(function (result) {
         // `inserted` is not necessarily *your* row: the drain takes every
         // complete unprocessed one, including a half-typed entry sitting on

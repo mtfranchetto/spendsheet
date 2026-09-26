@@ -1248,6 +1248,8 @@ function recordForPage_(row, peers) {
     inReports: isTruthyCell_(row.in_reports),
     // Whether the description is yours to change. See `descriptionIsEditable_`.
     editableDescription: descriptionIsEditable_(row.source),
+    // Whether the amount is yours to change — cash only. See `amountIsEditable_`.
+    editableAmount: amountIsEditable_(row.source, row.transfer_group),
     // Whether the row is yours to remove — cash only. See `recordIsDeletable_`.
     deletable: recordIsDeletable_(row.source),
     /*
@@ -1381,4 +1383,46 @@ function descriptionIsEditable_(source) {
  */
 function recordIsDeletable_(source) {
   return String(source === null || source === undefined ? '' : source) === TX_SOURCE_CASH;
+}
+
+/**
+ * Whether a row's amount may be changed: `manual`, and not while it is one
+ * half of a transfer. The source list is the same as `recordIsDeletable_`'s,
+ * reached by a different argument, and deliberately not spelled as a call to it.
+ *
+ * The description rule asks one question: will a bank fetch this row again? An
+ * amount has to answer that and two more, because other things read it:
+ *
+ *   enablebanking  comes back. Without an `entry_reference` the uid hashes the
+ *                  amount, which is the description's argument; with one,
+ *                  `partitionByUid` compares the stored amount against the
+ *                  bank's on every fetch and reports the difference as a
+ *                  conflict. Either way the bank's figure is the fact.
+ *   csv:           is half of a `crossSourceKey`. "Remove synced duplicates"
+ *                  pairs an imported row with a synced one on account, date and
+ *                  **amount**, so an edited one stops finding its twin and both
+ *                  copies stay.
+ *   transfer-leg   mirrors its partner. The leg was written to balance a move
+ *                  the other row records, and changing one side alone leaves a
+ *                  transfer that nets to something other than zero.
+ *
+ * Cash you typed has none of those: nothing fetches it, nothing imports it,
+ * and its uid is stored once and never recomputed. `amount_base` is an
+ * `ARRAYFORMULA` over `amount`, so every total follows the edit by itself.
+ *
+ * **Except once it carries a `transfer_group`**, which is the transfer-leg
+ * argument arriving from the other side. Cash paid into a wallet you track
+ * wrote a leg with the opposite amount, and cash handed to a bank was paired
+ * with that bank's credit; either way another row now agrees with this one's
+ * figure, and changing one of them leaves a transfer that no longer nets to
+ * zero.
+ *
+ * If the two source lists ever diverge it will be because one of those
+ * reasons changed, which is why this is its own function rather than an
+ * alias. Asked twice, like the other two: by `recordForPage_` to offer the
+ * field, and by the writers before writing it.
+ */
+function amountIsEditable_(source, transferGroup) {
+  return String(source === null || source === undefined ? '' : source) === TX_SOURCE_CASH &&
+    isBlankCell_(transferGroup);
 }
