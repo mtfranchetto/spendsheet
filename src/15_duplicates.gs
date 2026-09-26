@@ -467,6 +467,55 @@ function commitSyncedDuplicates_(plan) {
 }
 
 /**
+ * Which overrides on a synced row this merge copied there: `{uid: {column: true}}`.
+ *
+ * Memory needs to know, and the row cannot say. A correction you typed decides
+ * its merchant outright, and an imported category only votes (`deriveMemory_`)
+ * — but the merge writes the imported category onto a row whose `source` is the
+ * bank's, so by its source alone it reads as a correction. After an import that
+ * overlapped ninety days of syncing, the most recent imported filing of every
+ * merchant would decide it, or turn a merchant you had corrected since into a
+ * mixed one that your old history outvotes.
+ *
+ * Nothing was recorded at the time, and a record kept from now on would miss
+ * every book already merged. `_removed` holds the imported rows the merge
+ * deleted, so the pairs are found again with the pairing that made them, and a
+ * survivor's override is inherited where it equals its removed partner's.
+ * Only synced rows carrying an override are offered — a merged survivor always
+ * does, and a neighbour with the same amount that has none cannot take the pair
+ * from it. A value you happened to type identically to the import reads as
+ * inherited, which costs a vote rather than a decision: the safe direction.
+ *
+ * Pure. 14_categorize calls it, which is a lower file reaching a higher one at
+ * run time — the only way to keep the pairing rule in the one place that owns
+ * it rather than grow a second copy in the cascade.
+ */
+function inheritedOverrides_(records, removed, windowDays) {
+  var fetched = (records || []).filter(function (row) {
+    return row.source === TX_SOURCE_API && hasOverride_(row);
+  });
+  var gone = (removed || []).filter(function (row) { return isImportedSource_(row.source); });
+  if (!fetched.length || !gone.length) return {};
+
+  var found = pairAcrossSources_(gone, fetched, windowDays);
+  var inherited = {};
+
+  found.exact.concat(found.near).forEach(function (pair) {
+    var copied = {};
+    var any = false;
+    ['category_override', 'subcategory_override'].forEach(function (name) {
+      if (isBlankCell_(pair.synced[name])) return;
+      if (cellText_(pair.synced[name]) !== cellText_(pair.imported[name])) return;
+      copied[name] = true;
+      any = true;
+    });
+    if (any) inherited[cellText_(pair.synced.uid)] = copied;
+  });
+
+  return inherited;
+}
+
+/**
  * Carry the imported row's opinions over to the row that is staying.
  *
  * **Blanks only.** The survivor may already have a category you set from the

@@ -413,9 +413,10 @@ function applyReviewEdit_(sheet, range) {
  * un-confirms it. The tick and the override are two independent statements and
  * each one travels on its own edit.
  *
- * An override travelling alone is enough on its own — `isConfirmedRow_` counts
- * a row carrying one as confirmed, for the reason 00_config.gs gives: typing
- * the category is a stronger statement than ticking a box next to it.
+ * An override travelling alone is enough on its own — either one, category or
+ * subcategory: `isConfirmedRow_` counts a row carrying one as confirmed, for
+ * the reason 00_config.gs gives: typing the category is a stronger statement
+ * than ticking a box next to it.
  */
 function writeReviewRow_(sheet, tx, index, row, touched) {
   var values = sheet.getRange(row, 1, 1, REVIEW_COLUMNS.length).getValues()[0];

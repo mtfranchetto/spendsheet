@@ -190,3 +190,5 @@ That is also what makes the import pay off twice. `Learn from corrections` reads
 2. **Spendsheet → Re-categorise all** — everything else now categorises itself from it
 
 A five-year export gets most of your merchants in one pass. See [CATEGORIES.md](CATEGORIES.md).
+
+Your imported categories teach memory **by weight of numbers**: each imported row is one vote for its merchant. They are not treated as corrections, even though the import writes them into `category_override`. A correction is something you type here, and one of those decides its merchant outright ([how memory decides](CATEGORIES.md#how-memory-decides)). The flip side: a correction typed onto an *imported* row still counts only as a vote, because nothing records what the import originally wrote there, so it can't be told apart from the import's own value.

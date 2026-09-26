@@ -136,7 +136,7 @@ Everything above gets transactions arriving. These are the three things worth do
 
 **Put it on your phone.** A *second* deployment, with access **Only myself** — a different URL from the one in step 4, and the one place in this whole setup where getting a dropdown wrong exposes your balances to anyone with the link. ([`docs/MOBILE.md`](MOBILE.md), which is also where the owner gate and `owner_email` are explained. To share it with someone, [`docs/SHARING.md`](SHARING.md).)
 
-**Turn on the schedule.** **Spendsheet → Set up and maintain → Install triggers** — a daily sync and a daily self-check, running on Google's infrastructure whether or not the Sheet is open. It is idempotent, so re-running it is always safe. ([`docs/MONITORING.md`](MONITORING.md))
+**Turn on the schedule.** **Spendsheet → Set up and maintain → Install triggers** — a nightly rebuild of what memory has learned from your corrections, a daily sync and a daily self-check, running on Google's infrastructure whether or not the Sheet is open. It is idempotent, so re-running it is always safe. ([`docs/MONITORING.md`](MONITORING.md))
 
 ---
 

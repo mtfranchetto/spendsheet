@@ -502,3 +502,64 @@ describe('runsOfRows_', () => {
     expect(c.runsOfRows_([])).toEqual([]);
   });
 });
+
+/**
+ * What memory makes of a merged row.
+ *
+ * The merge copies the imported category onto a synced row, and a synced row's
+ * override otherwise reads as a correction you typed — which decides its
+ * merchant outright. The imported filing has to go on voting as it did before
+ * the merge, or ninety days of overlap would hand every merchant to your old
+ * tool.
+ */
+describe('learning from a row the merge kept', () => {
+  function merged() {
+    const c = load();
+    c.setup();
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+
+    // Rows 2–5: two synced rows, each with the imported copy the merge removes.
+    synced(c, { uid: 'a1' });
+    imported(c, { uid: 'csv:budgetbakers:import1#1' });
+    synced(c, { uid: 'b2', amount: -20, entry_reference: 'ref-b2' });
+    imported(c, { uid: 'csv:budgetbakers:import1#2', amount: -20 });
+    c.writeCell_(tx, 3, c.TX_COLUMNS, 'category_override', 'Insurance');
+    c.writeCell_(tx, 5, c.TX_COLUMNS, 'category_override', 'Insurance');
+
+    c.removeSyncedDuplicates();
+    return { c, tx };
+  }
+
+  it('names the overrides it copied, and only those', () => {
+    const { c, tx } = merged();
+    const records = c.readRecords_(tx, c.TX_COLUMNS, 1);
+    const removed = c.readRecords_(c.__spreadsheet.getSheetByName('_removed'), c.TX_COLUMNS, 1);
+
+    expect(c.inheritedOverrides_(records, removed, 3)).toEqual({
+      a1: { category_override: true },
+      b2: { category_override: true }
+    });
+  });
+
+  it('lets a correction you made since outrank the imported filing it inherited', () => {
+    // Read as corrections, the two copied Insurance rows would make this merchant
+    // mixed — and then outvote the Housing you actually chose.
+    const { c } = merged();
+    synced(c, { uid: 'c3', amount: -30, entry_reference: 'ref-c3', booking_date: new Date(2026, 6, 30) });
+    const tx = c.__spreadsheet.getSheetByName('transactions');
+    c.writeCell_(tx, 4, c.TX_COLUMNS, 'category_override', 'Housing');
+
+    const entry = c.planMemory_().derived.entries[0];
+    expect(entry.decidedBy).toBe('correction');
+    expect(entry.category).toBe('Housing');
+    expect(entry.hits).toBe(1);
+  });
+
+  it('keeps the imported filing voting when nothing has been corrected since', () => {
+    const { c } = merged();
+    const entry = c.planMemory_().derived.entries[0];
+    expect(entry.decidedBy).toBe('vote');
+    expect(entry.category).toBe('Insurance');
+    expect(entry.hits).toBe(2);
+  });
+});
