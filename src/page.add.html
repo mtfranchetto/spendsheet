@@ -32,10 +32,18 @@
   /**
    * A cash transaction.
    *
-   * Type the amount without a sign — a bare number is spending, and an Income
-   * or Transfer category flips it. That rule lives in `cashEntryAmount` on the
-   * server and this form does not reimplement it; the hint is here because the
-   * form is where you would otherwise wonder.
+   * Expense or Income is two buttons, not a sign in the field: the decimal
+   * keypad a phone raises for `inputmode="decimal"` has no `+`, and a sign is
+   * the wrong place to ask which way money went anyway. The amount goes up
+   * unsigned with a `direction`, and `directedCashAmount_` on the server applies
+   * the sign — this form does not.
+   *
+   * The category list follows the buttons: expense categories under Expense,
+   * income under Income, and Transfer under both, because cash moves into a
+   * wallet (a withdrawal) as often as out of it (a deposit). An income with no
+   * Income or Transfer category is refused by `cashDirectionProblem_` rather
+   * than quietly landing as spending, which is why Income's placeholder asks
+   * for one instead of offering "Uncategorised".
    */
   function renderAdd(root) {
     // No tab reaches this screen any more, so it owes you the way back that a
@@ -55,6 +63,46 @@
 
     var form = el('div', 'card');
 
+    var direction = 'expense';
+    var tabs = el('div');
+    var category = el('div');
+    var picker;
+
+    var drawTabs = function () {
+      clear(tabs);
+      add(tabs, typeTabs(direction, function (picked) {
+        direction = picked;
+        drawTabs();
+        drawCategory();
+      }, [['expense', 'Expense'], ['income', 'Income']]));
+    };
+
+    var labels;
+    var isTransfer = function () {
+      return kindOfCategory(picker.chosen().category) === TRANSFER;
+    };
+    var showLabels = function () {
+      if (labels) labels.node.hidden = isTransfer();
+    };
+
+    // "Category" rather than "Subcategory", because this control offers both
+    // levels. Redrawn when the tabs change, so whatever listens to it is
+    // attached here rather than once — a listener on the first picker would be
+    // listening to a select that is no longer on the page.
+    var drawCategory = function () {
+      clear(category);
+      picker = categorySelect({
+        kind: [direction, TRANSFER],
+        firstLabel: direction === 'income' ? 'Choose a category' : 'Uncategorised'
+      });
+      picker.node.addEventListener('change', showLabels);
+      add(category, el('label', null, 'Category'), picker.node);
+      showLabels();
+    };
+
+    drawTabs();
+    add(form, tabs);
+
     add(form, el('label', null, 'Amount'));
     var amount = el('input');
     amount.type = 'text';
@@ -65,8 +113,6 @@
     amount.placeholder = formatAmount(3.5);
     liveAmount(amount);
     add(form, amount);
-    add(form, el('div', 'muted',
-      'No sign. A bare number is spending; an Income or Transfer category flips it.'));
 
     add(form, el('label', null, 'Account'));
     var account = el('select');
@@ -81,13 +127,8 @@
     });
     add(form, account);
 
-    // "Category" rather than "Subcategory", because this control now offers
-    // both levels. Every `kind` is offered on purpose — the hint above says an
-    // Income or Transfer category flips the sign, which it cannot do if the
-    // list is filtered down to spending.
-    add(form, el('label', null, 'Category'));
-    var picker = categorySelect({ firstLabel: 'Uncategorised' });
-    add(form, picker.node);
+    drawCategory();
+    add(form, category);
 
     // The chips the edit sheet draws, starting from none. Hidden while the
     // category is a Transfer, for the reason that sheet's transfer pane gives —
@@ -95,14 +136,8 @@
     // and `webAppAddCash_` refuses labels on a transfer. They stay ticked across
     // an add, like the account and the category: three coffees on one trip is
     // three entries under the same label.
-    var labels = labelChips({ labels: [] });
+    labels = labelChips({ labels: [] });
     add(form, labels.node);
-    var isTransfer = function () {
-      return kindOfCategory(picker.chosen().category) === TRANSFER;
-    };
-    picker.node.addEventListener('change', function () {
-      labels.node.hidden = isTransfer();
-    });
 
     add(form, el('label', null, 'Date'));
     var date = el('input');
@@ -135,6 +170,7 @@
 
       call('appAddCash', {
         amount: isFinite(typed) ? typed : amount.value,
+        direction: direction,
         account: account.value,
         subcategory: chosen.subcategory,
         category: chosen.category,

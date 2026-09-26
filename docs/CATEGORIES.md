@@ -32,7 +32,18 @@ Four tiers, first hit wins. Every row records **what decided it** in `category_s
 
 **Where memory sits is one cell.** `memory_priority` in `_config` at 5 puts your own confirmed history ahead of every pattern — the default, because a merchant you have filed forty times is better evidence than a substring somebody shipped. Set it above the highest priority on the `rules` tab and every rule wins instead, which is worth knowing before you do it: the seeded patterns are deliberately loose (`COOP`, `Q8`, `AMAZON`, `SATISPAY`) precisely because memory was above them. A tie goes to the rule.
 
-Two things follow that are easy to miss. A rule you add **cannot** correct a merchant memory has learned unless `memory_priority` is above it — the way to change memory's mind is to correct a couple of rows and re-learn, and the recency tiebreak is what makes that work. And `learnFromCorrections` will not learn from a row a rule answered, so those two facts are the same fact seen from either end.
+Two things follow that are easy to miss. A rule you add **cannot** correct a merchant memory has learned unless `memory_priority` is above it — the way to change memory's mind is to correct **one** row, and by the next morning it has. And `learnFromCorrections` will not learn from a row a rule answered, so those two facts are the same fact seen from either end.
+
+### How memory decides
+
+`_memory` is rebuilt from scratch every night at `learn_hour` (default 3, an hour before the sync), and whenever you pick **Spendsheet → Learn from corrections**. For each merchant:
+
+- **A correction you typed wins outright.** A category or subcategory override is you saying the guess was wrong, and that outranks any number of ticks agreeing with it. Forty confirmed Groceries rows and one correction to Shopping file the merchant as Shopping. The latest correction supplies both halves: correct the parent without naming a child, and the entry has no subcategory.
+- **Unless your corrections disagree with each other.** The bank's text says where you bought, never what, so a merchant that sells everything cannot have one right answer. Correct Amazon to Gifts one week and Home the next and it becomes a *mixed* merchant: every row votes, corrections included, and the most common category wins. That guess stays put instead of flipping each time you correct a row. Mixed is worked out afresh each night from what the rows say *now*, so fixing a correction you made by mistake takes the merchant straight back.
+- **With no corrections, the most common category wins**, ties going to the most recent.
+- **Imported categories vote; they are never corrections.** The import keeps each row's category in `category_override`, but that is your old tool's filing, not a correction you made here. Counted as corrections, the latest imported row would decide every merchant in the history. The same holds after **Remove synced duplicates**: the category it copies onto the synced row it keeps still votes as the imported row did. It is recognised by pairing that row again with the imported copy kept in `_removed`.
+
+Nothing marks a merchant as mixed, and nothing needs to: it is mixed while its corrections name two or more categories (or two or more subcategories). Either way, a guessed row still arrives unconfirmed in the review queue — a guess only saves a tap when it is right.
 
 ### What a merchant key is
 
@@ -58,9 +69,9 @@ Two decisions in there are worth knowing about, because both look like bugs unti
 
 **4. Filter `category_source = unclassified`.** That's the queue. Type a `category_override` on the rows that matter.
 
-**5. Learn from corrections again.** Those merchants are now automatic.
+**5. Learn from corrections again**, or leave it for tonight. Those merchants are now automatic.
 
-From then on the nightly sync categorises new rows as they land, and the queue is a handful of genuinely-new merchants a month.
+From then on it runs itself: memory is rebuilt from your corrections at 3am, the sync categorises new rows as they land an hour later, and the queue is a handful of genuinely-new merchants a month. The menu item is for when you would rather not wait until morning.
 
 ### Confirming
 
@@ -68,7 +79,7 @@ A guessed category and a category you agreed with are not the same fact.
 
 **Spendsheet → Confirm visible rows.** Filter to a merchant, glance down the column, confirm forty rows at once. It takes a selection of two or more rows, or the current filter view — and it **refuses** when you have neither, because ticking four thousand rows by accident is exactly the mistake that makes the flag meaningless.
 
-Confirming does two things: it freezes that row's `category_auto` against future rule changes, and it makes the row eligible for learning. Typing a `category_override` counts as confirming without the tick.
+Confirming does two things: it freezes that row's `category_auto` against future rule changes, and it makes the row eligible for learning. Picking a `category_override` or a `subcategory_override` counts as confirming without the tick.
 
 **Confirming a row a rule answered does not teach memory.** At the default `memory_priority` memory is offered first, so a rule that taught memory its own answer would go on being obeyed *through* memory after you had corrected the rule — with the `rules` tab looking ignored and the reason on a tab you never edit. Nothing is lost by it: the rule already says that, on a tab you can change. Overriding a rule's answer still teaches, which is the case memory exists for.
 
@@ -196,7 +207,7 @@ The three seeded labels are examples; replace them. `labels` is **never re-seede
 
 A typo in `field` matches **nothing**, deliberately — the alternative is `contains ""` matching every row and recategorising the whole sheet. A half-typed `regex` matches nothing too, rather than breaking the run that reads it.
 
-At the default `memory_priority` a rule sits *below* memory, so the way to change a merchant memory has learned is to correct a row and re-learn, not to add a rule. Raising `memory_priority` above the highest rule priority reverses that — see [the cascade](#the-cascade) for what else it changes.
+At the default `memory_priority` a rule sits *below* memory, so the way to change a merchant memory has learned is to correct a row, not to add a rule — memory picks the correction up overnight, or at once from **Learn from corrections**. Raising `memory_priority` above the highest rule priority reverses that — see [the cascade](#the-cascade) for what else it changes.
 
 ### Adding a rule
 

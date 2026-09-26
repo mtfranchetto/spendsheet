@@ -68,7 +68,7 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 9. Download its `.pem`, re-run `installCredentials()`, set the environment to production.
 10. **Spendsheet → Connect a bank** → your real bank → approve on your phone. This moves your app from *Inactive* to **Restricted**, which is the free tier and the last state you need. (*Active* requires a signed commercial contract — you will never need it.)
 11. Repeat for each bank.
-12. **Spendsheet → Set up and maintain → Install triggers** — daily sync, daily self-check.
+12. **Spendsheet → Set up and maintain → Install triggers** — nightly memory rebuild, daily sync, daily self-check.
 
 ### Part 3 — bring your history (optional, and worth it)
 
