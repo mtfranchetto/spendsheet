@@ -369,3 +369,71 @@ describe('ebGetAllTransactions_', () => {
     expect(result.truncated).toBe(false);
   });
 });
+
+describe('the text a bank sends', () => {
+  /*
+    `M?NCHNER VERKEHRSGESEL M?NCHEN` reached the ledger with a replacement
+    diamond for each `Ü`: the bank sent Latin-1, and a body read as UTF-8
+    turns the lone byte 0xDC into U+FFFD. The characters are built with
+    `fromCharCode` rather than written as escapes, so this file cannot end up
+    holding the invisible thing it is testing for.
+  */
+  const REPLACED = String.fromCharCode(0xFFFD);
+  const latin1 = (text) => () => ({ code: 200, bytes: Buffer.from(text, 'latin1') });
+  const read = (api) => api.ebFetch_('get', '/accounts/x/transactions');
+
+  it('reads a Latin-1 body as the characters it meant', () => {
+    const api = withApi(latin1(JSON.stringify({ d: 'MÜNCHNER VERKEHRSGESEL MÜNCHEN' })));
+
+    expect(read(api).d).toBe('MÜNCHNER VERKEHRSGESEL MÜNCHEN');
+    expect(api.EB_TEXT).toEqual({ redecoded: 1 });
+  });
+
+  it('takes Windows-1252 for the fallback, where a euro sign lives', () => {
+    // 0x80 is `€` in Windows-1252 and a control code in ISO-8859-1.
+    const api = withApi(() => ({ code: 200,
+      bytes: Buffer.concat([Buffer.from('{"d":"'), Buffer.from([0x80]), Buffer.from('5"}')]) }));
+
+    expect(read(api).d).toBe('€5');
+  });
+
+  it('leaves a well-formed UTF-8 body alone, accents and all', () => {
+    const api = withApi(ok({ d: 'Café München Øresund' }));
+
+    expect(read(api).d).toBe('Café München Øresund');
+    expect(api.EB_TEXT).toEqual({ redecoded: 0 });
+  });
+
+  it('does not re-read good UTF-8 because the data itself carries a replacement', () => {
+    // The trap. A bank whose own systems already lost the `Ü` sends valid
+    // UTF-8 containing U+FFFD; deciding on the decoded text would re-read the
+    // whole body as Windows-1252 and turn the correct `é` into two characters.
+    const api = withApi(ok({ d: 'M' + REPLACED + 'NCHEN', e: 'Café' }));
+    const body = read(api);
+
+    expect(body.e).toBe('Café');
+    expect(body.d).toBe('M' + REPLACED + 'NCHEN');
+    expect(api.EB_TEXT).toEqual({ redecoded: 0 });
+  });
+
+  it('believes a charset the response names, when it is not UTF-8', () => {
+    const api = withApi(() => ({ code: 200,
+      headers: { 'content-type': 'application/json; charset=ISO-8859-1' },
+      bytes: Buffer.from(JSON.stringify({ d: 'ÖBB' }), 'latin1') }));
+
+    expect(read(api).d).toBe('ÖBB');
+    expect(api.EB_TEXT.redecoded).toBe(0);
+  });
+
+  it('checks the bytes against the standard, not against a guess', () => {
+    const signed = (list) => list.map((b) => (b > 127 ? b - 256 : b));
+    const valid = (list) => ctx.isUtf8_(signed(list));
+
+    expect(valid([...Buffer.from('🏦 Ü €')])).toBe(true);
+    expect(valid([0xDC, 0x4E])).toBe(false);             // Latin-1 `ÜN`
+    expect(valid([0xC0, 0x80])).toBe(false);             // an overlong NUL
+    expect(valid([0xED, 0xA0, 0x80])).toBe(false);       // a surrogate
+    expect(valid([0xE2, 0x82])).toBe(false);             // cut off mid-character
+    expect(valid([0xF4, 0x90, 0x80, 0x80])).toBe(false); // past U+10FFFF
+  });
+});

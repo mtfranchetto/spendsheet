@@ -13,6 +13,14 @@ Per-bank observations. None of this is knowable from documentation — every lin
 | What's the real maximum consent duration? | The spec allows up to 180 days; banks grant less. Drives the re-auth reminder cadence |
 | Any non-EUR balances? | A foreign-currency *spend* from a EUR account arrives already converted. This only bites if you hold an actual GBP or USD balance as a separate currency account |
 
+## Text that does not arrive as UTF-8
+
+JSON is UTF-8 by definition and not every bank sends it that way: one sent `MÜNCHEN` as Latin-1, and a UTF-8 decode turned each `Ü` into a replacement diamond. `responseText_` in `02_api.gs` now decides on the **bytes** — a body that is not well-formed UTF-8 is read as Windows-1252, and one that is, is left alone. The sync logs `text_redecoded` to `_anomalies` the first time an account needs this, once, so a bank sending the wrong encoding is a recorded finding rather than something corrected invisibly for ever.
+
+`text_lost` is the other case: a body that *is* valid UTF-8 but already carries the diamond, because the bank lost the letter before sending it. Nothing on this side can recover that. It is logged when such a row is first written, not on each later sync that fetches it again.
+
+Rows stored before the fix keep their diamonds, because the sync never rewrites a row it already holds. The fix changes no uid: `normalizeDescription` maps both `Ü` and the diamond to the same space, so the first sync afterwards recognises every row it already has.
+
 ## Why sandbox can't answer these
 
 Enable Banking's sandbox exposes the Mock ASPSP plus a limited set of real bank sandboxes. It's genuinely useful — it's a configurable simulator, so it can produce failure modes that are otherwise impossible to trigger on demand (expired sessions, 429s, absent `entry_reference`, missing balance types).

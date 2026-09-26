@@ -60,8 +60,32 @@ var MERCHANT_NOISE_WORDS = [
   'data', 'ore', 'ora', 'sepa', 'sdd', 'bancomat', 'pagobancomat', 'istantaneo',
   'eur', 'usd', 'gbp', 'chf', 'nr', 'num', 'numero', 'conto', 'nostro', 'vostro',
   'il', 'lo', 'la', 'le', 'gli', 'un', 'una', 'and', 'the', 'srl', 'spa', 'sas',
-  'snc', 'sa', 'bv', 'nv', 'gmbh', 'ltd', 'inc', 'llc', 'plc'
+  'snc', 'sa', 'bv', 'nv', 'gmbh', 'ltd', 'inc', 'llc', 'plc',
+  // The same ceremony from the card terminals abroad. A prefix left in eats
+  // the six-token budget ahead of the merchant's name.
+  'kartenzahlung', 'lastschrift', 'girocard', 'kaartbetaling', 'betaalautomaat',
+  'paiement', 'achat', 'compra', 'tarjeta'
 ];
+
+/**
+ * The letters that do not come apart into a base letter and an accent.
+ *
+ * `ü` is `u` plus a combining diaeresis once decomposed, so dropping the marks
+ * handles it and every accent like it. `ø`, `æ` and `ß` are letters in their
+ * own right, and without this they fall to the separator below: `KØBENHAVN`
+ * becomes `k` and `benhavn`, the `k` is too short to keep, and the key
+ * is a word nobody in Copenhagen would recognise.
+ */
+var MERCHANT_LETTER_FOLDS = {
+  'ø': 'o', 'æ': 'ae', 'œ': 'oe', 'ß': 'ss', 'ł': 'l', 'đ': 'd', 'ð': 'd',
+  'þ': 'th', 'ı': 'i'
+};
+
+/** `città` and `citta`, `KØBENHAVN` and `kobenhavn`: one merchant each. Expects lower case. */
+function foldLetters_(text) {
+  return String(text).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[øæœßłđðþı]/g, function (letter) { return MERCHANT_LETTER_FOLDS[letter]; });
+}
 
 /** Longest key we will build. Bounds the cell and the comparison cost. */
 var MERCHANT_KEY_MAX_TOKENS = 6;
@@ -89,10 +113,7 @@ function normalizeMerchant(description, counterparty) {
 
   var cleaned = String(text).toLowerCase();
 
-  // Accents first: `città` and `citta` must not be two merchants.
-  cleaned = cleaned
-    .replace(/[àáâä]/g, 'a').replace(/[èéêë]/g, 'e').replace(/[ìíîï]/g, 'i')
-    .replace(/[òóôö]/g, 'o').replace(/[ùúûü]/g, 'u').replace(/[ç]/g, 'c');
+  cleaned = foldLetters_(cleaned);
 
   // Dates and times, in the several shapes Italian banks write them.
   cleaned = cleaned
