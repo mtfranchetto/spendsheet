@@ -824,7 +824,11 @@ function learnFromCorrections() {
     return null;
   }
 
-  writeMemory_(plan.memory, plan.derived.entries);
+  if (!withMemoryLock_(function () { writeMemory_(plan.memory, plan.derived.entries); })) {
+    ui.alert('Learn from corrections', 'A sync is running and reads memory as it goes. ' +
+      'Try again when it has finished.', ui.ButtonSet.OK);
+    return null;
+  }
   ss.toast(plan.derived.entries.length + ' merchants learned from ' + plan.derived.considered +
     ' confirmed rows.', 'Memory rebuilt', 10);
   return plan.derived;
@@ -853,20 +857,49 @@ function learnFromCorrections() {
  * A failure is logged and then **thrown**, which is the opposite of
  * `categorizeAfterSync_` and deliberately so: that one runs inside the sync and
  * must not lose fetched transactions, while this runs alone, so throwing costs
- * nothing and is what makes Google send its trigger-failure email. No
+ * nothing and is what makes Google send its trigger-failure email. A night
+ * when a sync holds the lock is not a failure: it is skipped without a word,
+ * for the reason `withMemoryLock_` gives. No
  * `selfCheck` detector reads `learn_failed`, so that email and `_anomalies` are
  * the only places a broken rebuild shows. The thrown message names neither the
  * cause nor the book.
  */
 function learnScheduled() {
   try {
-    var plan = planMemory_();
-    if (plan.missing) throw new Error(plan.error);
-    if (plan.error || plan.unchanged) return;
-    writeMemory_(plan.memory, plan.derived.entries);
+    withMemoryLock_(function () {
+      var plan = planMemory_();
+      if (plan.missing) throw new Error(plan.error);
+      if (plan.error || plan.unchanged) return;
+      writeMemory_(plan.memory, plan.derived.entries);
+    });
   } catch (e) {
     logAnomaly_(ANOMALY_KIND.LEARN_FAILED, '', e.message);
     throw new Error('learnScheduled failed — see ' + TABS.ANOMALIES + '.');
+  }
+}
+
+/**
+ * Runs `write` under the script lock, or returns false without running it.
+ *
+ * `writeMemory_` clears the tab and then writes it, so between the two a sync
+ * reading memory finds none — and `commitCategorize_` refiles every unfrozen
+ * row to the rule or unclassified answer. The next run puts them back, but the
+ * day is misfiled and both rewrites spend a revision. The sync already holds
+ * this lock for its whole run, so taking it here is all the exclusion needs.
+ *
+ * Refusing rather than waiting, because the one caller with no one to tell —
+ * the nightly trigger — loses nothing by skipping: tomorrow's rebuild is the
+ * same rebuild. The menu holds the lock around the write alone, never across
+ * its dialog, which would keep the sync out for as long as the dialog is open.
+ */
+function withMemoryLock_(write) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) return false;
+  try {
+    write();
+    return true;
+  } finally {
+    lock.releaseLock();
   }
 }
 

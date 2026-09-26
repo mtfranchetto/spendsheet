@@ -863,6 +863,16 @@ describe('running the cascade over the sheet', () => {
     expect(second.category_source).toBe('memory');
   });
 
+  it('does not rewrite memory from the menu while a sync is running', () => {
+    const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+    c.__setLockHeld(true);
+
+    c.learnFromCorrections();
+
+    expect(c.readColumn_(c.__spreadsheet.getSheetByName('_memory'), 1)).not.toContain('bar gino');
+    expect(c.__ui.pop().body).toMatch(/sync is running/);
+  });
+
   it('does not rewrite memory from the menu when nothing moved', () => {
     const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
     c.learnFromCorrections();
@@ -911,6 +921,24 @@ describe('running the cascade over the sheet', () => {
       c.learnScheduled();
 
       expect(memoryKeys(c)).toContain('bar gino');
+    });
+
+    it('skips the night quietly while a sync holds the lock', () => {
+      // A sync reading memory mid-rewrite finds it empty and refiles every
+      // unfrozen row. Tomorrow's rebuild is the same rebuild, so skipping costs
+      // a day of latency and nothing else — not worth a failure email.
+      const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+      c.__setLockHeld(true);
+
+      expect(() => c.learnScheduled()).not.toThrow();
+      expect(memoryKeys(c)).not.toContain('bar gino');
+      expect(c.readColumn_(c.__spreadsheet.getSheetByName('_anomalies'), 3)).not.toContain('learn_failed');
+    });
+
+    it('lets go of the lock, so the sync after it can run', () => {
+      const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+      c.learnScheduled();
+      expect(c.LockService.getScriptLock().tryLock(0)).toBe(true);
     });
 
     it('records a failure and throws, so the failure email goes out', () => {

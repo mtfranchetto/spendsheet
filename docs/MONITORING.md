@@ -17,7 +17,7 @@ It installs three daily triggers and a weekly one:
 | `selfcheck_hour` | 9am | the self-check below |
 | `snapshot_hour` | 5am, Sundays | the Drive snapshot |
 
-Learning runs **before** the sync so that each night's new rows are categorised with the corrections you made that day; keep `learn_hour` below `sync_hour` if you move either. It has its own trigger rather than being a step inside the sync, for the self-check's reason: a failure in one must not take the other down. Clear any of these cells and that trigger falls back to its own default, not to a shared one. A failed rebuild is recorded in `_anomalies` as `learn_failed` and then **throws**, so the failure email described below covers it. None of the detectors below looks for it.
+Learning runs **before** the sync so that each night's new rows are categorised with the corrections you made that day; keep `learn_hour` below `sync_hour` if you move either. It has its own trigger rather than being a step inside the sync, for the self-check's reason: a failure in one must not take the other down. Clear any of these cells and that trigger falls back to its own default, not to a shared one. A failed rebuild is recorded in `_anomalies` as `learn_failed` and then **throws**, so the failure email described below covers it. None of the detectors below looks for it. A night when a sync is still holding the script lock is skipped without an email — memory is rebuilt the next night, and rewriting it under a running sync would misfile that day's rows.
 
 ### Running more than once a day
 
