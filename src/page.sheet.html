@@ -100,12 +100,12 @@
    * on iOS a select opens a wheel picker — which is the thing this sheet had to
    * be redesigned once already to stop doing on open.
    */
-  function typeTabs(current, onChange) {
+  function typeTabs(current, onChange, types) {
     var box = el('div', 'segmented');
     box.setAttribute('role', 'group');
     box.setAttribute('aria-label', 'What kind of transaction this is');
 
-    [['expense', 'Expense'], ['income', 'Income'], [TRANSFER, 'Transfer']]
+    (types || [['expense', 'Expense'], ['income', 'Income'], [TRANSFER, 'Transfer']])
       .forEach(function (pair) {
         var tab = el('button', 'seg', pair[1]);
         tab.type = 'button';
@@ -167,8 +167,10 @@
       // A blank `kind` is a category the user added without saying which half
       // it belongs to. Hiding it would make it unreachable from the app, so it
       // is offered on both. A blank `settings.kind` asks for all of them,
-      // which is what a rule and a cash entry both want.
-      if (settings.kind && parent.kind && parent.kind !== settings.kind) return;
+      // which is what a rule wants; a list asks for any of several, which is
+      // what a cash entry wants — see `renderAdd`.
+      var wanted = [].concat(settings.kind || []);
+      if (wanted.length && parent.kind && wanted.indexOf(parent.kind) < 0) return;
 
       var group = el('optgroup');
       group.label = withIcon(parent.icon, parent.name);

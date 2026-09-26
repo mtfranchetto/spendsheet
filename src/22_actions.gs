@@ -947,7 +947,8 @@ function webAppAddCash_(entry) {
   // button — see `drainCashEntries_` on why handing it over is safe here.
   var categories = categoryIndex_();
 
-  var problem = cashEntryProblem_(request) || unknownCategoryProblem_(request, categories);
+  var problem = cashEntryProblem_(request) || unknownCategoryProblem_(request, categories) ||
+    cashDirectionProblem_(request, categories.kinds);
   if (problem) throw new Error(problem);
 
   /*
@@ -980,7 +981,7 @@ function webAppAddCash_(entry) {
   sheet.getRange(at, 1, 1, CASH_ENTRY_COLUMNS.length).setValues([toRow_(CASH_ENTRY_COLUMNS, {
     date: cashEntryDate_(request.date),
     account: String(request.account),
-    amount: Number(request.amount),
+    amount: directedCashAmount_(request),
     category: String(request.category || ''),
     subcategory: String(request.subcategory || ''),
     note: String(request.note || ''),
@@ -1101,6 +1102,56 @@ function unknownCategoryProblem_(entry, index) {
   if (missingCategory || missingSubcategory) {
     return 'This book has no "' + (missingCategory ? category : subcategory) +
       '" category. Run Spendsheet → Setup sheet to add the ones that ship with it.';
+  }
+  return null;
+}
+
+/**
+ * The amount to store, signed by `direction` when the page sends one.
+ *
+ * The page asks *Expense or Income* with two buttons rather than a sign in the
+ * field, because a decimal keypad on a phone has no `+` and a sign is the wrong
+ * place to ask the question anyway. So it sends the number unsigned and says
+ * which way it went, and the sign is applied here — once, on the server, where
+ * `cashEntryAmount` also lives.
+ *
+ * Without a `direction` the amount is stored as typed, which is what the
+ * `cash_entry` tab has always meant by it: a bare number is spending, a
+ * negative one wins as written, and an Income or Transfer category flips the
+ * bare one. "Update balance" sends a signed delta and relies on exactly that.
+ */
+function directedCashAmount_(entry) {
+  var request = entry || {};
+  var amount = Number(request.amount);
+  if (request.direction === TX_TYPE.INCOME) return Math.abs(amount);
+  if (request.direction === TX_TYPE.EXPENSE) return -Math.abs(amount);
+  return amount;
+}
+
+/**
+ * An income the drain would record as spending, refused in words.
+ *
+ * Income goes in positive, and a positive `cash_entry` amount is only *kept*
+ * positive by an Income or Transfer category — `cashEntryAmount` flips it
+ * otherwise, because on the tab a bare number is spending. So an income with no
+ * category, or one filed under Food & Drink, would reach `transactions` as an
+ * expense of the same size: the button said one thing and the ledger the other.
+ * Asking `cashEntryAmount` itself, rather than restating its rule, keeps the
+ * two from drifting apart.
+ *
+ * Expense needs no such check: a negative amount wins as written.
+ */
+function cashDirectionProblem_(entry, kinds) {
+  var request = entry || {};
+  if (isBlankCell_(request.direction)) return null;
+  if (request.direction !== TX_TYPE.INCOME && request.direction !== TX_TYPE.EXPENSE) {
+    return 'Choose Expense or Income.';
+  }
+  if (request.direction === TX_TYPE.EXPENSE) return null;
+
+  var kind = (kinds || {})[String(request.category || '').trim()];
+  if (cashEntryAmount(directedCashAmount_(request), kind) < 0) {
+    return 'Income needs an Income category — without one it is recorded as spending.';
   }
   return null;
 }

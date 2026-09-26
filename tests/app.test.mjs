@@ -1413,6 +1413,40 @@ describe('adding cash from the app', () => {
     expect(ledger(c).map((r) => r.amount)).toEqual([-3.5, 200]);
   });
 
+  it('signs an unsigned amount by the direction the page chose', () => {
+    // The page has Expense and Income buttons instead of a sign in the field,
+    // because a phone's decimal keypad has no `+`. A typed minus is the same
+    // number either way — the button decides.
+    const c = cashBook();
+    c.appAddCash({ amount: 3.5, direction: 'expense', account: 'Wallet',
+      category: 'Food & Drink' });
+    c.appAddCash({ amount: -3.5, direction: 'expense', account: 'Wallet' });
+    c.appAddCash({ amount: 200, direction: 'income', account: 'Wallet', category: 'Income' });
+    c.appAddCash({ amount: -200, direction: 'income', account: 'Wallet', category: 'Income' });
+    c.appAddCash({ amount: 50, direction: 'income', account: 'Wallet', category: 'Transfer' });
+    c.appAddCash({ amount: 50, direction: 'expense', account: 'Wallet', category: 'Transfer' });
+
+    expect(ledger(c).map((r) => r.amount)).toEqual([-3.5, -3.5, 200, 200, 50, -50]);
+  });
+
+  it('refuses an income the drain would record as spending', () => {
+    // A positive amount is only kept positive by an Income or Transfer
+    // category, so without one the button said Income and the ledger would say
+    // an expense of the same size.
+    const c = cashBook();
+    expect(() => c.appAddCash({ amount: 200, direction: 'income', account: 'Wallet' }))
+      .toThrow('Income needs an Income category');
+    expect(() => c.appAddCash({ amount: 200, direction: 'income', account: 'Wallet',
+      category: 'Food & Drink' })).toThrow('Income needs an Income category');
+    expect(ledger(c)).toHaveLength(0);
+  });
+
+  it('refuses a direction it does not know rather than guessing one', () => {
+    const c = cashBook();
+    expect(() => c.appAddCash({ amount: 3, direction: 'sideways', account: 'Wallet' }))
+      .toThrow('Choose Expense or Income');
+  });
+
   it('gives every entry a uid, since two identical coffees are two transactions', () => {
     const c = cashBook();
     c.appAddCash({ amount: '3', account: 'Wallet', note: 'coffee' });
