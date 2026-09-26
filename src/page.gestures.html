@@ -74,6 +74,12 @@
       // that was a boolean this function owned; an object is always truthy, so
       // the day it gained named slots the gesture stopped starting at all.
       if (state.refreshing.pull) return;
+      // A drag that starts inside something scrolled away from its own top is
+      // that thing's scroll. The category picker's list is the case: at the top
+      // of the page, pulling its list back down would otherwise arm a refresh.
+      for (var at = event.target; at && at !== document.body; at = at.parentNode) {
+        if (at.scrollTop > 0) return;
+      }
 
       startY = event.touches[0].clientY;
       startX = event.touches[0].clientX;

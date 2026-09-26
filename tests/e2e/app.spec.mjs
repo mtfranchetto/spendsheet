@@ -864,9 +864,15 @@ test.describe('typing an amount', () => {
 
   test('sends which way the money went from the buttons, not from a sign', async ({ page, errors }) => {
     const field = await openAdd(page);
-    const category = page.locator('#screens select').nth(1);
-    const offered = () => category.locator('optgroup').evaluateAll(
-      (groups) => groups.map((g) => g.label.replace(/^\S+\s/, '')));
+    // The parents the picker offers, read off its headings with an empty
+    // search — opened, read and closed again so the form is left as it was.
+    const offered = async () => {
+      await page.locator('#screens .catpick-current').click();
+      const names = await page.locator('#screens .catpick-group').evaluateAll(
+        (groups) => groups.map((g) => g.textContent.replace(/^\S+\s/, '')));
+      await page.locator('#screens .catpick-current').click();
+      return names;
+    };
 
     // Expense is the default and offers no Income category to file under.
     await expect(page.locator('#screens .seg[aria-pressed="true"]')).toHaveText('Expense');
@@ -880,7 +886,9 @@ test.describe('typing an amount', () => {
     // Redrawing the tabs leaves what was typed alone.
     await field.click();
     await page.keyboard.type('200');
-    await category.selectOption({ label: 'Anything in Income' });
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('income');
+    await page.locator('#screens .catpick-option', { hasText: 'Anything in Income' }).click();
     await page.locator('#screens button.primary', { hasText: 'Add' }).click();
     await expect.poll(() => calls(page)).toContain('appAddCash');
 
@@ -1114,6 +1122,127 @@ test.describe('deleting a cash transaction', () => {
   });
 });
 
+test.describe('picking a category', () => {
+  const openAdd = async (page) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Add transaction');
+    await page.locator('#screens input[inputmode="decimal"]').fill('12');
+  };
+
+  const search = async (page, text) => {
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill(text);
+  };
+
+  const options = (page) => page.locator('#screens .catpick-option');
+
+  const sentCategory = async (page) => {
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+    const [sent] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    return { category: sent.category, subcategory: sent.subcategory };
+  };
+
+  test('narrows as you type, and a child sends its parent with it', async ({ page, errors }) => {
+    // The parent travelling with the child is load-bearing: a row already
+    // carrying a `category_override` — every transfer does — would otherwise
+    // go on winning over the child you picked.
+    await openAdd(page);
+    const everything = await (async () => {
+      await page.locator('#screens .catpick-current').click();
+      return options(page).count();
+    })();
+
+    await page.locator('#screens .catpick input').fill('bars');
+    await expect(options(page)).toHaveCount(1);
+    expect(everything).toBeGreaterThan(20);
+
+    await options(page).first().click();
+    await expect(page.locator('#screens .catpick-panel')).toBeHidden();
+    await expect(page.locator('#screens .catpick-current')).toContainText('Bars & Cafes');
+    expect(await sentCategory(page)).toEqual({ category: 'Food & Drink', subcategory: 'Bars & Cafes' });
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps the parent on its own reachable by searching its name', async ({ page, errors }) => {
+    // "This is Shopping and I do not know what kind" is a real answer.
+    await openAdd(page);
+    await search(page, 'shopping');
+
+    await page.locator('#screens .catpick-option', { hasText: 'Anything in Shopping' }).click();
+    expect(await sentCategory(page)).toEqual({ category: 'Shopping', subcategory: '' });
+    expect(errors).toEqual([]);
+  });
+
+  test('shows a child under its parent\'s heading even when only the child matched', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'rent');
+
+    await expect(page.locator('#screens .catpick-group')).toContainText(['Housing']);
+    await expect(page.locator('#screens .catpick-option', { hasText: 'Anything in Housing' }))
+      .toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('ignores case and accents', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'BÄRS');
+
+    await expect(options(page)).toHaveText([/Bars & Cafes/]);
+    expect(errors).toEqual([]);
+  });
+
+  test('picks the first match on Return', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'bars');
+    await page.keyboard.press('Enter');
+
+    expect(await sentCategory(page)).toEqual({ category: 'Food & Drink', subcategory: 'Bars & Cafes' });
+    expect(errors).toEqual([]);
+  });
+
+  test('says so when nothing matches', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'zzzz');
+
+    await expect(options(page)).toHaveCount(0);
+    await expect(page.locator('#screens .catpick-panel')).toContainText('No category matches');
+    expect(errors).toEqual([]);
+  });
+
+  test('offers only the tab\'s own kind in the transaction sheet', async ({ page, errors }) => {
+    // A salary should not be offered sixty expense categories, and the search
+    // must not be a way round that.
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+    await page.locator('#sheet .catpick-current').click();
+    await page.locator('#sheet .catpick input').fill('salary');
+
+    await expect(page.locator('#sheet .catpick-option')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('confirms a row with what was picked in the sheet', async ({ page, errors }) => {
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+    await page.locator('#sheet .catpick-current').click();
+    await page.locator('#sheet .catpick input').fill('bars');
+    await page.locator('#sheet .catpick-option').first().click();
+    await page.locator('#sheet button.primary').click();
+
+    await expect.poll(() => calls(page)).toContain('appConfirm');
+    const [decision] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0][0]));
+    expect(decision).toMatchObject({ category_override: 'Food & Drink',
+      subcategory_override: 'Bars & Cafes' });
+    expect(errors).toEqual([]);
+  });
+});
+
 test.describe('labels on a cash entry', () => {
   const openAdd = async (page) => {
     await open(page);
@@ -1145,9 +1274,9 @@ test.describe('labels on a cash entry', () => {
     await page.locator('#screens input[inputmode="decimal"]').fill('12');
     await chip(page, 'travel').click();
 
-    // By value rather than by label: the label carries the category's icon.
-    await page.locator('#screens select.field').last()
-      .selectOption('c:Between accounts');
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('between');
+    await page.locator('#screens .catpick-option', { hasText: 'Between accounts' }).click();
     await expect(chip(page, 'travel')).toBeHidden();
 
     await page.locator('#screens button.primary', { hasText: 'Add' }).click();
@@ -1166,8 +1295,9 @@ test.describe('labels on a cash entry', () => {
     await page.locator('#screens .seg', { hasText: 'Income' }).click();
     await page.locator('#screens .seg', { hasText: 'Expense' }).click();
 
-    await page.locator('#screens select.field').last()
-      .selectOption('c:Between accounts');
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('between');
+    await page.locator('#screens .catpick-option', { hasText: 'Between accounts' }).click();
     await expect(chip(page, 'travel')).toBeHidden();
     expect(errors).toEqual([]);
   });
@@ -1447,8 +1577,8 @@ test.describe('opening on what the phone already knows', () => {
 */
 test.describe('pull to refresh', () => {
   /** A downward drag from the top of the document, in the shape WebKit accepts. */
-  const pull = (page, distance) => page.evaluate((travel) => {
-    const target = document.body;
+  const pull = (page, distance, selector) => page.evaluate(([travel, at]) => {
+    const target = at ? document.querySelector(at) : document.body;
     const point = (y) => (document.createTouch
       ? document.createTouch(window, target, 1, 40, y, 40, y)
       : new Touch({ identifier: 1, target, clientX: 40, clientY: y }));
@@ -1471,7 +1601,7 @@ test.describe('pull to refresh', () => {
     touch('touchstart', 10);
     for (let step = 1; step <= 8; step += 1) touch('touchmove', 10 + (travel * step) / 8);
     touch('touchend', 10 + travel);
-  }, distance);
+  }, [distance, selector || null]);
 
   test('a pull past the threshold re-reads the dashboard', async ({ page, errors }) => {
     await open(page);
@@ -1487,6 +1617,23 @@ test.describe('pull to refresh', () => {
     const fresh = await page.evaluate(() =>
       window.__calls.filter((c) => c.name === 'appDashboard').map((c) => c.args[0]));
     expect(fresh.some(Boolean), 'appDashboard was not asked for a fresh read').toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test('a drag inside a list scrolled down is that list\'s scroll', async ({ page, errors }) => {
+    // The category picker's list scrolls inside itself. At the top of the
+    // page, dragging it back towards its own top is the same gesture as a pull,
+    // and used to arm one.
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await page.locator('#screens .catpick-current').click();
+    await page.evaluate(() => { document.querySelector('.catpick-list').scrollTop = 200; });
+    await page.evaluate(() => { window.__calls.length = 0; });
+
+    await pull(page, 140, '.catpick-option:not(.first)');
+
+    await page.waitForTimeout(300);
+    expect(await calls(page)).not.toContain('appDashboard');
     expect(errors).toEqual([]);
   });
 
