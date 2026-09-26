@@ -29,6 +29,13 @@ function daysAgo(n) {
   return date;
 }
 
+/** The same day at a given hour and minute. A bank row's is midnight: no time. */
+function atTime(date, [hours, minutes]) {
+  const moment = new Date(date);
+  moment.setHours(hours, minutes, 0, 0);
+  return moment;
+}
+
 /*
   `balance` (column J) is an ARRAYFORMULA over the three kinds and `days_left`
   on `_status` is another, so both are stated rather than derived — the same
@@ -94,6 +101,11 @@ const ROWS = [
   { uid: 'r-6', account: 'Revolut', at: 4, amount: -63.1,
     description: 'ESSELUNGA SPA TORINO', category: 'Food & Drink',
     subcategory: 'Groceries', type: 'expense' },
+  // Nothing filed it — no rule, no MCC, no memory under this exact key — so it
+  // is the row a suggestion is offered on, from the entry in MEMORY below.
+  { uid: 'r-16', account: 'Revolut', at: 5, amount: -9.2,
+    description: 'MERCATO CENTRALE FIRENZE', category: '', subcategory: '',
+    type: 'expense', unclassified: true },
   // A €0.00 pre-authorisation: a real debit with no sign to read it from.
   { uid: 'r-7', account: 'Revolut', at: 4, amount: 0,
     description: 'Q8 EASY PREAUTORIZZAZIONE', category: 'Transport',
@@ -125,7 +137,7 @@ const ROWS = [
     group: 'tr:w-out', confirmed: true },
   // Cash typed by hand, which is the only source a row can be deleted from —
   // so this is what puts the delete control on any screen at all.
-  { uid: 'c-1', account: 'Wallet', at: 11, amount: -6.5, source: 'manual',
+  { uid: 'c-1', account: 'Wallet', at: 11, time: [8, 5], amount: -6.5, source: 'manual',
     description: 'Caffè e cornetto', category: 'Food & Drink',
     subcategory: 'Bars & Cafes', type: 'expense', confirmed: true },
   // Foreign currency with no rate: `amount_base` is blank, and the row must
@@ -148,6 +160,12 @@ const ROWS = [
   { uid: 'r-15', account: 'Fineco', at: 40, amount: -220,
     description: 'DECATHLON', category: 'Shopping', subcategory: 'Clothing',
     type: 'expense', confirmed: true }
+];
+
+/** Learned merchants, as `learnScheduled` would have left them. */
+const MEMORY = [
+  { merchant_key: 'mercato centrale roma', category: 'Food & Drink',
+    subcategory: 'Groceries', hits: 4, last_seen: daysAgo(30) }
 ];
 
 const HOLDS = [
@@ -173,6 +191,8 @@ export function previewBook() {
     account_id: ACCOUNTS.find((a) => a.name === row.account).account_id,
     account_name: row.account,
     booking_date: daysAgo(row.at),
+    // Cash typed on the day carries the moment it was typed; see cashEntryMoment_.
+    transaction_date: atTime(daysAgo(row.at), row.time || [0, 0]),
     amount: row.amount,
     currency: row.currency || 'EUR',
     description: row.description,
@@ -189,11 +209,14 @@ export function previewBook() {
     put('subcategory', row.subcategory);
     put('type', row.type);
     put('in_reports', row.inReports === undefined ? true : row.inReports);
-    put('category_source', row.confirmed ? 'override' : 'rule');
+    put('category_source', row.confirmed ? 'override' : row.unclassified ? 'unclassified' : 'rule');
     if (row.labels) put('labels', row.labels);
     if (row.confirmed) put('confirmed', true);
     if (row.group) put('transfer_group', row.group);
   });
+
+  c.appendRows_(ss.getSheetByName('_memory'), 1,
+    MEMORY.map((entry) => c.toRow_(c.MEMORY_COLUMNS, entry)));
 
   c.appendRows_(ss.getSheetByName('pending'), 1,
     HOLDS.map((hold) => c.toRow_(c.PENDING_COLUMNS, {

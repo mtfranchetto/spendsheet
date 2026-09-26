@@ -83,7 +83,7 @@ Append-only. **Booked transactions only** (see `pending` below).
 | C | `account_name` | denormalised for readability |
 | D | `booking_date` | |
 | E | `value_date` | |
-| F | `transaction_date` | |
+| F | `transaction_date` | on cash typed for today, the moment it was typed, so the app can show a time. The column is formatted as a date, so the sheet shows only the day. A bank's time, if it sends one, is not kept: *Diagnostics → Inspect transactions* reports whether it sends one |
 | G | `amount` | **signed** — negative is money out |
 | H | `currency` | |
 | I | `description` | `remittance_information` joined and whitespace-normalised |

@@ -1904,6 +1904,31 @@ describe('the dashboard the app draws', () => {
     expect(c.appDashboard().review.map((r) => r.uid)).toEqual(['u-2']);
   });
 
+  it('suggests a category for an unclassified row from a merchant memory knows', () => {
+    const c = book([
+      tx({ uid: 'u-1', description: 'ESSELUNGA MILANO', category: '', subcategory: '', category_source: 'unclassified' }),
+      tx({ uid: 'u-2', description: 'ESSELUNGA MILANO' })
+    ]);
+    const memory = c.__spreadsheet.getSheetByName('_memory');
+    c.appendRows_(memory, 1, [['esselunga torino', 'Food & Drink', 'Groceries', 3, '']]);
+
+    const [unclassified, ruled] = c.appOverview().review;
+    expect({ ...unclassified.suggestion }).toEqual(
+      { category: 'Food & Drink', subcategory: 'Groceries', from: 'esselunga torino' });
+    // A row the cascade already answered is not second-guessed.
+    expect(ruled.suggestion).toBeUndefined();
+  });
+
+  it('sends the time of day a row recorded one, and nothing when it knows only the day', () => {
+    const c = book([
+      tx({ uid: 'u-1', transaction_date: new Date(2026, 6, 15, 8, 5) }),
+      tx({ uid: 'u-2', transaction_date: new Date(2026, 6, 15) })
+    ]);
+
+    const times = Object.fromEntries(c.appOverview().review.map((r) => [r.uid, r.time]));
+    expect(times).toEqual({ 'u-1': '08:05', 'u-2': '' });
+  });
+
   it('marks an account whose consent has gone, and leaves a cash tin alone', () => {
     // A cash tin has no consent to expire, and marking it as a problem every
     // day is how a whole column stops being read.

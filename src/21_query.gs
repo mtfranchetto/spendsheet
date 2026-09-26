@@ -1083,6 +1083,8 @@ function pendingForPage_(scope, request) {
       return {
         uid: String(row.uid || ''),
         date: dayKey_(dayNumber_(row.booking_date)),
+    // `HH:mm`, or blank when the row knows only its day. See `timeOfDay_`.
+    time: timeOfDay_(row.transaction_date),
         account: String(row.account_name || ''),
         description: String(row.description || row.counterparty || ''),
         amount: cellNumber_(row.amount),
@@ -1204,6 +1206,25 @@ function isDrilled_(request) {
 }
 
 /**
+ * The time of day a row happened, when anything recorded one.
+ *
+ * Read from `transaction_date`, which holds a time only for cash typed on the
+ * day it was spent (`cashEntryMoment_`) — a bank's time, if it sends one, is
+ * not kept. Midnight exactly reads as no time, because a date with no time is
+ * midnight too and the cell cannot tell them apart; a purchase at 00:00:00 to
+ * the second is the price of not adding a column to say which.
+ */
+function timeOfDay_(value) {
+  // Through `toDate_`: the ledger arrives through JSON, so this is an ISO string.
+  var date = toDate_(value);
+  if (!date) return '';
+  var hours = date.getHours();
+  var minutes = date.getMinutes();
+  if (!hours && !minutes) return '';
+  return (hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes;
+}
+
+/**
  * One row, compacted for the wire.
  *
  * `uid` is here because it is what a confirmation is addressed to — the same
@@ -1225,6 +1246,8 @@ function recordForPage_(row, peers) {
   return {
     uid: String(row.uid || ''),
     date: dayKey_(dayNumber_(row.booking_date)),
+    // `HH:mm`, or blank when the row knows only its day. See `timeOfDay_`.
+    time: timeOfDay_(row.transaction_date),
     account: String(row.account_name || ''),
     description: String(row.description || row.counterparty || ''),
     amount: cellNumber_(row.amount_base),

@@ -300,7 +300,9 @@
 
     var middle = el('div', 'grow');
     add(middle, add(el('div', 'ellipsis'), document.createTextNode(what)));
-    add(middle, el('div', 'rec-sub', whereLine(record)));
+    // Rows are already grouped under their day, so the time is all this adds.
+    add(middle, el('div', 'rec-sub',
+      (record.time ? record.time + ' \u{00b7} ' : '') + whereLine(record)));
     if (record.description) {
       add(middle, add(el('div', 'rec-desc ellipsis'),
         document.createTextNode(record.description)));
@@ -336,7 +338,7 @@
     button.setAttribute('aria-label',
       (record.confirmed ? 'Confirmed. ' : 'Needs review. ') +
       (moved ? 'Transfer. ' : '') + what + ', ' +
-      shortDate(record.date) + ', ' + whereLine(record) + ', ' + money(record.amount) +
+      shortDate(record.date) + (record.time ? ' ' + record.time : '') + ', ' + whereLine(record) + ', ' + money(record.amount) +
       (record.labels && record.labels.length ? '. Labelled ' + record.labels.join(', ') : '') +
       (record.description ? '. ' + record.description : ''));
     button.addEventListener('click', function () {

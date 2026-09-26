@@ -61,6 +61,14 @@ Two decisions in there are worth knowing about, because both look like bugs unti
 
 **A key matches whole.** `esselunga` and `esselunga torino` are two entries in `_memory`, and each earns its own confirmation — so your BudgetBakers history (`Esselunga`) and your bank (`ESSELUNGA SPA TORINO`) are two merchants until you have confirmed one of each. That is one extra swipe, once, in exchange for a lookup that either hits or does not. A merchant whose descriptor varies more than that is what `rules` is for: a `contains` pattern says "however this one renders, file it here", which is the statement a key deliberately cannot make.
 
+### A suggestion for a merchant memory has never seen
+
+A merchant you have never filed is still unclassified, and stays that way until you confirm it. What changes is where the phone's category list opens. For an unclassified row in the review queue, it opens on the category of the `_memory` entry that shares the most with this row's key, and says which entry that was.
+
+Only an entry whose key starts with the same word is a candidate. A key leads with the merchant's name and ends with its city, so `farmacia firenze` never borrows from `trattoria firenze`, and `mercato centrale firenze` does borrow from `mercato centrale roma`. Among the candidates, shared words count for more the rarer they are, and a tie goes to the entry you have confirmed more often. A merchant whose name doesn't lead its key gets no suggestion, which is what every unclassified row got before.
+
+This does not break *a key matches whole*. The cascade still files by exact lookup, and a suggestion only changes where the picker starts. Confirming one is an ordinary correction, which memory learns from overnight.
+
 ---
 
 ## The loop you actually use

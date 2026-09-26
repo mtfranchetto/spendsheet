@@ -748,15 +748,33 @@ function inspectTransactions() {
   return accounts.length;
 }
 
-/** The three fields whose presence changes how the rest of the system behaves. */
+/**
+ * The fields whose presence changes how the rest of the system behaves.
+ *
+ * The last three answer whether a bank sends a *time*. `parseIsoDate` keeps
+ * the day and nothing after it, so any time a bank sends is discarded before
+ * it reaches a cell — which makes this the only place in the project that can
+ * see one, and the question worth answering before carrying a time anywhere.
+ */
 function summariseCoverage_(list) {
   function pct(predicate) {
     if (!list.length) return 'n/a';
     return Math.round(100 * list.filter(predicate).length / list.length) + '%';
   }
+  function timed(field) {
+    return pct(function (t) { return t && hasTimeOfDay_(t[field]); });
+  }
   return 'entry_reference ' + pct(function (t) { return t && t.entry_reference; }) +
     ', mcc ' + pct(function (t) { return t && t.merchant_category_code; }) +
     ', remittance_information ' + pct(function (t) {
       return t && t.remittance_information && t.remittance_information.length;
-    });
+    }) +
+    '. With a time: booking_date ' + timed('booking_date') +
+    ', value_date ' + timed('value_date') +
+    ', transaction_date ' + timed('transaction_date');
+}
+
+/** Whether a provider's date string carries a time after the day: `2026-07-28T14:32`. */
+function hasTimeOfDay_(value) {
+  return /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(String(value || ''));
 }
