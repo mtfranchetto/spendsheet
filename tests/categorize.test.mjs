@@ -30,6 +30,23 @@ describe('normalizeMerchant', () => {
     expect(key('PAGAMENTO POS 12/03 CARTA *1234 ESSELUNGA SPA TORINO')).toBe('esselunga torino');
   });
 
+  it('keeps the letters of a foreign merchant rather than splitting on them', () => {
+    // Each of these used to lose a syllable: the letter became a separator and
+    // the fragment it left was too short to keep.
+    expect(key('REMA 1000 KØBENHAVN')).toBe('rema kobenhavn');
+    expect(key('MERCADONA ESPAÑA')).toBe('mercadona espana');
+    expect(key('MÜNCHNER VERKEHRSGESEL MÜNCHEN')).toBe('munchner verkehrsgesel munchen');
+    expect(key('STRAßENBAHN')).toBe('strassenbahn');
+    expect(key('ŁÓDŹ KIOSK')).toBe('lodz kiosk');
+  });
+
+  it('drops the card-terminal words other countries print', () => {
+    expect(key('KARTENZAHLUNG GIROCARD EDEKA BERLIN')).toBe('edeka berlin');
+    expect(key('BETAALAUTOMAAT ALBERT HEIJN')).toBe('albert heijn');
+    expect(key('PAIEMENT CB MONOPRIX PARIS')).toBe('cb monoprix paris');
+    expect(key('COMPRA TARJETA MERCADONA')).toBe('mercadona');
+  });
+
   it('strips dates, times and card references in the several shapes banks use', () => {
     expect(key('PAGAMENTO TRAMITE POS 25/07/2026 14:32 CARTA 1234 NETFLIX')).toBe('netflix');
     expect(key('ACQUISTO 01-02-26 ORE 09:15 SPOTIFY')).toBe('spotify');

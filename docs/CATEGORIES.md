@@ -49,6 +49,10 @@ Nothing marks a merchant as mixed, and nothing needs to: it is mixed while its c
 
 `PAGAMENTO POS 12/03 CARTA *1234 ESSELUNGA SPA TORINO` becomes the key `esselunga torino`, and `_memory` says what you file that as. Dates, times, card numbers, till numbers, authorisation codes, legal suffixes and about sixty words of Italian banking ceremony are stripped out.
 
+Accents fold to their base letter, and so do the letters that are not an accent on anything — `ø`, `æ`, `ß`, `ł` — so `REMA 1000 KØBENHAVN` keys as `rema kobenhavn` rather than losing the `Kø` to a separator. The card-terminal words other countries print (`KARTENZAHLUNG`, `BETAALAUTOMAAT`, `PAIEMENT`, `COMPRA TARJETA`, …) are stripped with the Italian ones.
+
+**Changing how a key is built changes every key**, so entries learned under the old form stop matching. Nothing needs doing about it: `_memory` is rebuilt from your confirmed rows every night, and the rebuild keys them the new way.
+
 Two decisions in there are worth knowing about, because both look like bugs until you see the reason:
 
 **The city stays in.** `esselunga torino` and `esselunga milano` are two keys. Stripping city names would merge them — right up until the day it merges two genuinely different merchants, which is permanent, silent, and teaches the cascade something false about every future row. Keeping the city costs one extra confirmation per city per merchant, once. The asymmetry isn't close.

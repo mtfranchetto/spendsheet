@@ -370,6 +370,8 @@ var ANOMALY_KIND = {
   RATE_LIMITED: 'rate_limited',
   CONSENT_DIED: 'consent_died',        // 401 before valid_until — needs you, not a retry
   LEARN_FAILED: 'learn_failed',        // the nightly memory rebuild threw — see learnScheduled
+  TEXT_REDECODED: 'text_redecoded',    // a body that was not UTF-8, read as Windows-1252
+  TEXT_LOST: 'text_lost',              // a new row whose text the bank had already broken
   RAW_DUMP: 'raw_dump'                 // deliberate capture, for working out a shape
 };
 
@@ -390,7 +392,8 @@ var RUN_RESULT = { OK: 'OK', PARTIAL: 'PARTIAL', FAIL: 'FAIL' };
 /** Script Properties owned by the sync, kept apart from the EB_* credentials. */
 var SYNC_PROP = {
   CALL_BUDGET: 'SYNC_CALL_BUDGET',   // {date, counts:{uid:n}} — see callsUsedToday_
-  CASH_SEQUENCE: 'SYNC_CASH_SEQUENCE'  // only ever goes up — see computeCashUid
+  CASH_SEQUENCE: 'SYNC_CASH_SEQUENCE', // only ever goes up — see computeCashUid
+  TEXT_REDECODED: 'SYNC_TEXT_REDECODED' // [uid] already reported — see reportBankText_
 };
 
 /** A cell holds 50,000 characters; leave headroom rather than losing the row. */
