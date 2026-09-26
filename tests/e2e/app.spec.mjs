@@ -839,6 +839,34 @@ test.describe('typing an amount', () => {
     expect(errors).toEqual([]);
   });
 
+  test('sends which way the money went from the buttons, not from a sign', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    const category = page.locator('#screens select').nth(1);
+    const offered = () => category.locator('optgroup').evaluateAll(
+      (groups) => groups.map((g) => g.label.replace(/^\S+\s/, '')));
+
+    // Expense is the default and offers no Income category to file under.
+    await expect(page.locator('#screens .seg[aria-pressed="true"]')).toHaveText('Expense');
+    expect(await offered()).not.toContain('Income');
+
+    await page.locator('#screens .seg', { hasText: 'Income' }).click();
+    await expect(page.locator('#screens .seg[aria-pressed="true"]')).toHaveText('Income');
+    expect(await offered()).toContain('Income');
+    expect(await offered()).not.toContain('Food & Drink');
+
+    // Redrawing the tabs leaves what was typed alone.
+    await field.click();
+    await page.keyboard.type('200');
+    await category.selectOption({ label: 'Anything in Income' });
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const sent = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    expect(sent).toMatchObject([{ amount: 200, direction: 'income', category: 'Income' }]);
+    expect(errors).toEqual([]);
+  });
+
   test('keeps the caret beside the digit just typed when a separator appears', async ({ page, errors }) => {
     const field = await openAdd(page);
     await page.keyboard.type('123456');
