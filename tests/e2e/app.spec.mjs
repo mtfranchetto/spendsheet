@@ -864,9 +864,15 @@ test.describe('typing an amount', () => {
 
   test('sends which way the money went from the buttons, not from a sign', async ({ page, errors }) => {
     const field = await openAdd(page);
-    const category = page.locator('#screens select').nth(1);
-    const offered = () => category.locator('optgroup').evaluateAll(
-      (groups) => groups.map((g) => g.label.replace(/^\S+\s/, '')));
+    // The parents the picker offers, read off its headings with an empty
+    // search — opened, read and closed again so the form is left as it was.
+    const offered = async () => {
+      await page.locator('#screens .catpick-current').click();
+      const names = await page.locator('#screens .catpick-group').evaluateAll(
+        (groups) => groups.map((g) => g.textContent.replace(/^\S+\s/, '')));
+      await page.locator('#screens .catpick-current').click();
+      return names;
+    };
 
     // Expense is the default and offers no Income category to file under.
     await expect(page.locator('#screens .seg[aria-pressed="true"]')).toHaveText('Expense');
@@ -880,7 +886,9 @@ test.describe('typing an amount', () => {
     // Redrawing the tabs leaves what was typed alone.
     await field.click();
     await page.keyboard.type('200');
-    await category.selectOption({ label: 'Anything in Income' });
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('income');
+    await page.locator('#screens .catpick-option', { hasText: 'Anything in Income' }).click();
     await page.locator('#screens button.primary', { hasText: 'Add' }).click();
     await expect.poll(() => calls(page)).toContain('appAddCash');
 
@@ -1287,8 +1295,9 @@ test.describe('labels on a cash entry', () => {
     await page.locator('#screens .seg', { hasText: 'Income' }).click();
     await page.locator('#screens .seg', { hasText: 'Expense' }).click();
 
-    await page.locator('#screens select.field').last()
-      .selectOption('c:Between accounts');
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('between');
+    await page.locator('#screens .catpick-option', { hasText: 'Between accounts' }).click();
     await expect(chip(page, 'travel')).toBeHidden();
     expect(errors).toEqual([]);
   });
