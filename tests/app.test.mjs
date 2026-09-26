@@ -339,10 +339,10 @@ describe('the gate on every public function in the project', () => {
   it('gates every trigger handler on the event, not on the UI', () => {
     // A trigger has no UI and no signed-in user, so `requireInteractive_`
     // alone would pass the rule above and refuse every unattended run. Read
-    // out of the schedule, so a fourth trigger is held to it the day it is wired.
+    // out of the schedule, so a new trigger is held to it the day it is wired.
     const schedule = readFileSync(join(SRC, '11_triggers.gs'), 'utf8');
     const triggerFns = [...schedule.matchAll(/\bfn:\s*'([A-Za-z0-9_]+)'/g)].map((m) => m[1]);
-    expect(triggerFns).toEqual(['syncScheduled', 'selfCheck', 'snapshotToDrive']);
+    expect(triggerFns).toEqual(['syncScheduled', 'selfCheck', 'snapshotToDrive', 'learnScheduled']);
 
     triggerFns.forEach((name) => {
       const src = readFileSync(join(SRC, fns[name].file), 'utf8');
@@ -424,6 +424,8 @@ describe('the gate on every public function in the project', () => {
       expect(() => c.syncScheduled(forged)).toThrow('Not available');
       expect(() => c.selfCheck(forged)).toThrow('Not available');
       expect(() => c.snapshotToDrive(forged)).toThrow('Not available');
+      c.planMemory_ = () => { throw new Error('the memory rebuild started'); };
+      expect(() => c.learnScheduled(forged)).toThrow('Not available');
       expect(c.__sentMail).toHaveLength(0);
       expect(c.__driveFiles).toHaveLength(0);
     });

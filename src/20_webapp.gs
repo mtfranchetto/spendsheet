@@ -489,7 +489,7 @@ function requireInteractive_() {
  * throws, and Google emails a trigger that throws.
  *
  * Anything that is not a trigger run falls back to `requireInteractive_`. That
- * keeps the menu item for the snapshot, and running any of the three from the
+ * keeps the menu item for the snapshot, and running any of the four from the
  * editor, working as before.
  */
 function requireScheduled_(e) {
