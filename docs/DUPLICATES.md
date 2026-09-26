@@ -81,6 +81,6 @@ Sometimes it is one row and a tool is overkill. That is fine, within limits, and
 - **Touching row 2.** Every `ARRAYFORMULA` from P onward is anchored there.
 - **Editing `description` on an `enablebanking` row.** Where a bank sends no `entry_reference` the uid is a hash that includes the description, so a future sync would not recognise the row and would append a duplicate days later, with nothing pointing back at the edit. The phone app already refuses this for the same reason.
 
-**After deleting any row by hand, run Spendsheet → Set up and maintain → Accept row count.** The row-loss detector has just watched the tab shrink and will abort the next sync — correctly, since from where it sits an unexplained shrink and a catastrophe look identical. Nothing copies a hand-deleted row to `_removed`, so if you might want it back, copy it there yourself first.
+**Before deleting any row by hand, copy it to `_removed`.** The row-loss detector watches the tab shrink and aborts the next sync unless every missing row has a copy there — correctly, since from where it sits an unexplained shrink and a catastrophe look identical. The copy is both the excuse and the way back. If you delete without one, run **Spendsheet → Set up and maintain → Accept row count** afterwards.
 
 See [SHEET-SCHEMA.md](SHEET-SCHEMA.md) for what every column is and who owns it.

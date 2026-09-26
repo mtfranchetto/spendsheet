@@ -263,6 +263,135 @@ describe('failure 6 — rows disappeared', () => {
   });
 });
 
+describe('failure 6 — a deletion that left a copy in _removed', () => {
+  // The phone's deletions will come from a writer that cannot reach script
+  // properties, so cannot re-baseline the count. What it can do is copy the
+  // row to `_removed` first, and that copy is what excuses the drop.
+  const tx = (c) => c.__spreadsheet.getSheetByName('transactions');
+  const removed = (c) => c.__spreadsheet.getSheetByName('_removed');
+
+  /** Copy the row holding `uid` to `_removed`, as every sanctioned delete does. */
+  function archive(c, uid) {
+    const row = tx(c).getRange('A2:A').getValues().findIndex((r) => r[0] === uid) + 2;
+    const values = tx(c).getRange(row, 1, 1, c.TX_COLUMNS_CODE.length).getValues()[0];
+    c.appendRows_(removed(c), 1, [values]);
+  }
+  function deleteUid(c, uid) {
+    const row = tx(c).getRange('A2:A').getValues().findIndex((r) => r[0] === uid) + 2;
+    tx(c).deleteRows(row, 1);
+  }
+  function remembered(c) {
+    addTransactions(c, 10);
+    c.rememberRowCount_();
+  }
+
+  it('passes a loss whose row was copied to _removed first', () => {
+    const c = built();
+    remembered(c);
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+
+    expect(kinds(c.runChecks_(NOW))).not.toContain('rows_lost');
+    expect(kinds(c.runChecks_(NOW, 9))).not.toContain('rows_lost');
+    expect(() => c.syncAll_({})).not.toThrow();
+  });
+
+  it('blocks the same loss with no copy', () => {
+    const c = built();
+    remembered(c);
+    deleteUid(c, 'u4');
+
+    expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
+    expect(() => c.syncAll_({})).toThrow(/append-only/);
+  });
+
+  it('blocks when fewer rows were copied than went missing', () => {
+    const c = built();
+    remembered(c);
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+    deleteUid(c, 'u5');
+
+    const lost = c.runChecks_(NOW).filter((f) => f.kind === 'rows_lost');
+    expect(lost).toHaveLength(1);
+    expect(lost[0].detail).toContain('1 of the missing rows have a copy in _removed');
+  });
+
+  it('does not let a copy whose row is still there excuse another row', () => {
+    // A delete that copied and then failed leaves an archive row for a uid that
+    // never left. Counted, it would excuse some other row's disappearance.
+    const c = built();
+    remembered(c);
+    archive(c, 'u3');
+    deleteUid(c, 'u4');
+
+    expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
+  });
+
+  it('does not let a copy made before the count was remembered excuse a new loss', () => {
+    const c = built();
+    addTransactions(c, 10);
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+    c.rememberRowCount_();
+    archive(c, 'u5');
+    deleteUid(c, 'u5');
+    deleteUid(c, 'u6');
+
+    // u5 is accounted for; u6 is not, and u4's old copy must not stand in for it.
+    expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
+  });
+
+  it('counts one row copied twice as one', () => {
+    const c = built();
+    remembered(c);
+    archive(c, 'u4');
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+    deleteUid(c, 'u5');
+
+    expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
+  });
+
+  it('excuses nothing on a book whose _removed count was never remembered', () => {
+    // `Number(null)` is 0, which would count every row the archive has ever
+    // held as new — and one old copy would excuse one real loss.
+    const c = built();
+    addTransactions(c, 10);
+    archive(c, 'u9');
+    c.rememberRowCount_();
+    c.PropertiesService.getScriptProperties().deleteProperty('MONITOR_REMOVED_COUNT');
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+
+    expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
+  });
+
+  it('reads neither tab again when the count has not gone down', () => {
+    const c = built();
+    remembered(c);
+    c.__resetReads();
+
+    c.runChecks_(NOW, 10);
+    expect(c.__reads('transactions')).toBe(0);
+    expect(c.__reads('_removed')).toBe(0);
+  });
+
+  it('mirrors both remembered counts into _monitor for the phone', () => {
+    const c = built();
+    remembered(c);
+    const monitor = c.__spreadsheet.getSheetByName('_monitor');
+    expect(monitor.getRange('A1:B2').getValues()).toEqual([
+      ['transactions_rows', 'removed_rows'], [10, 0]]);
+
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+    c.rememberRowCount_();
+    expect(monitor.getRange('A2:B2').getValues()).toEqual([[9, 1]]);
+    expect(monitor.isSheetHidden()).toBe(true);
+  });
+});
+
 describe('alerting', () => {
   it('emails the finding to the account owner by default', () => {
     const c = built();
