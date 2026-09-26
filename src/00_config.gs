@@ -665,6 +665,7 @@ var DEFAULT_CATEGORIES = [
   ['Life & Entertainment', 'Holiday', 'expense', '🏖️'],
   ['Education', 'Courses', 'expense', '🎓'],
   ['Education', 'Textbooks', 'expense', '📖'],
+  ['Education', 'Museums', 'expense', '🏛️'],
   // Insurance is its own parent rather than a child of Health. Home and
   // vehicle cover are the bulk of it for most people, and filing those under
   // Health inflates a category you read as "am I spending more on being ill".
