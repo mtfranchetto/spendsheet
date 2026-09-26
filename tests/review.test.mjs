@@ -301,6 +301,20 @@ describe('the write-back', () => {
       c.ANOMALY_COLUMNS, 1);
     expect(anomalies.at(-1).detail).toContain('onEdit write-back failed');
   });
+
+  it('writes nothing for an event a browser could have sent', () => {
+    // Door 1 can call `onEdit` by name with any JSON. Without a real range it
+    // must not reach the `catch`, or every call is a row in `_anomalies`.
+    const c = bookWith([txRow('u-1', new Date(2026, 6, 1))]);
+    const count = () => c.readRecords_(c.__spreadsheet.getSheetByName('_anomalies'),
+      c.ANOMALY_COLUMNS, 1).length;
+    const before = count();
+
+    [{ range: {} }, { range: { getSheet: 'x' } }, { range: [] }].forEach((event) => {
+      expect(() => c.onEdit(event)).not.toThrow();
+    });
+    expect(count()).toBe(before);
+  });
 });
 
 describe('the review tab', () => {

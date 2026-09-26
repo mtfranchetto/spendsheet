@@ -62,7 +62,8 @@ function healthCheck() {
  * touch the network or the transactions tab: its whole job is to still work
  * on a day when the sync does not.
  */
-function selfCheck() {
+function selfCheck(e) {
+  requireScheduled_(e);
   var findings = runChecks_(new Date());
   findings.forEach(function (finding) {
     sendAlert_(finding.kind, finding.key, finding.subject, finding.detail);
@@ -391,8 +392,13 @@ function startOfDay_(date) {
  * Drive is still Google. If the account is lost these go with it. An
  * occasional File → Download → xlsx kept somewhere else is the off-Google
  * backup, and it stays a manual step.
+ *
+ * Both a menu item and a trigger, so one gate that admits either: `e` is the
+ * trigger's event, and a menu click passes none and is let through as a Sheet
+ * call.
  */
-function snapshotToDrive() {
+function snapshotToDrive(e) {
+  requireScheduled_(e);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = sheetOrThrow_(TABS.TRANSACTIONS);
 

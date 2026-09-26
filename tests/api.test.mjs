@@ -105,7 +105,7 @@ describe('classifyEbError', () => {
   it('tells you where to go for an inactive application', () => {
     // The guidance names the console button, because the failure happens on
     // /aspsps — before any account exists to be at fault.
-    expect(ctx.describeEbError('APP_NOT_ACTIVE')).toMatch(/Activate by linking accounts/);
+    expect(ctx.describeEbError_('APP_NOT_ACTIVE')).toMatch(/Activate by linking accounts/);
   });
 
   it('recognises a rate limit however it is spelled', () => {
@@ -190,14 +190,14 @@ describe('error objects', () => {
 
   it('explains every code it can raise', () => {
     for (const code of Object.values(ctx.EB_ERROR)) {
-      expect(ctx.describeEbError(code)).not.toBe('Unrecognised error.');
+      expect(ctx.describeEbError_(code)).not.toBe('Unrecognised error.');
     }
   });
 });
 
 describe('credentials', () => {
   it('defaults to sandbox rather than production', () => {
-    expect(load().ebEnvironment()).toBe('SANDBOX');
+    expect(load().ebEnvironment_()).toBe('SANDBOX');
   });
 
   it('selects the key pair matching EB_ENV', () => {

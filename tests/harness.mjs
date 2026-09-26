@@ -821,7 +821,16 @@ export function createGoogleStubs(options = {}) {
       getProjectTriggers: () => triggers.slice(),
       deleteTrigger: (t) => { triggers = triggers.filter((x) => x !== t); },
       getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/FAKE/exec' }),
-      WeekDay: { SUNDAY: 'SUNDAY', MONDAY: 'MONDAY', SATURDAY: 'SATURDAY' }
+      WeekDay: { SUNDAY: 'SUNDAY', MONDAY: 'MONDAY', SATURDAY: 'SATURDAY' },
+      /**
+       * Exactly the real enum's four members, and each one an object rather
+       * than its name. `requireScheduled_` depends on a string not being equal
+       * to the member, which is the whole reason a browser cannot forge a
+       * trigger event. A fake whose members were strings would pass
+       * `{ authMode: 'FULL' }` straight through.
+       */
+      AuthMode: Object.freeze(Object.fromEntries(['NONE', 'CUSTOM_FUNCTION', 'LIMITED', 'FULL']
+        .map((name) => [name, Object.freeze({ toString: () => name, name: () => name })])))
     },
 
     Session: {

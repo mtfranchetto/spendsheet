@@ -849,10 +849,10 @@ function learnFromCorrections() {
  * written either**, for `commitCategorize_`'s reason: a free account keeps 100
  * revisions, and a nightly rewrite of an identical tab spends them.
  *
- * No gate, for the reason every trigger entry point has none (20_webapp.gs,
- * `requireInteractive_`): a trigger has no UI. Like `syncScheduled` it is
- * reachable from Door 1 by name, and it returns nothing — the most an
- * anonymous call can do is rebuild a tab that is derived anyway.
+ * Gated on the trigger's event, like every trigger entry point: Door 1 serves
+ * this name to anyone, and a rebuild writes `_memory` and spends a revision of
+ * the book's history even though the tab is derived. `e` is the trigger's
+ * event — see `requireScheduled_` (20_webapp.gs).
  *
  * A failure is logged and then **thrown**, which is the opposite of
  * `categorizeAfterSync_` and deliberately so: that one runs inside the sync and
@@ -864,7 +864,8 @@ function learnFromCorrections() {
  * the only places a broken rebuild shows. The thrown message names neither the
  * cause nor the book.
  */
-function learnScheduled() {
+function learnScheduled(e) {
+  requireScheduled_(e);
   try {
     withMemoryLock_(function () {
       var plan = planMemory_();

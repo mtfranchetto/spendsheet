@@ -63,13 +63,13 @@ var EB_RETRYABLE = [EB_ERROR.PROVIDER_ERROR, EB_ERROR.NETWORK_ERROR];
 // ---------------------------------------------------------------------------
 
 /** Which environment is active. Defaults to sandbox — the safe direction. */
-function ebEnvironment() {
+function ebEnvironment_() {
   return PropertiesService.getScriptProperties().getProperty(EB_PROP.ENV) || EB_ENV.SANDBOX;
 }
 
 function ebCredentials_() {
   var props = PropertiesService.getScriptProperties();
-  var env = ebEnvironment();
+  var env = ebEnvironment_();
   var production = env === EB_ENV.PRODUCTION;
 
   var applicationId = props.getProperty(production ? EB_PROP.PROD_APP_ID : EB_PROP.SANDBOX_APP_ID);
@@ -164,9 +164,9 @@ function installCredentials() {
 }
 
 function credentialsFormHtml_() {
-  var current = ebEnvironment();
+  var current = ebEnvironment_();
   var pinned = PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL) || '';
-  var detected = detectedWebAppUrl();
+  var detected = detectedWebAppUrl_();
   return [
     '<style>',
     ' body{font:13px/1.5 -apple-system,BlinkMacSystemFont,Roboto,sans-serif;margin:0;padding:16px;color:#202124}',
@@ -340,7 +340,7 @@ function safeJsonParse(text) {
 }
 
 /** Plain-language guidance, used in _status.last_error and alert emails. */
-function describeEbError(code) {
+function describeEbError_(code) {
   switch (code) {
     case EB_ERROR.MISSING_CREDENTIALS:
       return 'No credentials installed. Run installCredentials().';
@@ -412,7 +412,7 @@ function ebFetch_(method, path, options) {
 
   throw ebError(
     code,
-    describeEbError(code) + ' (HTTP ' + status + ' on ' + path + ')' + (detail ? ' — ' + detail : ''),
+    describeEbError_(code) + ' (HTTP ' + status + ' on ' + path + ')' + (detail ? ' — ' + detail : ''),
     status, text);
 }
 

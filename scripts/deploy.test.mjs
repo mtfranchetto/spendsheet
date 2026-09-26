@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -203,37 +203,27 @@ describe('the manifest restore', () => {
 });
 
 describe('isWebFacing', () => {
-  const noDoGet = () => '';
-
   it('is true for the page and its partials', () => {
-    expect(isWebFacing(['src/page.html'], noDoGet)).toBe(true);
-    expect(isWebFacing(['src/page.records.html'], noDoGet)).toBe(true);
-  });
-
-  it('is true for the web app files, 20 through 23', () => {
-    expect(isWebFacing(['src/20_webapp.gs'], noDoGet)).toBe(true);
-    expect(isWebFacing(['src/23_api.gs'], noDoGet)).toBe(true);
+    expect(isWebFacing(['src/page.html'])).toBe(true);
+    expect(isWebFacing(['src/page.records.html'])).toBe(true);
   });
 
   it('is true for the manifest, because a version carries it', () => {
-    expect(isWebFacing(['src/appsscript.json'], noDoGet)).toBe(true);
+    expect(isWebFacing(['src/appsscript.json'])).toBe(true);
   });
 
-  it('is true for whichever file defines doGet, wherever it moves to', () => {
-    expect(isWebFacing(['src/05_auth.gs'], () => 'function doGet(e) {')).toBe(true);
-    expect(isWebFacing(['src/05_auth.gs'], noDoGet)).toBe(false);
+  it('is true for every .gs file, not only 20 through 23', () => {
+    // Door 1 serves every public function in the project at its frozen
+    // version, so a gate added to 09_sync.gs and only pushed is on the sheet
+    // and missing from the bank door.
+    for (const file of readdirSync(join(ROOT, 'src')).filter((f) => f.endsWith('.gs'))) {
+      expect(isWebFacing([`src/${file}`]), file).toBe(true);
+    }
   });
 
-  it('is false for the sheet half, which runs at HEAD and is live on push', () => {
-    expect(isWebFacing(['src/09_sync.gs', 'src/19_menu.gs'], noDoGet)).toBe(false);
-    expect(isWebFacing([], noDoGet)).toBe(false);
-  });
-
-  it('finds doGet where it actually lives today', () => {
-    // Not a tautology with the injected cases above: this one reads src/ and
-    // fails if doGet moves into a file the pattern list does not already cover
-    // and the reader stops finding it.
-    expect(isWebFacing(['src/05_auth.gs'])).toBe(true);
+  it('is false when nothing a version carries changed', () => {
+    expect(isWebFacing([])).toBe(false);
+    expect(isWebFacing(['src/notes.md'])).toBe(false);
   });
 });
 

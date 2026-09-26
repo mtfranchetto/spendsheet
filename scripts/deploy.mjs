@@ -111,18 +111,25 @@ const SETTLE_DELAY_MS = 2000;
 /**
  * What forces a redeploy, as opposed to being live the moment it is pushed.
  *
- * This is CLAUDE.md's rule — "anything touching doGet, src/page.html or 20-23"
- * — computed rather than remembered, because remembering it is exactly the
- * step that gets skipped at the end of a long change. The manifest is in the
- * list because a version carries it: a scope added today is not a scope the
- * deployed app has until a version is cut with it.
+ * Every file a version carries: the page, the manifest, and **every** `.gs`.
+ * A menu click or a trigger runs at HEAD, so for those a push is enough. But a
+ * door runs a frozen copy of the whole project, not only of 20-23, and two
+ * things follow from that.
  *
- * doGet is found by reading the file rather than by naming 05_auth.gs, so
- * moving it does not quietly disarm this.
+ * Door 1 is served to anyone with the `google.script.run` bridge attached, so
+ * every public function in every file is on its surface *at the version it
+ * serves*. A gate added in `09_sync.gs` and pushed is a gate the bank door
+ * does not have, and nothing reports the difference. And Door 2's API calls
+ * into 03-17 for every number it shows, so a fix there is live on the sheet
+ * and stale on the phone.
+ *
+ * Computed rather than remembered, because remembering is exactly the step
+ * that gets skipped at the end of a long change. A conservative answer costs
+ * a version per door; the other direction costs a door serving code the repo
+ * no longer contains.
  */
-const WEB_FACING = [/^src\/page.*\.html$/, /^src\/2[0-3]_.*\.gs$/, /^src\/appsscript\.json$/];
+const WEB_FACING = [/^src\/page.*\.html$/, /^src\/[^/]+\.gs$/, /^src\/appsscript\.json$/];
 const PAGE_FILE = /^src\/page.*\.html$/;
-const DEFINES_DOGET = /function\s+doGet\s*\(/;
 
 export const ACCESS_HELP = {
   MYSELF: 'Only myself',
@@ -300,17 +307,8 @@ function changedFiles(lastCommit) {
   return [...files];
 }
 
-/**
- * `read` is injected so a test can ask about a file that is not on disk — the
- * doGet half of this rule is the half that cannot be checked by pattern, and a
- * guard nothing exercises is a guard nobody knows the state of.
- */
-export function isWebFacing(files, read = (file) => (existsSync(join(ROOT, file)) ? readFileSync(join(ROOT, file), 'utf8') : '')) {
-  return files.some((file) => {
-    if (WEB_FACING.some((pattern) => pattern.test(file))) return true;
-    if (!file.endsWith('.gs')) return false;
-    return DEFINES_DOGET.test(read(file));
-  });
+export function isWebFacing(files) {
+  return files.some((file) => WEB_FACING.some((pattern) => pattern.test(file)));
 }
 
 /**

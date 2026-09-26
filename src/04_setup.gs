@@ -15,7 +15,7 @@
 /** Entry point. Menu → Setup sheet. */
 function setup() {
   requireInteractive_();
-  // Under a lock for the same reason syncAll is: two runs creating and
+  // Under a lock for the same reason syncAll_ is: two runs creating and
   // deleting the same tabs at once is a race, and it is an easy one to start
   // — setup() takes long enough that clicking the menu item twice feels
   // reasonable.

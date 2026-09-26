@@ -23,8 +23,7 @@ Menu items, dialogs and the nightly trigger all execute at HEAD, so a push is ge
 `npm run deploy` decides which case you are in by looking at what changed under `src/` since the last deploy it recorded. A redeploy is forced by:
 
 - `src/page*.html` — the app document and every partial
-- `src/20`–`src/23` — routing, the owner gate, queries, actions, the public API
-- whichever file defines `doGet` (found by reading, not by name)
+- **any** `src/*.gs` — a door runs a frozen copy of the whole project, not only of 20–23. Door 1 is served to anyone with the `google.script.run` bridge, so every public function in every file is on its surface at the version it serves: a gate pushed but not deployed is a gate that door does not have. And Door 2's API calls into 03–17 for every number it shows.
 - `src/appsscript.json` — a version carries the manifest, so a scope added today is not a scope the deployed app has until a version is cut with it
 
 Anything else pushes and stops, and says so.

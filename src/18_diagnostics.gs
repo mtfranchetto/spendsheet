@@ -27,7 +27,7 @@
 function runSmokeTests() {
   requireInteractive_();
   var results = [];
-  var env = ebEnvironment();
+  var env = ebEnvironment_();
 
   results.push(smokeTest_('credentials', 'installed for ' + env, function () {
     var creds = ebCredentials_();
@@ -545,7 +545,7 @@ function describeWebAppContext() {
     activeUser: safeEmail_(function () { return Session.getActiveUser().getEmail(); }),
     effectiveUser: safeEmail_(function () { return Session.getEffectiveUser().getEmail(); }),
     owner: typeof webAppOwner_ === 'function' ? webAppOwner_() : '(20_webapp.gs not loaded)',
-    deploymentUrl: detectedWebAppUrl(),
+    deploymentUrl: detectedWebAppUrl_(),
     pinnedRedirectUrl:
       PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL) || ''
   };

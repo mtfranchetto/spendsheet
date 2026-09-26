@@ -64,7 +64,7 @@ function beginAuthorization(aspspName, country, psuType) {
   requireInteractive_();
   if (!aspspName) throw new Error('Pick a bank first.');
 
-  var redirectUrl = webAppUrl();
+  var redirectUrl = webAppUrl_();
   if (!redirectUrl) {
     throw new Error(
       'This script has no web app deployment yet. Deploy → New deployment → Web app, ' +
@@ -101,7 +101,7 @@ function beginAuthorization(aspspName, country, psuType) {
       PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL));
 
     err.message += '\n\nredirect_url sent: ' + redirectUrl +
-      '\n\nThis must match a redirect URL registered for the ' + ebEnvironment() +
+      '\n\nThis must match a redirect URL registered for the ' + ebEnvironment_() +
       ' application, and must be the URL of your ACTIVE deployment ' +
       '(Deploy → Manage deployments → Web app → URL).' +
       (isPinned
@@ -159,14 +159,14 @@ function generateState_() {
  * that matters is whichever is registered with Enable Banking, and only you
  * can know which that is.
  */
-function webAppUrl() {
+function webAppUrl_() {
   var saved = PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL);
   if (saved) return saved;
-  return detectedWebAppUrl();
+  return detectedWebAppUrl_();
 }
 
 /** What the runtime thinks the URL is. A starting guess, not an authority. */
-function detectedWebAppUrl() {
+function detectedWebAppUrl_() {
   try {
     return ScriptApp.getService().getUrl() || '';
   } catch (e) {
@@ -187,7 +187,7 @@ function saveRedirectUrl(url) {
   if (error) throw new Error(error);
 
   PropertiesService.getScriptProperties().setProperty(EB_PROP.REDIRECT_URL, String(url).trim());
-  return 'Saved. Register this exact URL for the ' + ebEnvironment() + ' application.';
+  return 'Saved. Register this exact URL for the ' + ebEnvironment_() + ' application.';
 }
 
 function validateRedirectUrl(url) {
@@ -369,7 +369,7 @@ function authPage_(title, message, note) {
 // ---------------------------------------------------------------------------
 
 function bankPickerHtml_() {
-  var env = ebEnvironment();
+  var env = ebEnvironment_();
   return [
     '<style>',
     ' body{font:13px/1.5 -apple-system,BlinkMacSystemFont,Roboto,sans-serif;margin:0;padding:16px;color:#202124}',
