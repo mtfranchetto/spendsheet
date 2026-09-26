@@ -585,6 +585,36 @@
   .rec-sub { color: var(--muted); font-size: 13px; }
   .rec-desc { color: var(--muted); font-size: 12px; }
 
+  /*
+    The category picker — see `categorySelect`. A button that looks like the
+    other fields, and a search box and grouped list that open beneath it in
+    place.
+
+    The list scrolls inside itself and stops at 40% of the screen, because it
+    opens with the keyboard up and eighty rows would otherwise push the Save
+    button out of reach. `overscroll-behavior: contain` keeps a flick at either
+    end of it from scrolling the sheet or the page underneath. The group
+    headings stick to the top of it, so a child scrolled into view still says
+    which parent it belongs to.
+  */
+  .catpick-current { display: flex; align-items: center; justify-content: space-between;
+                     gap: 8px; text-align: left; }
+  .catpick-current::after { content: "\25BE"; color: var(--muted); flex: none; }
+  .catpick-current.unset { color: var(--muted); }
+  .catpick-panel { margin-top: 6px; padding: 8px; background: var(--bg);
+                   border: 1px solid var(--line); border-radius: var(--radius); }
+  .catpick-panel > .muted { margin: 8px 4px 4px; }
+  .catpick-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain;
+                  margin-top: 6px; }
+  .catpick-group { position: sticky; top: 0; background: var(--bg); color: var(--muted);
+                   font-size: 11px; font-weight: 600; text-transform: uppercase;
+                   letter-spacing: .06em; padding: 10px 6px 4px; }
+  .catpick-option { display: block; width: 100%; text-align: left; background: none;
+                    border: none; border-radius: 8px; padding: 8px 10px; color: var(--text); }
+  .catpick-option.first { color: var(--muted); }
+  .catpick-option[aria-selected="true"] { background: var(--surface); color: var(--accent);
+                                          font-weight: 600; }
+
   /* Labels on a row. Read-only, so they are quieter than the `.chip` you can
      press — same shape, no border, and they wrap rather than scroll, because a
      row that scrolls sideways fights the swipe-to-confirm gesture on top of

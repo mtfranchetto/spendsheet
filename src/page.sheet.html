@@ -121,19 +121,33 @@
   }
 
   /**
-   * The whole taxonomy in one `<select>`, parents as `<optgroup>`.
+   * The whole taxonomy in one control you can search: parents as headings,
+   * children under them.
    *
    * There were two selects — "change the subcategory" and "or set only the
    * category" — and the word doing the work in that pair was *or*. Two controls
    * for one decision, where picking in the second undoes the meaning of the
-   * first, and neither label says which wins. `<optgroup>` is the element for
-   * exactly this: the parent is a heading you cannot select by accident, the
-   * children under it are the choices, and both render natively in the wheel
-   * picker on a phone.
+   * first, and neither label says which wins. One grouped list is the answer to
+   * that and still is: the parent is a heading you cannot pick by accident, and
+   * the children under it are the choices.
+   *
+   * **Not a native `<select>`, though `<optgroup>` would give the same
+   * grouping for free.** A select renders in the phone's wheel picker, and
+   * about eighty children behind an iOS wheel is a list you scroll a few
+   * pixels at a time with no way to jump — which is exactly how it was
+   * reported. Typing `caf` is faster than any wheel.
+   *
+   * **Inline, not a second `<dialog>`.** Two of the three call sites already
+   * live inside one — the transaction sheet and the rule sheet — and a dialog
+   * inside a dialog is a fight with the backdrop and with focus, which
+   * `deleteControl` declined for the same reason. So the control is a button
+   * showing the current answer, and tapping it opens a search field and the
+   * list beneath it, in place.
    *
    * Setting only the parent is still reachable, as the first entry inside each
-   * group. It is a real answer — "this is Shopping and I do not know what kind"
-   * — and losing it to the tidier structure would have been a downgrade.
+   * group, and searching for a parent's name shows the whole group including
+   * it. It is a real answer — "this is Shopping and I do not know what kind" —
+   * and losing it to the tidier structure would have been a downgrade.
    *
    * **A child sends its parent with it**, which the two-select version did not
    * and got away with: `categoryFormula` resolves a lone `subcategory_override`
@@ -142,26 +156,29 @@
    * row marked as a transfer does — because that column is checked *first* and
    * would go on winning. Sending both is what lets this sheet move a row out of
    * Transfer at all.
+   *
+   * Answers `{ node, answered, chosen }`, with a `p:`/`c:` encoding inside,
+   * and fires a bubbling `change` on `node` when a choice is made — the same
+   * event a form control would, so a caller listens for it the ordinary way.
    */
   function categorySelect(options) {
     var settings = options || {};
     var lists = state.lists.categories || {};
 
-    var select = el('select');
-    select.className = 'field';
-
-    // Only where a site has a meaningful "no answer". Without it the first
-    // entry is preselected and submitting without touching the control files
-    // the row under whatever sorts first, which is the shape of bug this
-    // control exists to remove rather than to relocate.
-    if (settings.firstLabel) {
-      var leave = el('option', null, settings.firstLabel);
-      leave.value = '';
-      add(select, leave);
-    }
+    // Case and accents both folded, so `cafe` finds `Bars & Cafés` and `CAF`
+    // finds it too. Someone typing on a phone keyboard is not going to reach
+    // for the accent.
+    var fold = function (text) {
+      return String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    };
 
     var parentOf = {};
     (lists.children || []).forEach(function (entry) { parentOf[entry.name] = entry.parent; });
+
+    // Built once: what each value is called, and the groups in order.
+    var labels = {};
+    var groups = [];
+    var value = '';
 
     (lists.parents || []).forEach(function (parent) {
       // A blank `kind` is a category the user added without saying which half
@@ -170,40 +187,149 @@
       // which is what a rule and a cash entry both want.
       if (settings.kind && parent.kind && parent.kind !== settings.kind) return;
 
-      var group = el('optgroup');
-      group.label = withIcon(parent.icon, parent.name);
-
-      var whole = el('option', null, 'Anything in ' + parent.name);
-      whole.value = 'p:' + parent.name;
-      if (settings.category === parent.name && !settings.subcategory) whole.selected = true;
-      add(group, whole);
+      var group = { name: parent.name, icon: parent.icon, key: fold(parent.name), options: [] };
+      var whole = 'p:' + parent.name;
+      labels[whole] = withIcon(parent.icon, parent.name);
+      group.options.push({ value: whole, text: 'Anything in ' + parent.name, key: '' });
+      if (settings.category === parent.name && !settings.subcategory) value = whole;
 
       (lists.children || []).forEach(function (child) {
         if (child.parent !== parent.name) return;
-        var option = el('option', null, withIcon(child.icon, child.name));
-        option.value = 'c:' + child.name;
+        var option = 'c:' + child.name;
+        labels[option] = withIcon(child.icon, child.name);
+        group.options.push({ value: option, text: labels[option], key: fold(child.name) });
         if (child.name === settings.subcategory && child.parent === settings.category) {
-          option.selected = true;
+          value = option;
         }
-        add(group, option);
       });
 
-      add(select, group);
+      groups.push(group);
     });
 
+    var node = el('div', 'catpick');
+
+    var current = el('button', 'field catpick-current');
+    current.type = 'button';
+    current.setAttribute('aria-expanded', 'false');
+
+    var panel = el('div', 'catpick-panel');
+    panel.hidden = true;
+
+    var search = el('input', 'field');
+    search.type = 'search';
+    search.placeholder = 'Search categories';
+    search.autocomplete = 'off';
+    search.setAttribute('aria-label', 'Search categories');
+
+    var list = el('div', 'catpick-list');
+    list.setAttribute('role', 'listbox');
+    var none = el('p', 'muted', 'No category matches that.');
+
+    add(panel, search, list, none);
+    add(node, current, panel);
+
+    /** What the closed control says. The placeholder, until something is picked. */
+    var describe = function () {
+      current.textContent = value ? labels[value] : (settings.firstLabel || 'Choose a category');
+      current.classList.toggle('unset', !value);
+    };
+
+    var close = function () {
+      panel.hidden = true;
+      current.setAttribute('aria-expanded', 'false');
+    };
+
+    var pick = function (picked) {
+      value = picked;
+      describe();
+      close();
+      current.focus();
+      // Bubbling, so a listener on `node` or on anything around it hears it.
+      node.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    var optionButton = function (entry, className) {
+      var button = el('button', className, entry.text);
+      button.type = 'button';
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', entry.value === value ? 'true' : 'false');
+      button.addEventListener('click', function () { pick(entry.value); });
+      return button;
+    };
+
+    /**
+     * The list, filtered to what was typed.
+     *
+     * A parent whose name matches shows its whole group, "Anything in" first —
+     * that is how setting only the parent stays reachable while searching. A
+     * parent that does not match shows only the children that do, still under
+     * its heading, so `rent` reads as Housing › Rent and not as a bare word.
+     */
+    var draw = function () {
+      clear(list);
+      var query = fold(search.value.trim());
+      var shown = 0;
+
+      if (settings.firstLabel && !query) {
+        add(list, optionButton({ value: '', text: settings.firstLabel }, 'catpick-option first'));
+        shown++;
+      }
+
+      groups.forEach(function (group) {
+        var whole = !query || group.key.indexOf(query) !== -1;
+        var matches = whole ? group.options : group.options.filter(function (entry) {
+          return entry.key && entry.key.indexOf(query) !== -1;
+        });
+        if (!matches.length) return;
+
+        add(list, el('div', 'catpick-group', withIcon(group.icon, group.name)));
+        matches.forEach(function (entry) {
+          add(list, optionButton(entry, 'catpick-option'));
+          shown++;
+        });
+      });
+
+      none.hidden = shown > 0;
+    };
+
+    current.addEventListener('click', function () {
+      if (!panel.hidden) return close();
+      search.value = '';
+      draw();
+      panel.hidden = false;
+      current.setAttribute('aria-expanded', 'true');
+      search.focus();
+    });
+
+    search.addEventListener('input', draw);
+    search.addEventListener('keydown', function (event) {
+      // Return picks the first real answer on screen: typing `rent` and
+      // pressing Go is the whole gesture. Escape puts the list away.
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        var first = list.querySelector('.catpick-option:not(.first)');
+        if (first) first.click();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+        current.focus();
+      }
+    });
+
+    describe();
+
     return {
-      node: select,
+      node: node,
       /**
        * Whether a category was chosen at all.
        *
-       * The value rather than the index, so this reads the same with and
+       * The value rather than a position, so this reads the same with and
        * without a placeholder: the placeholder is the only entry whose value
        * is empty, and where there is none every entry is an answer.
        */
-      answered: function () { return !!select.value; },
+      answered: function () { return !!value; },
       /** `{ category, subcategory }`, with the parent always filled in. */
       chosen: function () {
-        var value = select.value;
         if (!value) return { category: '', subcategory: '' };
         if (value.indexOf('p:') === 0) return { category: value.slice(2), subcategory: '' };
 
