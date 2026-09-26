@@ -403,7 +403,7 @@ function ebFetch_(method, path, options) {
   }
 
   var status = response.getResponseCode();
-  var text = response.getContentText();
+  var text = responseText_(response);
 
   if (status >= 200 && status < 300) return safeJsonParse(text) || {};
 
@@ -414,6 +414,109 @@ function ebFetch_(method, path, options) {
     code,
     describeEbError_(code) + ' (HTTP ' + status + ' on ' + path + ')' + (detail ? ' — ' + detail : ''),
     status, text);
+}
+
+/**
+ * How many response bodies were not valid UTF-8 and were read as Windows-1252.
+ *
+ * This file writes no tab, so it cannot log an anomaly itself; `runSync_`
+ * reads this around each account and says what happened there. A global
+ * rather than a return value for the reason `LEDGER_SOURCE` gives: every
+ * caller of `ebFetch_` would otherwise unwrap a pair to reach the body. An
+ * execution is one request, so nothing else can move it in between.
+ */
+var EB_TEXT = { redecoded: 0 };
+
+/**
+ * A response body as text, in the encoding it was actually sent in.
+ *
+ * **The charset a response claims is a claim the bank makes, and banks get it
+ * wrong.** JSON is UTF-8 by definition, and `getContentText()` decodes it as
+ * such — so a bank that sends `MÜNCHEN` as Latin-1 sends the single byte
+ * `0xDC` for `Ü`, which is not valid UTF-8, and the decoder replaces it with
+ * U+FFFD. That is how `MÜNCHNER VERKEHRSGESEL MÜNCHEN` reached the ledger with
+ * a replacement diamond where each `Ü` was — silently, and looking like a font
+ * problem.
+ *
+ * **Decided on the bytes, not on the decoded text.** The tempting test is
+ * "the UTF-8 decode produced a U+FFFD, so try Latin-1", and it is wrong in the
+ * case that matters most: a body that is perfectly good UTF-8 but carries a
+ * U+FFFD *in the data* — a bank whose own systems lost the character before
+ * sending it — would then be re-read as Windows-1252, turning every correct
+ * `é` in the whole response into `Ã©`. Valid UTF-8 is never re-decoded here;
+ * only bytes that cannot be UTF-8 are.
+ *
+ * Windows-1252 rather than ISO-8859-1 for the fallback: it is a superset in
+ * every printable position, and the extra characters in 0x80–0x9F (`€`, `„`,
+ * `Œ`) are exactly what a European bank's "Latin-1" usually means.
+ *
+ * A charset the response names explicitly, other than UTF-8, is honoured as
+ * named — that is a bank telling the truth, and overruling it would be the
+ * mistake this function exists to correct, made in the other direction.
+ */
+function responseText_(response) {
+  var declared = declaredCharset_(response.getHeaders ? response.getHeaders() : null);
+  if (declared && !/^utf-?8$/i.test(declared)) return response.getContentText(declared);
+
+  if (!isUtf8_(response.getContent())) {
+    EB_TEXT.redecoded++;
+    return response.getContentText('windows-1252');
+  }
+
+  return response.getContentText('UTF-8');
+}
+
+/** The `charset` a `Content-Type` header names, or ''. Header names are case-free. */
+function declaredCharset_(headers) {
+  var type = '';
+  Object.keys(headers || {}).forEach(function (name) {
+    if (name.toLowerCase() === 'content-type') type = String(headers[name]);
+  });
+  var match = /charset\s*=\s*"?([^";\s]+)/i.exec(type);
+  return match ? match[1] : '';
+}
+
+/**
+ * Whether these bytes are well-formed UTF-8.
+ *
+ * `getContent()` hands back Java's *signed* bytes, so each is masked to 0–255
+ * first. The ranges are the standard's own (RFC 3629 §4): no overlong forms,
+ * no surrogates, nothing past U+10FFFF. Latin-1 text almost never forms a
+ * valid sequence by accident — `Ü` is `0xDC`, a two-byte lead, and the byte
+ * after it is a letter rather than a continuation — which is what makes this
+ * a reliable test rather than a guess.
+ */
+function isUtf8_(bytes) {
+  var list = bytes || [];
+  var i = 0;
+
+  while (i < list.length) {
+    var lead = list[i] & 0xFF;
+    var need;
+    var low = 0x80;
+    var high = 0xBF;
+
+    if (lead < 0x80) need = 0;
+    else if (lead >= 0xC2 && lead <= 0xDF) need = 1;
+    else if (lead >= 0xE0 && lead <= 0xEF) {
+      need = 2;
+      if (lead === 0xE0) low = 0xA0;
+      if (lead === 0xED) high = 0x9F;
+    } else if (lead >= 0xF0 && lead <= 0xF4) {
+      need = 3;
+      if (lead === 0xF0) low = 0x90;
+      if (lead === 0xF4) high = 0x8F;
+    } else return false;
+
+    if (i + need >= list.length && need > 0) return false;
+    for (var k = 1; k <= need; k++) {
+      var next = list[i + k] & 0xFF;
+      // Only the first continuation byte has the narrowed range.
+      if (next < (k === 1 ? low : 0x80) || next > (k === 1 ? high : 0xBF)) return false;
+    }
+    i += need + 1;
+  }
+  return true;
 }
 
 /**

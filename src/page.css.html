@@ -198,7 +198,7 @@
                    font-weight: 600; width: 100%; }
   /* `text-align: left` because a button centres its text and every one of these
      is a label you read from the left — "← Home", "See all 12 in Records",
-     "+ Add transaction". While the label fits on one line the box shrinks to it
+     "+ Add". While the label fits on one line the box shrinks to it
      and the centring is invisible, which is why this was missing for as long as
      it was: the alignment looked correct and was only ever an accident of the
      label being narrower than its container. Give the box a width the text does
@@ -467,7 +467,24 @@
   .tile .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .tile .amount { font-size: 19px; font-weight: 600; margin-top: 4px; }
   .tile .note { font-size: 12px; }
-  .tile button.link { align-self: flex-start; margin-top: 6px; }
+  /*
+    One line, and no taller than its text needs to make the tile.
+
+    Every tile in a grid row is as tall as the tallest, so a secondary action
+    that wraps costs every tile beside it a line too. `nowrap` with a label
+    short enough to fit a 127px column is what keeps it to one; the tile names
+    the account above it, so the noun the label used to carry was redundant.
+
+    The button keeps its 8px of vertical padding, because that padding is its
+    tap target and the tile's click delegation deliberately excludes it. The
+    negative bottom margin lets the lower half of that padding sit inside the
+    tile's own 12px, where it was empty space anyway — the hit box is the same
+    size and the tile is not made taller by it.
+  */
+  .tile button.link {
+    align-self: flex-start; white-space: nowrap;
+    margin: 2px 0 -10px;
+  }
 
   /*
     A category and its subcategories, one list instead of two.
@@ -567,6 +584,36 @@
                    background: var(--in); border: 2px solid var(--bg); }
   .rec-sub { color: var(--muted); font-size: 13px; }
   .rec-desc { color: var(--muted); font-size: 12px; }
+
+  /*
+    The category picker — see `categorySelect`. A button that looks like the
+    other fields, and a search box and grouped list that open beneath it in
+    place.
+
+    The list scrolls inside itself and stops at 40% of the screen, because it
+    opens with the keyboard up and eighty rows would otherwise push the Save
+    button out of reach. `overscroll-behavior: contain` keeps a flick at either
+    end of it from scrolling the sheet or the page underneath. The group
+    headings stick to the top of it, so a child scrolled into view still says
+    which parent it belongs to.
+  */
+  .catpick-current { display: flex; align-items: center; justify-content: space-between;
+                     gap: 8px; text-align: left; }
+  .catpick-current::after { content: "\25BE"; color: var(--muted); flex: none; }
+  .catpick-current.unset { color: var(--muted); }
+  .catpick-panel { margin-top: 6px; padding: 8px; background: var(--bg);
+                   border: 1px solid var(--line); border-radius: var(--radius); }
+  .catpick-panel > .muted { margin: 8px 4px 4px; }
+  .catpick-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain;
+                  margin-top: 6px; }
+  .catpick-group { position: sticky; top: 0; background: var(--bg); color: var(--muted);
+                   font-size: 11px; font-weight: 600; text-transform: uppercase;
+                   letter-spacing: .06em; padding: 10px 6px 4px; }
+  .catpick-option { display: block; width: 100%; text-align: left; background: none;
+                    border: none; border-radius: 8px; padding: 8px 10px; color: var(--text); }
+  .catpick-option.first { color: var(--muted); }
+  .catpick-option[aria-selected="true"] { background: var(--surface); color: var(--accent);
+                                          font-weight: 600; }
 
   /* Labels on a row. Read-only, so they are quieter than the `.chip` you can
      press — same shape, no border, and they wrap rather than scroll, because a

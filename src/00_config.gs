@@ -369,6 +369,9 @@ var ANOMALY_KIND = {
   FETCH_FAILED: 'fetch_failed',
   RATE_LIMITED: 'rate_limited',
   CONSENT_DIED: 'consent_died',        // 401 before valid_until — needs you, not a retry
+  LEARN_FAILED: 'learn_failed',        // the nightly memory rebuild threw — see learnScheduled
+  TEXT_REDECODED: 'text_redecoded',    // a body that was not UTF-8, read as Windows-1252
+  TEXT_LOST: 'text_lost',              // a new row whose text the bank had already broken
   RAW_DUMP: 'raw_dump'                 // deliberate capture, for working out a shape
 };
 
@@ -389,7 +392,8 @@ var RUN_RESULT = { OK: 'OK', PARTIAL: 'PARTIAL', FAIL: 'FAIL' };
 /** Script Properties owned by the sync, kept apart from the EB_* credentials. */
 var SYNC_PROP = {
   CALL_BUDGET: 'SYNC_CALL_BUDGET',   // {date, counts:{uid:n}} — see callsUsedToday_
-  CASH_SEQUENCE: 'SYNC_CASH_SEQUENCE'  // only ever goes up — see computeCashUid
+  CASH_SEQUENCE: 'SYNC_CASH_SEQUENCE', // only ever goes up — see computeCashUid
+  TEXT_REDECODED: 'SYNC_TEXT_REDECODED' // [uid] already reported — see reportBankText_
 };
 
 /** A cell holds 50,000 characters; leave headroom rather than losing the row. */
@@ -471,6 +475,7 @@ var DEFAULT_CONFIG = [
   ['sync_hour', 4, 'Hour(s) 0-23 the sync runs. Comma-separate for more than one, e.g. 4,16.'],
   ['selfcheck_hour', 9, 'Hour (0-23) the self-check runs. After the sync, so it has something to check.'],
   ['snapshot_hour', 5, 'Hour (0-23) the weekly Drive snapshot runs, on Sundays.'],
+  ['learn_hour', 3, 'Hour (0-23) memory is rebuilt from your corrections. Keep it before sync_hour, so tonight\'s rows use today\'s corrections.'],
   ['import_preset', 'budgetbakers', 'Which _import_map and _category_map rows to use.'],
   ['import_batch', 'import1', 'Goes in the uid of imported rows. Change it before importing a second file.'],
   ['transfer_window_days', 4, 'How far apart the two legs of one transfer may be booked.'],
@@ -665,6 +670,7 @@ var DEFAULT_CATEGORIES = [
   ['Life & Entertainment', 'Holiday', 'expense', '🏖️'],
   ['Education', 'Courses', 'expense', '🎓'],
   ['Education', 'Textbooks', 'expense', '📖'],
+  ['Education', 'Museums', 'expense', '🏛️'],
   // Insurance is its own parent rather than a child of Health. Home and
   // vehicle cover are the bulk of it for most people, and filing those under
   // Health inflates a category you read as "am I spending more on being ill".

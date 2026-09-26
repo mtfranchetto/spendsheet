@@ -182,23 +182,28 @@
   }
 
   /**
-   * An account's state as one character, rather than the word "ok".
+   * An account's mark, which is a problem when there is one and otherwise
+   * what kind of account it is.
    *
-   * `accountState_` returns a sentence, and for a healthy account that sentence
-   * is "ok" — a word repeated down the screen saying nothing, which is worse
-   * than silence because it costs a line to read before you learn that. The
-   * emoji carries the same fact pre-attentively: you see the one that is not
-   * green without reading anything.
+   * **A healthy bank gets 🏦, not a green dot.** A dot on every tile that
+   * means "nothing is wrong" is an alert glyph repeated down the screen saying
+   * nothing, and it trains the eye to skip the dots — including the one that
+   * isn't green. A kind of account is not a state, so an orange or red dot
+   * among 🏦, 💵 and 📈 is still the only coloured disc on the row and is seen
+   * without reading anything, which is the whole job; the tile's coloured
+   * edge, its note line and its `aria-label` all say the same thing again.
    *
-   * Cash gets its own mark rather than a green one. A cash account has no
-   * consent and no sync, so `accountState_` gives it severity 0 by definition —
-   * calling that "healthy" would be reporting a check that never ran.
+   * Cash and assets get a mark of their own for the same reason. Neither has a
+   * consent or a sync, so `accountState_` gives both severity 0 by definition,
+   * and a green dot on one would be reporting a check that never ran. 📈 is the
+   * icon the seed gives `Valuation change`, which is how an asset moves.
    */
   function accountEmoji(account) {
-    if (isCashAccount(account.name)) return '\u{1F4B5}';
     if (account.severity === 2) return '\u{1F534}';
     if (account.severity === 1) return '\u{1F7E0}';
-    return '\u{1F7E2}';
+    if (isCashAccount(account.name)) return '\u{1F4B5}';
+    if (assetAccount(account.name)) return '\u{1F4C8}';
+    return '\u{1F3E6}';
   }
 
   /** The server already knows which accounts take cash entries; it sends the list. */
@@ -221,7 +226,7 @@
    * reason rather than on the face.** A button is only as big as its box, and
    * this one is not the tile: the tile's 12/14px padding is outside it, a grid
    * row stretches every tile to match its tallest neighbour and the face does
-   * not grow with it, and "+ Add transaction" is `align-self: flex-start`, so
+   * not grow with it, and "+ Add" is `align-self: flex-start`, so
    * space to its right belongs to nothing at all. Four dead strips around a
    * control whose entire job is to be tapped with a thumb.
    *
@@ -269,9 +274,13 @@
       loadRecords();
     });
 
+    // Short labels, because the tile they sit in already names the account and
+    // a wrapped label makes the whole row of tiles taller — see `.tile
+    // button.link`. The noun moves to `aria-label`, where it costs no width.
     if (isCashAccount(account.name)) {
-      var entry = el('button', 'link', '+ Add transaction');
+      var entry = el('button', 'link', '+ Add');
       entry.type = 'button';
+      entry.setAttribute('aria-label', 'Add a transaction to ' + account.name);
       entry.addEventListener('click', function () {
         state.addAccount = account.name;
         go('add');
@@ -283,8 +292,9 @@
     // change: you read 14,500 off a broker's app, you do not compute the €1,500
     // it moved by. The screen does that subtraction — see `renderSetValue`.
     if (assetAccount(account.name)) {
-      var revalue = el('button', 'link', '\u{2195} Update balance');
+      var revalue = el('button', 'link', '\u{2195} Update');
       revalue.type = 'button';
+      revalue.setAttribute('aria-label', 'Update the balance of ' + account.name);
       revalue.addEventListener('click', function () {
         state.addAccount = account.name;
         go('revalue');

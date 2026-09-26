@@ -728,9 +728,23 @@ export function createGoogleStubs(options = {}) {
         fetches.push({ url, params });
         const handler = options.fetch;
         const res = handler ? handler(url, params) : { code: 200, body: '{}' };
+        // `bytes` when a test needs a body that is not UTF-8, and the UTF-8
+        // encoding of `body` otherwise. Decoded the way the real thing does:
+        // an invalid byte becomes U+FFFD rather than an error, and a charset
+        // name the runtime does not know throws rather than guessing — a fake
+        // that invented an answer for a bad name would pass the typo it exists
+        // to catch.
+        const bytes = res.bytes ? Buffer.from(res.bytes) : Buffer.from(String(res.body ?? ''), 'utf8');
         return {
           getResponseCode: () => res.code,
-          getContentText: () => res.body,
+          getContent: () => [...bytes].map((b) => (b > 127 ? b - 256 : b)),
+          // ISO-8859-1 by hand: `TextDecoder` follows the web platform and
+          // quietly reads that label as Windows-1252, where Java reads it as
+          // itself. The fake has to be no kinder than the runtime it stands
+          // in for, or it hides a wrong charset name behind a right answer.
+          getContentText: (charset) => (/^(iso-?8859-1|latin-?1)$/i.test(charset || '')
+            ? bytes.toString('latin1')
+            : new TextDecoder(charset || 'utf-8').decode(bytes)),
           getHeaders: () => res.headers || {}
         };
       }

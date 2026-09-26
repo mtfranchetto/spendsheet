@@ -84,12 +84,14 @@ function runSync_(options) {
   var refreshed = [];
 
   accounts.forEach(function (account) {
+    var redecodedBefore = EB_TEXT.redecoded;
     var outcome = syncAccount_(account, {
       config: config,
       existing: existing,
       now: new Date(),
       backfill: !existing.accountsSeen[account.uid]
     });
+    reportBankText_(account, EB_TEXT.redecoded - redecodedBefore, outcome.fresh);
 
     totals.fetched += outcome.fetched;
     totals.duplicate += outcome.duplicates;
@@ -294,6 +296,46 @@ function syncAccount_(account, context) {
 
   recordCalls_(account.uid, outcome.calls);
   return outcome;
+}
+
+/**
+ * Say so when a bank's text did not arrive as UTF-8, or arrived already broken.
+ *
+ * `responseText_` corrects the first case on the way in, silently — and a
+ * correction nobody hears about is a bank sending the wrong encoding for ever,
+ * with this book the only thing that knows. It is said **once per account**,
+ * though, not once per run: a bank that sends Latin-1 sends it every night,
+ * and a note repeated daily is `_anomalies` filling with nothing new. The
+ * accounts already reported live in a script property, and a reconnected
+ * account has a new uid and is told about afresh.
+ *
+ * The second case cannot be corrected here at all: the character was replaced
+ * before the bank sent it. It is reported from the rows **inserted** this run
+ * rather than from the response, because each sync re-fetches the whole
+ * window — one broken description would otherwise be announced every night
+ * until it aged out, long after the row it names was written.
+ */
+function reportBankText_(account, redecoded, fresh) {
+  if (redecoded) {
+    var props = PropertiesService.getScriptProperties();
+    var told = safeJsonParse(props.getProperty(SYNC_PROP.TEXT_REDECODED)) || [];
+    if (told.indexOf(account.uid) === -1) {
+      logAnomaly_(ANOMALY_KIND.TEXT_REDECODED, account.uid, account.name + ' sends text that is ' +
+        'not UTF-8. It is read as Windows-1252, so accented letters land correctly — this is a ' +
+        'note about the bank, not a problem in the book, and it is not repeated.', '');
+      props.setProperty(SYNC_PROP.TEXT_REDECODED, JSON.stringify(told.concat([account.uid])));
+    }
+  }
+
+  var broken = (fresh || []).filter(function (record) {
+    return String(record.description || '').indexOf('\uFFFD') !== -1 ||
+      String(record.counterparty || '').indexOf('\uFFFD') !== -1;
+  }).length;
+  if (broken) {
+    logAnomaly_(ANOMALY_KIND.TEXT_LOST, account.uid, account.name + ': ' + broken + ' new row(s) ' +
+      'arrived with characters the bank itself had already replaced. They show a diamond where a ' +
+      'letter was, and nothing on this side can recover it.', '');
+  }
 }
 
 /**

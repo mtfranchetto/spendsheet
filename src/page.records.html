@@ -253,6 +253,26 @@
     return box;
   }
 
+  /**
+   * The seed's "no real subcategory" child — `Other › Uncategorised`.
+   *
+   * It is a real row on the `categories` tab, not a blank, and rows reach it
+   * through the BudgetBakers import map and the seeded `SATISPAY` rule. As a
+   * row's label it says the opposite of what happened: the row *is*
+   * categorised, as Other, and naming it "Uncategorised" reads as a row the
+   * cascade never answered. So it is treated as no subcategory, and the row
+   * falls back to its parent exactly as a blank one does.
+   *
+   * A copy of a name the server owns, so `tests/app.test.mjs` holds it to the
+   * seed — a rename there fails CI rather than quietly bringing the label back.
+   */
+  var PLACEHOLDER_SUBCATEGORY = 'Uncategorised';
+
+  /** The row's subcategory, or blank when it is only the placeholder. */
+  function realSubcategory(record) {
+    return record.subcategory === PLACEHOLDER_SUBCATEGORY ? '' : record.subcategory;
+  }
+
   function recordRow(record) {
     var button = el('button', 'tap');
     button.type = 'button';
@@ -264,7 +284,8 @@
     // you nothing at a glance that "Transport" does not. It stays, third,
     // because it is the only line that distinguishes two rows in the same
     // category on the same day.
-    var what = record.subcategory || record.category || '(uncategorised)';
+    var child = realSubcategory(record);
+    var what = child || record.category || '(uncategorised)';
 
     // The subcategory's own icon, falling back to the parent's. The colour
     // still comes from the parent, so a row is placed by its colour and named
@@ -273,7 +294,7 @@
     avatar.style.background = categoryColor(record.category || what);
     avatar.setAttribute('aria-hidden', 'true');
     add(avatar, document.createTextNode(
-      subcategoryIcon(record.subcategory) || categoryIcon(record.category) || ''));
+      subcategoryIcon(child) || categoryIcon(record.category) || ''));
     if (record.confirmed) add(avatar, el('span', 'check'));
     add(button, avatar);
 

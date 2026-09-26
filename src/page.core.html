@@ -266,6 +266,191 @@
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Amounts you type
+  // -------------------------------------------------------------------------
+
+  /**
+   * The device's decimal point and thousands separator — the two `money`
+   * prints, read from `Intl` rather than assumed.
+   *
+   * `useGrouping: true` and a five-digit sample for the reason `money` states
+   * it: it-IT's default suppresses the separator at four digits, so asking
+   * about `1234.5` would report that the locale has none.
+   */
+  function amountSeparators() {
+    if (amountSeparators.found) return amountSeparators.found;
+
+    var found = { group: ',', decimal: '.' };
+    try {
+      new Intl.NumberFormat(undefined, { useGrouping: true })
+        .formatToParts(12345.6)
+        .forEach(function (part) {
+          if (part.type === 'group') found.group = part.value;
+          if (part.type === 'decimal') found.decimal = part.value;
+        });
+    } catch (e) {
+      // The defaults above.
+    }
+    if (found.group === found.decimal) found.group = found.decimal === ',' ? '.' : ',';
+
+    amountSeparators.found = found;
+    return found;
+  }
+
+  /**
+   * An amount's parts — sign, whole digits, decimal digits, and whether a
+   * decimal point was typed at all — or null when there is no digit and no
+   * point in it.
+   *
+   * **Which separator is the decimal point** is the only hard question, and
+   * there are two answers because there are two situations:
+   *
+   * - `strict`, while someone is typing into a field this page formats. Only
+   *   the device's own decimal point counts, because every other separator in
+   *   the field is one the formatter put there. Reading the group separator as
+   *   a decimal is how backspacing `1.234` in it-IT would become `1,23`.
+   * - otherwise — a paste, or a value read on submit — the last `.` or `,` is
+   *   the point when it is the device's own, or when one or two digits follow
+   *   it. A thousands group always has three, so `1.234` is a thousand in any
+   *   locale and `1.234,50` pasted into an en-GB phone is still twelve hundred.
+   */
+  function amountParts(text, strict) {
+    var sep = amountSeparators();
+    var raw = String(text === null || text === undefined ? '' : text).trim();
+    var sign = /^[-−]/.test(raw) ? '-' : '';
+
+    var at = -1;
+    if (strict) {
+      at = raw.indexOf(sep.decimal);
+    } else {
+      var last = Math.max(raw.lastIndexOf('.'), raw.lastIndexOf(','));
+      if (last !== -1) {
+        var after = raw.slice(last + 1).replace(/\D/g, '').length;
+        if (raw.charAt(last) === sep.decimal || (after > 0 && after < 3)) at = last;
+      }
+    }
+
+    var whole = (at === -1 ? raw : raw.slice(0, at)).replace(/\D/g, '');
+    var decimals = at === -1 ? '' : raw.slice(at + 1).replace(/\D/g, '').slice(0, 2);
+    if (!sign && !whole && at === -1) return null;
+    return { sign: sign, whole: whole, decimals: decimals, point: at !== -1 };
+  }
+
+  /** Parts back into text, grouped the way `money` groups. */
+  function amountText(parts) {
+    if (!parts) return '';
+    var sep = amountSeparators();
+
+    var whole = parts.whole.replace(/^0+(?=\d)/, '');
+    if (!whole && parts.point) whole = '0';
+    var grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, function () { return sep.group; });
+
+    return parts.sign + grouped + (parts.point ? sep.decimal + parts.decimals : '');
+  }
+
+  /**
+   * What was typed into an amount field, as a number — or NaN.
+   *
+   * The one parser every amount field on the page uses. A blank is NaN rather
+   * than 0, for the reason CLAUDE.md gives about cells: `Number('')` is `0`, and
+   * an emptied field is not a deliberate zero.
+   */
+  function parseAmount(text) {
+    var parts = amountParts(text, false);
+    if (!parts || (!parts.whole && !parts.decimals)) return NaN;
+    return Number(parts.sign + (parts.whole || '0') + '.' + (parts.decimals || '0'));
+  }
+
+  /** A number as an amount field would show it, two decimals, or `''`. */
+  function formatAmount(value) {
+    if (value === null || value === undefined || value === '' || !isFinite(value)) return '';
+    return amountText(amountParts(Number(value).toFixed(2), false));
+  }
+
+  /**
+   * Group an amount field's digits as they are typed.
+   *
+   * Counting zeros in `1500000` is the problem: a field that says `1,500,000`
+   * has already answered it. The field stays a text input with a decimal
+   * keyboard — see `renderAdd` for why it is not `type=number`.
+   *
+   * **A `.` or `,` you have just typed is a decimal point, whichever the device
+   * uses.** A decimal keypad offers exactly one of them, and a phone set to an
+   * Italian region with an English keyboard offers the other — so the key
+   * pressed is the answer, and it is rewritten to the device's own before
+   * anything else reads the field.
+   *
+   * The caret is put back by counting digits from the **right**. The reformat
+   * changes the left: a separator appears ahead of the caret, a leading zero is
+   * dropped. Counting from the left would land a character early or late on
+   * every one of those; the digits after the caret are the thing that did not
+   * move.
+   *
+   * **A delete that removes only a separator takes the digit beside it
+   * instead.** The separator is the field's own, so the reformat puts it
+   * straight back and the digits right of the caret are unchanged — the caret
+   * returns to where it was, and Backspace pressed after `1,234,|567` is a dead
+   * key however many times you press it. Deleting the digit it was guarding is
+   * what the key press meant. Told apart by comparing the field with what it
+   * held a moment before, which `beforeinput` records.
+   */
+  function liveAmount(input) {
+    var before = '';
+    input.addEventListener('beforeinput', function () { before = input.value; });
+
+    var meaningful = function (text) {
+      var sep = amountSeparators();
+      return text.split('').filter(function (ch) {
+        return /\d/.test(ch) || ch === sep.decimal;
+      }).length;
+    };
+
+    input.addEventListener('input', function (event) {
+      var sep = amountSeparators();
+      var text = input.value;
+      var caret = input.selectionStart === null ? text.length : input.selectionStart;
+
+      if (event && (event.data === '.' || event.data === ',') && caret > 0) {
+        text = text.slice(0, caret - 1) + sep.decimal + text.slice(caret);
+      }
+
+      var kind = (event && event.inputType) || '';
+      if (kind.indexOf('delete') === 0 && before && text.length < before.length &&
+          meaningful(text) === meaningful(before)) {
+        var backward = kind === 'deleteContentBackward';
+        var gone = backward ? caret - 1 : caret;
+        while (gone >= 0 && gone < text.length &&
+            !(/\d/.test(text.charAt(gone)) || text.charAt(gone) === sep.decimal)) {
+          gone += backward ? -1 : 1;
+        }
+        if (gone >= 0 && gone < text.length) {
+          text = text.slice(0, gone) + text.slice(gone + 1);
+          if (backward) caret = gone;
+        }
+      }
+
+      // A paste arrives with no key to go by, so it is read the forgiving way.
+      var typing = !event || !event.inputType || event.inputType.indexOf('insertFromPaste') === -1;
+      var right = text.slice(caret).split('').filter(function (ch) {
+        return /\d/.test(ch) || ch === sep.decimal;
+      }).length;
+
+      var formatted = amountText(amountParts(text, typing));
+      if (formatted === input.value) return;
+      input.value = formatted;
+
+      if (document.activeElement !== input) return;
+      var at = formatted.length;
+      var seen = 0;
+      while (at > 0 && seen < right) {
+        at--;
+        if (/\d/.test(formatted.charAt(at)) || formatted.charAt(at) === sep.decimal) seen++;
+      }
+      input.setSelectionRange(at, at);
+    });
+  }
+
   /** `2026-08-06` as `6 Aug`, because the year is almost never the question. */
   function shortDate(key) {
     if (!key) return '';

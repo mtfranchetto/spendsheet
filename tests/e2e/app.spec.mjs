@@ -239,26 +239,32 @@ test.describe('the account tiles', () => {
   });
 
   /*
-    The secondary action starts where the tile's own text starts.
+    The secondary action is one line, starts where the tile's own text starts,
+    and stays inside the tile.
 
-    A button centres its label, and every `button.link` on the page is text you
-    read from the left — so the alignment is correct only while the label is
-    narrower than the box, and the box is exactly what the tiles took away: a
-    column went from 174px to 162px when the block became a scroller, which is
-    enough for "↕ Update balance" to wrap on the phone and centre both its
-    lines a few pixels right of the balance above it.
+    **One line**, because every tile in a grid row is as tall as the tallest: a
+    label that wraps makes its whole row of tiles a line taller, which is the
+    height this block exists to save. "+ Add transaction" and "↕ Update
+    balance" both wrapped at this width and added 23px to every tile beside
+    them.
 
-    Measured against the amount rather than against the tile's padding box,
-    because the padding is what the assertion would otherwise be restating; the
-    amount is the thing on screen the eye compares the button to.
+    **Left-aligned**, because a button centres its label and every
+    `button.link` on the page is text you read from the left. Measured against
+    the amount rather than the tile's padding box, because the padding is what
+    the assertion would otherwise be restating; the amount is the thing on
+    screen the eye compares the button to.
 
-    The narrow viewport is the point. At 390px WebKit fits "+ Add transaction"
-    on one line and a centred box lands flush left by arithmetic — the state
-    this is written to catch is invisible there, and passing at that width would
-    prove only that the label happened to be short. 320px is the narrowest the
-    tiles have to work at, and it wraps both labels.
+    **Inside the tile**, because the one-line half is `white-space: nowrap`,
+    and a nowrap label that outgrows its column does not wrap — it runs out
+    over the border and into the next tile. The bottom edge is checked for the
+    same reason: the button's lower padding is pulled into the tile's own with
+    a negative margin, and a margin larger than that padding would put the hit
+    box outside the thing it is drawn in.
+
+    320px is the narrowest the tiles have to work at, so it is the width where
+    all three can fail.
   */
-  test('left-align the action inside a tile, even when its label wraps', async ({ page, errors }) => {
+  test('keep the action inside a tile to one left-aligned line', async ({ page, errors }) => {
     await page.setViewportSize({ width: 320, height: 800 });
     await open(page);
     await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
@@ -275,10 +281,22 @@ test.describe('the account tiles', () => {
           const text = document.createRange();
           text.selectNodeContents(button);
 
+          // The tile's content box: its border box less the padding, since a
+          // label that reaches the padding is already over the visible edge
+          // of the text column.
+          const box = tile.getBoundingClientRect();
+          const style = getComputedStyle(tile);
+          const glyphs = text.getBoundingClientRect();
+          const hit = button.getBoundingClientRect();
+
           return {
             label: button.textContent,
             lines: text.getClientRects().length,
-            textLeft: text.getBoundingClientRect().left,
+            textLeft: glyphs.left,
+            textRight: glyphs.right,
+            contentRight: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
+            hitBottom: hit.bottom,
+            tileBottom: box.bottom - parseFloat(style.borderBottomWidth),
             amountLeft: tile.querySelector('.amount').getBoundingClientRect().left
           };
         });
@@ -287,12 +305,39 @@ test.describe('the account tiles', () => {
     expect(actions.length, 'no tile carries a secondary action').toBeGreaterThan(0);
 
     for (const action of actions) {
-      expect(action.lines, `"${action.label}" fits on one line at 320px, so this proves nothing`)
-        .toBeGreaterThan(1);
+      expect(action.lines, `"${action.label}" wraps at 320px, so its row of tiles grows a line`)
+        .toBe(1);
       expect(action.textLeft, `"${action.label}" does not start where the balance does`)
         .toBeCloseTo(action.amountLeft, 0);
+      expect(action.textRight, `"${action.label}" runs past the edge of its tile`)
+        .toBeLessThanOrEqual(action.contentRight + 0.5);
+      expect(action.hitBottom, `"${action.label}"'s tap target hangs below its tile`)
+        .toBeLessThanOrEqual(action.tileBottom + 0.5);
     }
 
+    expect(errors).toEqual([]);
+  });
+
+  test('mark a bank with what it is, and a dot only when it needs one', async ({ page, errors }) => {
+    // 🟢 on every healthy tile was an alert glyph repeated down the screen
+    // saying nothing, and it trains the eye to skip the dots — including the
+    // one that is not green. A kind is not a state: 🏦, 💵 and 📈 say what the
+    // account is, so the coloured dot is still the only one on the row.
+    await open(page);
+    await expect(page.locator('#screens .spinner')).toHaveCount(0, { timeout: 10000 });
+
+    const marks = await page.evaluate(() => {
+      const of = (name) => Array.from(document.querySelectorAll('#screens .tile'))
+        .find((tile) => tile.textContent.includes(name));
+      return ['Revolut', 'Fineco', 'Wallet', 'Degiro']
+        .map((name) => [name, of(name).querySelector('.who span').textContent]);
+    });
+
+    expect(Object.fromEntries(marks)).toEqual({
+      Revolut: '\u{1F3E6}', Fineco: '\u{1F7E0}',
+      Wallet: '\u{1F4B5}', Degiro: '\u{1F4C8}'
+    });
+    expect(await page.locator('#screens .tiles').textContent()).not.toContain('\u{1F7E2}');
     expect(errors).toEqual([]);
   });
 });
@@ -773,6 +818,211 @@ test.describe('the gestures', () => {
   });
 });
 
+/*
+  An amount field groups its digits as they are typed.
+
+  Worth a browser for the two things only a browser has: `InputEvent.data`,
+  which is how the field knows a `,` was a key press rather than a separator it
+  drew itself, and the caret, which a reformat moves unless it is put back.
+  The keyboard is `page.keyboard`, so every character arrives as the input
+  event a phone would send — though a synthesised key is still not the iOS
+  decimal pad, and that half is the phone's to prove.
+*/
+test.describe('typing an amount', () => {
+  const openAdd = async (page) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Add transaction');
+    const field = page.locator('#screens input[inputmode="decimal"]');
+    await field.click();
+    return field;
+  };
+
+  test('groups the digits as they arrive', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('1500000');
+    await expect(field).toHaveValue('1,500,000');
+    expect(errors).toEqual([]);
+  });
+
+  test('takes either key as the decimal point, and sends the number', async ({ page, errors }) => {
+    const field = await openAdd(page);
+
+    // A comma on a phone whose own decimal point is a dot: the key pressed is
+    // what counts, so this is one thousand two hundred and thirty-four and a half.
+    await page.keyboard.type('1234,5');
+    await expect(field).toHaveValue('1,234.5');
+
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const sent = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0].amount));
+    expect(sent).toEqual([1234.5]);
+    expect(errors).toEqual([]);
+  });
+
+  test('sends which way the money went from the buttons, not from a sign', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    // The parents the picker offers, read off its headings with an empty
+    // search — opened, read and closed again so the form is left as it was.
+    const offered = async () => {
+      await page.locator('#screens .catpick-current').click();
+      const names = await page.locator('#screens .catpick-group').evaluateAll(
+        (groups) => groups.map((g) => g.textContent.replace(/^\S+\s/, '')));
+      await page.locator('#screens .catpick-current').click();
+      return names;
+    };
+
+    // Expense is the default and offers no Income category to file under.
+    await expect(page.locator('#screens .seg[aria-pressed="true"]')).toHaveText('Expense');
+    expect(await offered()).not.toContain('Income');
+
+    await page.locator('#screens .seg', { hasText: 'Income' }).click();
+    await expect(page.locator('#screens .seg[aria-pressed="true"]')).toHaveText('Income');
+    expect(await offered()).toContain('Income');
+    expect(await offered()).not.toContain('Food & Drink');
+
+    // Redrawing the tabs leaves what was typed alone.
+    await field.click();
+    await page.keyboard.type('200');
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('income');
+    await page.locator('#screens .catpick-option', { hasText: 'Anything in Income' }).click();
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const sent = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    expect(sent).toMatchObject([{ amount: 200, direction: 'income', category: 'Income' }]);
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps the caret beside the digit just typed when a separator appears', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('123456');
+    await expect(field).toHaveValue('123,456');
+
+    // Into the middle, after the `1`, in a place where one more digit makes a
+    // new group: `1723,456` regroups to `1,723,456`, putting a separator ahead
+    // of the caret. Inserting where the groups do not change reformats nothing
+    // and would prove nothing — that is how the first version of this test
+    // passed against a page that never put the caret back at all.
+    //
+    // The second digit is the assertion. A caret left at its old offset lands
+    // before the `7`, and one that the browser sent to the end lands after the
+    // `6`; only a restored one puts the `8` after the `7`.
+    await field.evaluate((input) => input.setSelectionRange(1, 1));
+    await page.keyboard.type('7');
+    await expect(field).toHaveValue('1,723,456');
+    await page.keyboard.type('8');
+    await expect(field).toHaveValue('17,823,456');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    Backspace straight after a separator deletes the digit before it.
+
+    The separator is the field's own, so removing it alone changes no digit and
+    the reformat draws it straight back with the caret where it was — a key that
+    does nothing however often it is pressed. Only reachable with the caret
+    beside a separator, which backspacing from the end never is.
+  */
+  test('backspace beside a separator deletes a digit rather than nothing', async ({ page, errors }) => {
+    const field = await openAdd(page);
+    await page.keyboard.type('1234567');
+    await expect(field).toHaveValue('1,234,567');
+
+    await field.evaluate((input) => input.setSelectionRange(6, 6));
+    await page.keyboard.press('Backspace');
+    await expect(field).toHaveValue('123,567');
+
+    // And the caret stayed beside the deletion, so a second press keeps going.
+    await page.keyboard.press('Backspace');
+    await expect(field).toHaveValue('12,567');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    A pre-filled amount is replaced by what you type, not added to.
+
+    `renderSetValue` arrives holding the current balance and selects it on
+    focus, so a new number replaces it. A selection made synchronously in
+    `focus` is collapsed by the tap that caused it, the digits go on the end —
+    and two-decimal grouping then drops every one of them, so the field looks
+    as if it ignored the keyboard. `tap` rather than `click`, because a touch
+    is the gesture whose caret placement does the collapsing.
+  */
+  test('replaces a pre-filled balance rather than appending to it', async ({ page, errors }) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: 'Update' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Update balance');
+
+    const field = page.locator('#screens input[inputmode="decimal"]');
+    await expect(field).not.toHaveValue('');
+    await field.tap();
+    await page.waitForTimeout(50);
+    await page.keyboard.type('33250');
+
+    await expect(field).toHaveValue('33,250');
+    await expect(page.locator('#screens .card')).toContainText('recorded as one transaction');
+    expect(errors).toEqual([]);
+  });
+
+  /*
+    A page left open overnight still offers today.
+
+    `generatedAt` is the server's day at the moment `appOpen` answered, and it
+    is not refreshed while the page sits in the background. Used alone as the
+    picker's `max`, the morning after would refuse the day you spent the money.
+    The phone's clock is moved two days past the answer the preview was built
+    with, which is that morning.
+  */
+  test('offers today even when the server last answered on an earlier day', async ({ page, errors }) => {
+    const later = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    await page.clock.setFixedTime(later);
+
+    await openAdd(page);
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const phoneToday = later.getFullYear() + '-' + pad(later.getMonth() + 1) + '-' + pad(later.getDate());
+
+    await expect(page.locator('#screens input[type="date"]')).toHaveAttribute('max', phoneToday);
+    await expect(page.locator('#screens input[type="date"]')).toHaveValue(phoneToday);
+    expect(errors).toEqual([]);
+  });
+
+  test('offers no date after today', async ({ page, errors }) => {
+    await openAdd(page);
+    const today = await page.evaluate(() => document.querySelector('#screens input[type="date"]').value);
+    expect(today, 'the date field arrived empty').not.toBe('');
+    await expect(page.locator('#screens input[type="date"]')).toHaveAttribute('max', today);
+    expect(errors).toEqual([]);
+  });
+
+  test.describe('on a phone that writes a comma for the decimal point', () => {
+    test.use({ locale: 'it-IT' });
+
+    /*
+      The case the whole design turns on. In it-IT the thousands separator is
+      a dot, so a field that read every `.` as a decimal point would read its
+      own grouping back as one — and deleting the last digit of `1.234` would
+      leave `1,23`, a thousand turned into one euro twenty-three.
+    */
+    test('does not read its own grouping back as a decimal point', async ({ page, errors }) => {
+      const field = await openAdd(page);
+
+      await page.keyboard.type('1234,50');
+      await expect(field).toHaveValue('1.234,50');
+
+      for (const expected of ['1.234,5', '1.234,', '1.234', '123']) {
+        await page.keyboard.press('Backspace');
+        await expect(field).toHaveValue(expected);
+      }
+      expect(errors).toEqual([]);
+    });
+  });
+});
+
 test.describe('the tab bar', () => {
   /**
    * Order, which nothing has ever asserted and which has now been changed twice.
@@ -868,6 +1118,256 @@ test.describe('deleting a cash transaction', () => {
     // happened to be filtered to unconfirmed.
     await expect(page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }))
       .toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('picking a category', () => {
+  const openAdd = async (page) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Add transaction');
+    await page.locator('#screens input[inputmode="decimal"]').fill('12');
+  };
+
+  const search = async (page, text) => {
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill(text);
+  };
+
+  const options = (page) => page.locator('#screens .catpick-option');
+
+  const sentCategory = async (page) => {
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+    const [sent] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    return { category: sent.category, subcategory: sent.subcategory };
+  };
+
+  test('narrows as you type, and a child sends its parent with it', async ({ page, errors }) => {
+    // The parent travelling with the child is load-bearing: a row already
+    // carrying a `category_override` — every transfer does — would otherwise
+    // go on winning over the child you picked.
+    await openAdd(page);
+    const everything = await (async () => {
+      await page.locator('#screens .catpick-current').click();
+      return options(page).count();
+    })();
+
+    await page.locator('#screens .catpick input').fill('bars');
+    await expect(options(page)).toHaveCount(1);
+    expect(everything).toBeGreaterThan(20);
+
+    await options(page).first().click();
+    await expect(page.locator('#screens .catpick-panel')).toBeHidden();
+    await expect(page.locator('#screens .catpick-current')).toContainText('Bars & Cafes');
+    expect(await sentCategory(page)).toEqual({ category: 'Food & Drink', subcategory: 'Bars & Cafes' });
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps the parent on its own reachable by searching its name', async ({ page, errors }) => {
+    // "This is Shopping and I do not know what kind" is a real answer.
+    await openAdd(page);
+    await search(page, 'shopping');
+
+    await page.locator('#screens .catpick-option', { hasText: 'Anything in Shopping' }).click();
+    expect(await sentCategory(page)).toEqual({ category: 'Shopping', subcategory: '' });
+    expect(errors).toEqual([]);
+  });
+
+  test('shows a child under its parent\'s heading even when only the child matched', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'rent');
+
+    await expect(page.locator('#screens .catpick-group')).toContainText(['Housing']);
+    await expect(page.locator('#screens .catpick-option', { hasText: 'Anything in Housing' }))
+      .toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('ignores case and accents', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'BÄRS');
+
+    await expect(options(page)).toHaveText([/Bars & Cafes/]);
+    expect(errors).toEqual([]);
+  });
+
+  test('picks the first match on Return', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'bars');
+    await page.keyboard.press('Enter');
+
+    expect(await sentCategory(page)).toEqual({ category: 'Food & Drink', subcategory: 'Bars & Cafes' });
+    expect(errors).toEqual([]);
+  });
+
+  test('says so when nothing matches', async ({ page, errors }) => {
+    await openAdd(page);
+    await search(page, 'zzzz');
+
+    await expect(options(page)).toHaveCount(0);
+    await expect(page.locator('#screens .catpick-panel')).toContainText('No category matches');
+    expect(errors).toEqual([]);
+  });
+
+  test('offers only the tab\'s own kind in the transaction sheet', async ({ page, errors }) => {
+    // A salary should not be offered sixty expense categories, and the search
+    // must not be a way round that.
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+    await page.locator('#sheet .catpick-current').click();
+    await page.locator('#sheet .catpick input').fill('salary');
+
+    await expect(page.locator('#sheet .catpick-option')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('confirms a row with what was picked in the sheet', async ({ page, errors }) => {
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+    await page.locator('#sheet .catpick-current').click();
+    await page.locator('#sheet .catpick input').fill('bars');
+    await page.locator('#sheet .catpick-option').first().click();
+    await page.locator('#sheet button.primary').click();
+
+    await expect.poll(() => calls(page)).toContain('appConfirm');
+    const [decision] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0][0]));
+    expect(decision).toMatchObject({ category_override: 'Food & Drink',
+      subcategory_override: 'Bars & Cafes' });
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('labels on a cash entry', () => {
+  const openAdd = async (page) => {
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await expect(page.locator('#screens h1')).toHaveText('Add transaction');
+  };
+
+  const chip = (page, name) => page.locator('#screens .chip', { hasText: name });
+
+  test('sends what is ticked, in the shape the column holds', async ({ page, errors }) => {
+    await openAdd(page);
+    await page.locator('#screens input[inputmode="decimal"]').fill('12');
+    await chip(page, 'travel').click();
+
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const [sent] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    expect(sent.labels).toEqual(['travel']);
+    expect(errors).toEqual([]);
+  });
+
+  test('takes the chips away on a transfer, and sends none', async ({ page, errors }) => {
+    // The rule the edit sheet's transfer pane already keeps, and the server
+    // refuses the same write: a label is an axis over spending, and a transfer
+    // is counted in neither direction.
+    await openAdd(page);
+    await page.locator('#screens input[inputmode="decimal"]').fill('12');
+    await chip(page, 'travel').click();
+
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('between');
+    await page.locator('#screens .catpick-option', { hasText: 'Between accounts' }).click();
+    await expect(chip(page, 'travel')).toBeHidden();
+
+    await page.locator('#screens button.primary', { hasText: 'Add' }).click();
+    await expect.poll(() => calls(page)).toContain('appAddCash');
+
+    const [sent] = await page.evaluate(() =>
+      window.__calls.filter((c) => c.name === 'appAddCash').map((c) => c.args[0]));
+    expect(sent.labels).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  test('still hides them after the Expense/Income tabs redraw the category list', async ({ page, errors }) => {
+    // Switching tabs replaces the category select, so a listener attached to
+    // the first one is listening to a node that is gone.
+    await openAdd(page);
+    await page.locator('#screens .seg', { hasText: 'Income' }).click();
+    await page.locator('#screens .seg', { hasText: 'Expense' }).click();
+
+    await page.locator('#screens .catpick-current').click();
+    await page.locator('#screens .catpick input').fill('between');
+    await page.locator('#screens .catpick-option', { hasText: 'Between accounts' }).click();
+    await expect(chip(page, 'travel')).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('editing the amount of a cash transaction', () => {
+  const openCash = async (page) => {
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'Caffè e cornetto' }).click();
+    await expect(page.locator('#sheet')).toBeVisible();
+    return page.locator('#sheet input[inputmode="decimal"]');
+  };
+
+  const sentDecisions = (page) => page.evaluate(() =>
+    window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0][0]));
+
+  test('offers no amount field on a row the bank sent', async ({ page, errors }) => {
+    await open(page);
+    await tab(page, RECORDS).click();
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+
+    await expect(page.locator('#sheet')).toBeVisible();
+    await expect(page.locator('#sheet input[inputmode="decimal"]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test('arrives holding the size, and sends the corrected one', async ({ page, errors }) => {
+    // The row is −6.50 and the field says 6.50: the sign is not in the amount,
+    // here as everywhere else in this project.
+    await open(page);
+    const field = await openCash(page);
+    await expect(field).toHaveValue('6.50');
+
+    await field.fill('');
+    await page.keyboard.type('8.20');
+    await page.locator('#sheet button.primary').click();
+
+    await expect.poll(() => calls(page)).toContain('appConfirm');
+    expect((await sentDecisions(page))[0].amount).toBe(8.2);
+    expect(errors).toEqual([]);
+  });
+
+  test('sends no amount at all when the field was not touched', async ({ page, errors }) => {
+    // Present-and-unchanged and absent are different requests: the writer
+    // reports an amount it wrote, and a confirm that always sent one would
+    // report a change on every tap.
+    await open(page);
+    await openCash(page);
+
+    await page.locator('#sheet button.primary').click();
+    await expect.poll(() => calls(page)).toContain('appConfirm');
+
+    expect((await sentDecisions(page))[0]).not.toHaveProperty('amount');
+    expect(errors).toEqual([]);
+  });
+
+  test('keeps the sheet open and says so rather than sending a blank', async ({ page, errors }) => {
+    // The sheet closes on an optimistic redraw, so a refusal has to happen
+    // before it does — otherwise the row goes back a round trip later with a
+    // toast, which looks like a tap that did not land.
+    await open(page);
+    const field = await openCash(page);
+
+    await field.fill('');
+    await page.locator('#sheet button.primary').click();
+
+    await expect(page.locator('#toast')).toContainText('Type an amount');
+    await expect(page.locator('#sheet')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await calls(page)).not.toContain('appConfirm');
     expect(errors).toEqual([]);
   });
 });
@@ -1077,8 +1577,8 @@ test.describe('opening on what the phone already knows', () => {
 */
 test.describe('pull to refresh', () => {
   /** A downward drag from the top of the document, in the shape WebKit accepts. */
-  const pull = (page, distance) => page.evaluate((travel) => {
-    const target = document.body;
+  const pull = (page, distance, selector) => page.evaluate(([travel, at]) => {
+    const target = at ? document.querySelector(at) : document.body;
     const point = (y) => (document.createTouch
       ? document.createTouch(window, target, 1, 40, y, 40, y)
       : new Touch({ identifier: 1, target, clientX: 40, clientY: y }));
@@ -1101,7 +1601,7 @@ test.describe('pull to refresh', () => {
     touch('touchstart', 10);
     for (let step = 1; step <= 8; step += 1) touch('touchmove', 10 + (travel * step) / 8);
     touch('touchend', 10 + travel);
-  }, distance);
+  }, [distance, selector || null]);
 
   test('a pull past the threshold re-reads the dashboard', async ({ page, errors }) => {
     await open(page);
@@ -1117,6 +1617,23 @@ test.describe('pull to refresh', () => {
     const fresh = await page.evaluate(() =>
       window.__calls.filter((c) => c.name === 'appDashboard').map((c) => c.args[0]));
     expect(fresh.some(Boolean), 'appDashboard was not asked for a fresh read').toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test('a drag inside a list scrolled down is that list\'s scroll', async ({ page, errors }) => {
+    // The category picker's list scrolls inside itself. At the top of the
+    // page, dragging it back towards its own top is the same gesture as a pull,
+    // and used to arm one.
+    await open(page);
+    await page.locator('#screens .tile button.link', { hasText: '+ Add' }).click();
+    await page.locator('#screens .catpick-current').click();
+    await page.evaluate(() => { document.querySelector('.catpick-list').scrollTop = 200; });
+    await page.evaluate(() => { window.__calls.length = 0; });
+
+    await pull(page, 140, '.catpick-option:not(.first)');
+
+    await page.waitForTimeout(300);
+    expect(await calls(page)).not.toContain('appDashboard');
     expect(errors).toEqual([]);
   });
 

@@ -30,6 +30,23 @@ describe('normalizeMerchant', () => {
     expect(key('PAGAMENTO POS 12/03 CARTA *1234 ESSELUNGA SPA TORINO')).toBe('esselunga torino');
   });
 
+  it('keeps the letters of a foreign merchant rather than splitting on them', () => {
+    // Each of these used to lose a syllable: the letter became a separator and
+    // the fragment it left was too short to keep.
+    expect(key('REMA 1000 KØBENHAVN')).toBe('rema kobenhavn');
+    expect(key('MERCADONA ESPAÑA')).toBe('mercadona espana');
+    expect(key('MÜNCHNER VERKEHRSGESEL MÜNCHEN')).toBe('munchner verkehrsgesel munchen');
+    expect(key('STRAßENBAHN')).toBe('strassenbahn');
+    expect(key('ŁÓDŹ KIOSK')).toBe('lodz kiosk');
+  });
+
+  it('drops the card-terminal words other countries print', () => {
+    expect(key('KARTENZAHLUNG GIROCARD EDEKA BERLIN')).toBe('edeka berlin');
+    expect(key('BETAALAUTOMAAT ALBERT HEIJN')).toBe('albert heijn');
+    expect(key('PAIEMENT CB MONOPRIX PARIS')).toBe('cb monoprix paris');
+    expect(key('COMPRA TARJETA MERCADONA')).toBe('mercadona');
+  });
+
   it('strips dates, times and card references in the several shapes banks use', () => {
     expect(key('PAGAMENTO TRAMITE POS 25/07/2026 14:32 CARTA 1234 NETFLIX')).toBe('netflix');
     expect(key('ACQUISTO 01-02-26 ORE 09:15 SPOTIFY')).toBe('spotify');
@@ -521,6 +538,224 @@ describe('deriveMemory_', () => {
     ]);
     expect(derived.entries[0].merchant_key).toBe('esselunga');
   });
+
+  describe('a correction you typed', () => {
+    // A row as the sheet holds one you corrected: the override cells, and the
+    // `category`/`subcategory` formulas already resolved from them.
+    const corrected = (category, subcategory, date, over = {}) => row(Object.assign({
+      confirmed: '', category, subcategory: subcategory || '',
+      category_override: category, subcategory_override: subcategory || '',
+      booking_date: date
+    }, over));
+    const plain = (category, subcategory, over = {}) =>
+      row(Object.assign({ category, subcategory: subcategory || '' }, over));
+    const day = (d) => new Date(2026, 4, d);
+
+    it('decides the entry outright, however many ticks disagree', () => {
+      // The whole feature. Recency used to break only an exact tie, so two
+      // corrections against thirty-eight confirmations changed nothing. The
+      // correction is older than every tick here on purpose: what decides is
+      // being the latest *correction*, not the latest row.
+      const derived = ctx.deriveMemory_([
+        plain('Food & Drink', 'Groceries'), plain('Food & Drink', 'Groceries'),
+        plain('Food & Drink', 'Groceries'), plain('Food & Drink', 'Groceries'),
+        plain('Food & Drink', 'Groceries'),
+        corrected('Shopping', '', day(1))
+      ]);
+      expect(derived.entries[0].category).toBe('Shopping');
+      expect(derived.entries[0].subcategory).toBe('');
+      expect(derived.entries[0].hits).toBe(1);
+      expect(derived.entries[0].decidedBy).toBe('correction');
+    });
+
+    it('does not count a category the import wrote as a correction', () => {
+      // The import fills category_override on every row it brings in. Read as
+      // corrections, a five-year history would hand each merchant to whichever
+      // imported row was booked last — one row, no majority behind it.
+      const derived = ctx.deriveMemory_([
+        plain('Food & Drink', 'Groceries'), plain('Food & Drink', 'Groceries'),
+        plain('Food & Drink', 'Groceries'), plain('Food & Drink', 'Groceries'),
+        plain('Food & Drink', 'Groceries'),
+        corrected('Shopping', '', day(20), { source: 'csv:budgetbakers' })
+      ]);
+      expect(derived.entries[0].category).toBe('Food & Drink');
+      expect(derived.entries[0].decidedBy).toBe('vote');
+    });
+
+    it('lets one correction outrank forty imported rows', () => {
+      const imported = Array.from({ length: 40 }, (_, i) =>
+        corrected('Food & Drink', 'Groceries', day(1 + (i % 28)), { source: 'csv:budgetbakers' }));
+      const derived = ctx.deriveMemory_(imported.concat([
+        corrected('Shopping', 'Home', day(2), { source: 'enablebanking' })
+      ]));
+      expect(derived.entries[0].category).toBe('Shopping');
+      expect(derived.entries[0].subcategory).toBe('Home');
+      expect(derived.entries[0].hits).toBe(1);
+    });
+
+    it('takes the pair from the correction, not half of it from the vote', () => {
+      const derived = ctx.deriveMemory_([
+        plain('Food & Drink', 'Groceries'), plain('Food & Drink', 'Groceries'),
+        plain('Food & Drink', 'Groceries'),
+        corrected('Housing', 'Rent', day(3))
+      ]);
+      expect(derived.entries[0].category).toBe('Housing');
+      expect(derived.entries[0].subcategory).toBe('Rent');
+    });
+
+    it('does not bring back a child the latest correction left out', () => {
+      // Overruling the parent without naming a child blanks the subcategory on
+      // the sheet (`subcategoryFormula`), so memory must not resurrect the one
+      // an earlier correction gave. A blank is not a disagreement, either —
+      // the two corrections below agree, and the latest one decides.
+      const derived = ctx.deriveMemory_([
+        corrected('Shopping', 'Home', day(1)),
+        corrected('Shopping', '', day(9))
+      ]);
+      expect(derived.entries[0].decidedBy).toBe('correction');
+      expect(derived.entries[0].category).toBe('Shopping');
+      expect(derived.entries[0].subcategory).toBe('');
+      expect(derived.entries[0].hits).toBe(2);
+    });
+
+    it('prefers a dated correction to one with no date, whichever is read first', () => {
+      const dated = corrected('Shopping', '', day(2));
+      const undated = corrected('Shopping', 'Home', '');
+      expect(ctx.deriveMemory_([dated, undated]).entries[0].subcategory).toBe('');
+      expect(ctx.deriveMemory_([undated, dated]).entries[0].subcategory).toBe('');
+    });
+
+    it('breaks a same-day tie towards the correction that named a child', () => {
+      // Only a named subcategory competes — the rule the vote already follows.
+      const bare = corrected('Shopping', '', day(4));
+      const named = corrected('Shopping', 'Home', day(4));
+      expect(ctx.deriveMemory_([bare, named]).entries[0].subcategory).toBe('Home');
+      expect(ctx.deriveMemory_([named, bare]).entries[0].subcategory).toBe('Home');
+    });
+
+    describe('that disagrees with your other corrections', () => {
+      // The bank's text says where you bought, never what. No entry can be
+      // right for a merchant that sells everything, so a steady guess beats
+      // one that flips every time you correct a row.
+      it('falls back to the vote, and counts the corrections as votes', () => {
+        const amazon = [
+          plain('Home'),
+          corrected('Gifts', '', day(1)),
+          corrected('Gifts', '', day(2)),
+          corrected('Tech', '', day(9))
+        ];
+        const derived = ctx.deriveMemory_(amazon);
+        expect(derived.entries[0].decidedBy).toBe('mixed');
+        expect(derived.entries[0].category).toBe('Gifts');
+        expect(derived.entries[0].hits).toBe(2);
+
+        expect(ctx.deriveMemory_(amazon.slice().reverse()).entries[0].category).toBe('Gifts');
+      });
+
+      it('lets the ticks win the vote when they outnumber the corrections', () => {
+        const derived = ctx.deriveMemory_([
+          plain('Home'), plain('Home'), plain('Home'),
+          corrected('Gifts', '', day(1)),
+          corrected('Gifts', '', day(2)),
+          corrected('Tech', '', day(9))
+        ]);
+        expect(derived.entries[0].category).toBe('Home');
+      });
+
+      it('is mixed on the subcategory alone', () => {
+        const derived = ctx.deriveMemory_([
+          plain('Shopping', 'Home'), plain('Shopping', 'Home'),
+          corrected('Shopping', 'Home', day(1)),
+          corrected('Shopping', 'Tech', day(9))
+        ]);
+        expect(derived.entries[0].decidedBy).toBe('mixed');
+        expect(derived.entries[0].subcategory).toBe('Home');
+      });
+
+      it('stops being mixed once the wrong correction is fixed', () => {
+        // Memory is rebuilt from what the rows say now, so a mistake you fix
+        // on the row is simply gone by the next rebuild. One you never fix
+        // falls to the vote, which one stray row cannot outweigh.
+        const ticks = [plain('Food & Drink'), plain('Food & Drink'), plain('Food & Drink')];
+
+        const mistaken = ctx.deriveMemory_(ticks.concat([
+          corrected('Food & Drink', '', day(1)),
+          corrected('Transport', '', day(9))
+        ]));
+        expect(mistaken.entries[0].decidedBy).toBe('mixed');
+        expect(mistaken.entries[0].category).toBe('Food & Drink');
+
+        const fixed = ctx.deriveMemory_(ticks.concat([
+          corrected('Food & Drink', '', day(1)),
+          corrected('Food & Drink', '', day(9))
+        ]));
+        expect(fixed.entries[0].decidedBy).toBe('correction');
+      });
+    });
+
+    it('does not count an override the duplicate merge copied as a correction', () => {
+      // The survivor of "Remove synced duplicates" carries the imported row's
+      // category on a row whose source is the bank's. It votes, as the
+      // imported row did; a second override you typed beside it still counts.
+      const survivor = corrected('Insurance', '', day(9), { uid: 's1', source: 'enablebanking' });
+      const ticks = [plain('Housing'), plain('Housing')];
+
+      const copied = ctx.deriveMemory_(ticks.concat([survivor]), { s1: { category_override: true } });
+      expect(copied.entries[0].decidedBy).toBe('vote');
+      expect(copied.entries[0].category).toBe('Housing');
+
+      const typedBeside = ctx.deriveMemory_(
+        ticks.concat([Object.assign({}, survivor, { subcategory_override: 'Life', subcategory: 'Life' })]),
+        { s1: { category_override: true } });
+      expect(typedBeside.entries[0].decidedBy).toBe('correction');
+    });
+
+    it('learns from a subcategory you picked without ticking anything', () => {
+      // The review tab's normal path: pick Groceries and the category follows.
+      // It counts as a correction even on a row a rule had answered.
+      const derived = ctx.deriveMemory_([
+        plain('Shopping'), plain('Shopping'), plain('Shopping'),
+        row({
+          confirmed: '', category_source: 'rule', category_override: '',
+          category: 'Food & Drink', subcategory: 'Groceries',
+          subcategory_override: 'Groceries', booking_date: day(5)
+        })
+      ]);
+      expect(derived.entries[0].category).toBe('Food & Drink');
+      expect(derived.entries[0].subcategory).toBe('Groceries');
+      expect(derived.entries[0].decidedBy).toBe('correction');
+    });
+  });
+});
+
+describe('isConfirmedRow_', () => {
+  it('counts a subcategory you picked as confirmation, like the category beside it', () => {
+    expect(ctx.isConfirmedRow_({ confirmed: '', category_override: '', subcategory_override: 'Groceries' }))
+      .toBe(true);
+    expect(ctx.isConfirmedRow_({ confirmed: '', category_override: '', subcategory_override: '' }))
+      .toBe(false);
+  });
+});
+
+describe('memoryUnchanged_', () => {
+  const entry = (over = {}) => Object.assign({
+    merchant_key: 'esselunga', category: 'Food & Drink', subcategory: 'Groceries',
+    hits: 3, last_seen: new Date(2026, 4, 10)
+  }, over);
+
+  it('calls two identical sets unchanged, comparing dates by the moment they name', () => {
+    // Read back from the tab, a date is a different object and hits may be a
+    // string; neither is a change.
+    const current = [entry({ hits: '3', last_seen: new Date(2026, 4, 10) })];
+    expect(ctx.memoryUnchanged_(current, [entry()])).toBe(true);
+  });
+
+  it('notices a moved category, a moved count, and a key added or gone', () => {
+    expect(ctx.memoryUnchanged_([entry()], [entry({ category: 'Shopping' })])).toBe(false);
+    expect(ctx.memoryUnchanged_([entry()], [entry({ hits: 4 })])).toBe(false);
+    expect(ctx.memoryUnchanged_([entry()], [entry(), entry({ merchant_key: 'conad' })])).toBe(false);
+    expect(ctx.memoryUnchanged_([entry(), entry({ merchant_key: 'conad' })], [entry()])).toBe(false);
+  });
 });
 
 describe('running the cascade over the sheet', () => {
@@ -626,6 +861,66 @@ describe('running the cascade over the sheet', () => {
     const second = c.readRecords_(tx, c.TX_COLUMNS, 1)[1];
     expect(second.category_auto).toBe('Food & Drink');
     expect(second.category_source).toBe('memory');
+  });
+
+  it('does not rewrite memory from the menu when nothing moved', () => {
+    const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+    c.learnFromCorrections();
+
+    let writes = 0;
+    const write = c.writeMemory_;
+    c.writeMemory_ = (...args) => { writes++; return write(...args); };
+    c.learnFromCorrections();
+
+    expect(writes).toBe(0);
+    expect(c.__spreadsheet.toasts.pop().message).toMatch(/already matches/);
+  });
+
+  describe('learnScheduled', () => {
+    const memoryKeys = (c) => c.readColumn_(c.__spreadsheet.getSheetByName('_memory'), 1);
+
+    it('rebuilds memory with no one there to ask', () => {
+      const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+      const toasts = c.__spreadsheet.toasts.length;
+      c.learnScheduled();
+      expect(memoryKeys(c)).toContain('bar gino');
+      expect(c.__spreadsheet.toasts).toHaveLength(toasts);
+    });
+
+    it('writes nothing on a night when nothing moved', () => {
+      // A free account keeps 100 revisions. A nightly job rewriting an
+      // identical tab spends the history a real mistake would need.
+      const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+      c.learnScheduled();
+
+      let writes = 0;
+      c.writeMemory_ = () => { writes++; };
+      c.learnScheduled();
+
+      expect(writes).toBe(0);
+    });
+
+    it('never wipes memory because there was nothing to learn from', () => {
+      // A renamed tab or a cleared key column reads as an empty book. From the
+      // menu that is a dialog; unattended it would be a silent wipe.
+      const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
+      c.learnScheduled();
+
+      const tx = c.__spreadsheet.getSheetByName('transactions');
+      tx.getRange(2, c.colIndex_(c.TX_COLUMNS, 'category_override')).setValue('');
+      c.learnScheduled();
+
+      expect(memoryKeys(c)).toContain('bar gino');
+    });
+
+    it('records a failure and throws, so the failure email goes out', () => {
+      const { c } = book([row(1)]);
+      c.__spreadsheet.deleteSheet(c.__spreadsheet.getSheetByName('_memory'));
+
+      expect(() => c.learnScheduled()).toThrow(/learnScheduled failed/);
+      const anomalies = c.__spreadsheet.getSheetByName('_anomalies');
+      expect(c.readColumn_(anomalies, 3)).toContain('learn_failed');
+    });
   });
 });
 

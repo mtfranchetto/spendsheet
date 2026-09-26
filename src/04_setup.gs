@@ -1232,7 +1232,8 @@ function applyValidation_(ss) {
     'sets type to transfer, and a transfer counts towards net worth but never ' +
     'towards spending.\n\n' +
     'An override is a stronger statement than a tick, so a row carrying one ' +
-    'counts as confirmed on its own.');
+    'counts as confirmed on its own — and overnight it becomes what memory ' +
+    'files this merchant as, unless your corrections for it disagree.');
 
   accounts.getRange(whole_(ACCOUNT_COLUMNS, 'kind'))
     .setDataValidation(listRule_(ACCOUNT_KINDS, false));

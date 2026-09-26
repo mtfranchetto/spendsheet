@@ -20,16 +20,33 @@ Everything it writes goes to `transactions` and `cash_entry`, into the same colu
 
 ## Using it
 
+### The account tiles
+
+**A coloured dot on a tile means something needs you.** 🟠 is a consent about to expire or a balance going stale, 🔴 is a bank that has to be reconnected, and either one replaces the tile's usual mark and also draws a coloured edge and a line saying which. Otherwise the mark says what kind of account it is rather than how it is doing: 🏦 for a bank, 💵 for cash, 📈 for an asset. There is no green dot, so a dot is never something your eye learns to skip.
+
+Tap a tile for its transactions. **+ Add** on a cash tile and **↕ Update** on an asset tile are the two forms below. The labels are kept to one line on purpose: tiles sit two rows deep and every tile in a row is as tall as the tallest, so one label wrapping would make the whole row taller.
+
+### Typing an amount
+
+Amount fields group digits as you type, the way your phone writes numbers, so `1500000` reads `1,500,000` (or `1.500.000` on an Italian phone) before you've finished. **Either `.` or `,` works as the decimal point**, whichever your keyboard has: the key you pressed is what counts, not the separators the field draws itself. Only two decimals are kept.
+
+On **Update balance** the field arrives holding the current value and tapping it selects the whole number, so what you type replaces it.
+
+**Add transaction** takes labels too, as the same chips the edit sheet draws — and they stay ticked after you add, like the account and the category, because three coffees on one trip are three entries under one label. Pick a Transfer category and the chips go away: a transfer is counted in neither direction, so a label on one filters nothing. The server refuses that write as well.
+
+**Add transaction** won't take a future date. It's for money you've already spent. The picker stops at today, and the server refuses anything later even if a picker lets it through. It does accept tomorrow, because a phone in a timezone east of your book can already be on the next day.
+
 ### Tapping a transaction
 
 The sheet that opens asks **what the row is** before it asks what to file it under, because those are different questions and only the first changes the second.
 
 **Expense · Income · Transfer** across the top is `type` — the column every total in this book turns on. The body follows it: two of the three want a category, the third wants a destination.
 
-- **Category** is one dropdown, parents as group headings and subcategories under them. Picking a subcategory is enough; its parent comes with it. Each group also offers *"Anything in Shopping"* for when you know the parent and not the child.
+- **Category** is one searchable list: tap it, type a few letters, tap the answer — or press Return for the first match. Parents are headings with their subcategories under them, and a subcategory that matches still shows under its parent's heading, so `rent` reads as Housing › Rent. Case and accents don't matter. Picking a subcategory is enough; its parent comes with it. Typing a parent's name shows its whole group, including *"Anything in Shopping"* for when you know the parent and not the child. It's a search rather than the phone's own picker on purpose: eighty-odd categories on an iPhone scroll wheel is a list with no way to jump. The same control is on Add transaction and on the rule sheet.
 - **The list is filtered to the tab you are on.** A salary should not be offered sixty expense categories. Switching tab is how you reach the other half — which is also the answer for a refund, which arrives positive and belongs under the expense it reverses.
 - **Labels** are chips, pre-ticked to what the row already has. They are chips and not a text box on purpose: filtering matches whole labels, so a typed `business-travel` would silently never match `travel`. They show on the row in the list too, so you can see which transactions carry one without opening anything.
 - **Not on a transfer.** The Transfer tab offers no labels, and the server refuses them there. A label is the axis a category cannot express — `travel` spanning a flight, a hotel and forty euros of coffee — and a transfer is the same money in two places, counted in neither direction. Labelling one builds a filter that can never match what you set it to find. Labels already on such a row are left alone.
+- **The amount** is editable on **cash you typed**, and nothing else. A bank's figure is the bank's; an imported row's amount is half of what pairs it with its synced twin; and a row already paired in a transfer has a partner holding the same number, so changing one side alone leaves a move that no longer nets to zero. The field holds the **size**: how much, not which way. The direction was decided when you made the entry — a bare number is spending, an Income or Transfer category flips it — and correcting a digit does not revisit that, or `-50` of cash paid into a bank would turn itself into a deposit. A row going the wrong way is deleted and added again. Typing a minus is refused rather than obeyed or quietly dropped.
 - **The description** is editable on rows you own — cash you typed, a leg this project wrote, anything imported — and read-only on rows a bank sent. The field simply is not there on the second kind, which is worth knowing so its absence reads as a rule rather than a bug. A bank's description is part of what *identifies* the transaction: when the bank sends no immutable reference, the row's id is a hash that includes it, so rewriting one could stop a later sync recognising something already in the book and quietly append a duplicate.
 - **Long-press** a row instead, and you get a rule built from it — pattern, match type, category, priority, all editable before saving. The pattern comes from the server's own merchant normaliser, not a second copy of it in the page.
 - **Delete** is at the bottom of the sheet, and only on **cash you typed**. It takes two taps — the first arms it and nothing reverts it but closing the sheet — and the row is copied to the `_removed` tab before it goes, so "gone" is recoverable by hand.

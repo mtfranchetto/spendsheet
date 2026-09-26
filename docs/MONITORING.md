@@ -8,6 +8,17 @@ Everything here is built. `12_monitor.gs` holds the detectors; **Spendsheet → 
 
 Change the hour with `sync_hour` in `_config` (default 4am, in the spreadsheet's timezone) and re-run **Spendsheet → Set up and maintain → Install triggers**. Apps Script picks a random minute within the hour, which is deliberate on their side and harmless here.
 
+It installs three daily triggers and a weekly one:
+
+| Setting | Default | Runs |
+|---|---|---|
+| `learn_hour` | 3am | rebuilds `_memory` from your corrections ([how memory decides](CATEGORIES.md#how-memory-decides)) |
+| `sync_hour` | 4am | the sync |
+| `selfcheck_hour` | 9am | the self-check below |
+| `snapshot_hour` | 5am, Sundays | the Drive snapshot |
+
+Learning runs **before** the sync so that each night's new rows are categorised with the corrections you made that day; keep `learn_hour` below `sync_hour` if you move either. It has its own trigger rather than being a step inside the sync, for the self-check's reason: a failure in one must not take the other down. Clear any of these cells and that trigger falls back to its own default, not to a shared one. A failed rebuild is recorded in `_anomalies` as `learn_failed` and then **throws**, so the failure email described below covers it. None of the detectors below looks for it.
+
 ### Running more than once a day
 
 Comma-separate the hours: `sync_hour` = `4,16` installs two triggers.

@@ -609,3 +609,87 @@ describe('history imported from a CSV', () => {
     expect(uids(c)).toHaveLength(1);
   });
 });
+
+describe('a bank that does not send UTF-8', () => {
+  const REPLACED = String.fromCharCode(0xFFFD);
+  const MUNICH = 'MÜNCHNER VERKEHRSGESEL MÜNCHEN';
+  const anomalies = (c) => {
+    const sheet = c.__spreadsheet.getSheetByName('_anomalies');
+    return c.readColumn_(sheet, 3).map((kind, i) => ({ kind, account: c.readColumn_(sheet, 2)[i] }));
+  };
+
+  /** The same scripted bank, sending its transaction bodies as Latin-1 bytes. */
+  const inLatin1 = (provider) => (url) => {
+    const res = provider.fetch(url);
+    return url.includes('/transactions') ? { code: res.code, bytes: Buffer.from(res.body, 'latin1') } : res;
+  };
+
+  it('lands the umlauts as umlauts, and says which bank needed it', () => {
+    const provider = bank({ booked: [booked({ remittance_information: [MUNICH], creditor: null })] });
+    const c = withAccounts({ fetch: inLatin1(provider) });
+
+    c.syncNow();
+
+    expect(tx(c).getRange('I2').getValue()).toBe(MUNICH);
+    expect(anomalies(c)).toContainEqual({ kind: 'text_redecoded', account: 'acc-1' });
+  });
+
+  it('names the account whose own text arrived already broken', () => {
+    // Nothing to repair on this side — the character was replaced before it
+    // was sent — so the most that can be done is to say where it came from.
+    const provider = bank({ booked: [booked({ remittance_information: ['M' + REPLACED + 'NCHEN'] })] });
+    const c = withAccounts(provider);
+
+    c.syncNow();
+
+    expect(anomalies(c)).toContainEqual({ kind: 'text_lost', account: 'acc-1' });
+  });
+
+  it('says it once per bank, not on every night the bank does it', () => {
+    const provider = bank({ booked: [booked({ remittance_information: [MUNICH], creditor: null })] });
+    const c = withAccounts({ fetch: inLatin1(provider) });
+
+    c.syncNow();
+    provider.booked = [booked({ entry_reference: 'REF-2', remittance_information: [MUNICH], creditor: null })];
+    c.syncNow();
+
+    expect(anomalies(c).filter((a) => a.kind === 'text_redecoded')).toHaveLength(1);
+  });
+
+  it('names a broken row when it is written, not on every sync that fetches it again', () => {
+    // Each sync re-fetches the whole window, so the same broken row comes back
+    // nightly until it ages out. It was news once.
+    const provider = bank({ booked: [booked({ remittance_information: ['M' + REPLACED + 'NCHEN'] })] });
+    const c = withAccounts(provider);
+
+    c.syncNow();
+    c.syncNow();
+
+    expect(anomalies(c).filter((a) => a.kind === 'text_lost')).toHaveLength(1);
+  });
+
+  it('says nothing at all about a bank that sends UTF-8', () => {
+    const c = withAccounts(bank({ booked: [booked({ remittance_information: ['CAFÉ'] })] }));
+
+    c.syncNow();
+
+    expect(anomalies(c).map((a) => a.kind).filter((k) => k.startsWith('text_'))).toEqual([]);
+  });
+
+  it('recognises a row it stored broken once the text arrives whole', () => {
+    // With no entry_reference the uid hashes the description — and
+    // `normalizeDescription` turns both `Ü` and the diamond into the same
+    // space, so the fixed text hashes to the uid already stored and the first
+    // sync after the fix does not append a second copy of the window.
+    const broken = booked({ entry_reference: '', remittance_information: [MUNICH.replace(/Ü/g, REPLACED)] });
+    const provider = bank({ booked: [broken] });
+    const c = withAccounts(provider);
+    c.syncNow();
+
+    provider.booked = [booked({ entry_reference: '', remittance_information: [MUNICH] })];
+    const second = c.syncNow();
+
+    expect(second.inserted).toBe(0);
+    expect(uids(c)).toHaveLength(1);
+  });
+});
