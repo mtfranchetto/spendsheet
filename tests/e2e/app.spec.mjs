@@ -1243,6 +1243,58 @@ test.describe('picking a category', () => {
   });
 });
 
+test.describe('a merchant nothing has filed yet', () => {
+  const openUnfiled = async (page) => {
+    await open(page);
+    await page.locator('#screens button.tap', { hasText: 'MERCATO CENTRALE' }).first().click();
+  };
+
+  test('opens on the suggestion, says where it came from, and confirms it in one tap',
+    async ({ page, errors }) => {
+      await openUnfiled(page);
+      await expect(page.locator('#sheet .suggested')).toHaveText(
+        'Suggested from \u201cmercato centrale roma\u201d.');
+      await expect(page.locator('#sheet .catpick-current')).toContainText('Groceries');
+
+      await page.locator('#sheet button.primary').click();
+      await expect.poll(() => calls(page)).toContain('appConfirm');
+      const [decision] = await page.evaluate(() =>
+        window.__calls.filter((c) => c.name === 'appConfirm').map((c) => c.args[0][0]));
+      expect(decision).toMatchObject({ category_override: 'Food & Drink',
+        subcategory_override: 'Groceries' });
+      expect(errors).toEqual([]);
+    });
+
+  test('offers nothing on a row the cascade already filed', async ({ page, errors }) => {
+    await open(page);
+    await page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first().click();
+    await expect(page.locator('#sheet .catpick-current')).toBeVisible();
+    await expect(page.locator('#sheet .suggested')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('the time of day', () => {
+  test('shows on a row that recorded one, and on its sheet', async ({ page, errors }) => {
+    await open(page);
+    await tab(page, RECORDS).click();
+    const cash = page.locator('#screens button.tap', { hasText: 'Caff' }).first();
+    await expect(cash.locator('.rec-sub')).toHaveText('08:05 \u00b7 Wallet');
+
+    await cash.click();
+    await expect(page.locator('#sheet p.muted').first()).toContainText('08:05');
+    expect(errors).toEqual([]);
+  });
+
+  test('is absent on a row that knows only its day', async ({ page, errors }) => {
+    await open(page);
+    await tab(page, RECORDS).click();
+    const bank = page.locator('#screens button.tap', { hasText: 'ESSELUNGA' }).first();
+    await expect(bank.locator('.rec-sub')).toHaveText('Revolut');
+    expect(errors).toEqual([]);
+  });
+});
+
 test.describe('labels on a cash entry', () => {
   const openAdd = async (page) => {
     await open(page);

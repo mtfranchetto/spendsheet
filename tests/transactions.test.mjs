@@ -82,6 +82,23 @@ describe('parseIsoDate', () => {
   });
 });
 
+describe('whether a bank sends a time', () => {
+  // `parseIsoDate` keeps only the day, so the provider probe is the one place
+  // a time could be seen at all — and the question to answer before carrying one.
+  it('counts each date field that carries one', () => {
+    const summary = ctx.summariseCoverage_([
+      booked({ booking_date: '2026-07-28', transaction_date: '2026-07-28T14:32:05Z' }),
+      booked({ booking_date: '2026-07-28 09:15', transaction_date: '2026-07-28' })
+    ]);
+
+    expect(summary).toContain('With a time: booking_date 50%, value_date 0%, transaction_date 50%');
+  });
+
+  it('says there is nothing to measure rather than 0%', () => {
+    expect(ctx.summariseCoverage_([])).toContain('booking_date n/a');
+  });
+});
+
 describe('transactionDescription', () => {
   it('joins the remittance lines into one readable string', () => {
     expect(ctx.transactionDescription(booked()))

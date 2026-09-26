@@ -349,12 +349,13 @@
    * written to, and nothing else on this page writes them. A rule and a cash
    * entry state a plain category, so they take `categorySelect` directly.
    */
-  function categoryPicker(record, kind, firstLabel) {
+  function categoryPicker(record, kind, firstLabel, preset) {
+    var start = preset || record;
     var picker = categorySelect({
       kind: kind,
       firstLabel: firstLabel,
-      category: record.category,
-      subcategory: record.subcategory
+      category: start.category,
+      subcategory: start.subcategory
     });
 
     return {
@@ -741,7 +742,8 @@
     add(dialog, body);
 
     add(body, el('h2', null, record.description || '(no description)'));
-    add(body, el('p', 'muted', shortDate(record.date) + ' \u{00b7} ' + record.account +
+    add(body, el('p', 'muted', shortDate(record.date) + (record.time ? ' ' + record.time : '') +
+      ' \u{00b7} ' + record.account +
       ' \u{00b7} ' + money(record.amount)));
 
     /**
@@ -870,9 +872,17 @@
           (record.source ? ' (' + record.source + ')' : '')
         : 'Not categorised.'));
 
+      // A guess from a merchant memory already knows, offered only on a row
+      // nothing else could file — see `suggestCategory_`. It opens the picker
+      // on that answer, so Confirm accepts it in one tap and anything else is
+      // one search away; nothing is written until you do either.
+      var suggestion = !record.category && !moving ? record.suggestion : null;
       var picker = categoryPicker(record, kind,
-        moving ? 'Pick a category\u{2026}' : 'Leave as it is');
+        moving ? 'Pick a category\u{2026}' : 'Leave as it is', suggestion);
       add(pane, picker.node);
+      if (suggestion && picker.answered()) {
+        add(pane, el('p', 'muted suggested', 'Suggested from \u{201c}' + suggestion.from + '\u{201d}.'));
+      }
 
       var labels = labelChips(record);
       add(pane, labels.node);

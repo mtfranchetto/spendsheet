@@ -80,6 +80,28 @@ function nextCashSequence_() {
 }
 
 /**
+ * When the money changed hands, as precisely as this book can know it.
+ *
+ * A cash entry is drained the moment it is typed — from the app, or by the
+ * `onEdit` on `cash_entry` — so `now` *is* the time of the purchase near
+ * enough, and a bank row cannot say as much (see `summariseCoverage_`). It
+ * goes in `transaction_date` rather than a new column: that cell is
+ * code-owned, already exists, and nothing reads it for identity or for a
+ * date window, so a time there moves no uid and no total.
+ *
+ * **Only for an entry dated today.** One typed for last Tuesday, or left on
+ * the tab for the nightly sync, is drained at a moment that says nothing
+ * about when it was spent; it keeps its bare date rather than wearing 04:00.
+ */
+function cashEntryMoment_(date, now) {
+  if (!date || dateKey(date) === dateKey(now)) return new Date(now.getTime());
+  // The day at local midnight, rebuilt rather than passed on: the app's date
+  // arrives as `new Date('yyyy-mm-dd')`, which is *UTC* midnight — 02:00 in
+  // Rome — and would read as a time of day nobody typed.
+  return parseIsoDate(dateKey(date));
+}
+
+/**
  * Move every completed `cash_entry` row into `transactions`.
  *
  * Incomplete rows are left alone rather than rejected: on a phone, a row with
@@ -138,7 +160,7 @@ function drainCashEntries_(known, now, categories) {
       account_name: account.name,
       booking_date: entry.date || new Date(now.getTime()),
       value_date: entry.date || '',
-      transaction_date: entry.date || '',
+      transaction_date: cashEntryMoment_(entry.date, now),
       amount: cashEntryAmount(entry.amount, kinds[entry.category]),
       currency: currency,
       description: String(entry.note || entry.category || 'Cash'),

@@ -659,13 +659,28 @@ function appHealth_(rowCount) {
 function appReviewQueue_(ledger) {
   var peers = transferPeers_(ledger);
 
-  return ledger
+  var queue = ledger
     .filter(function (row) { return !isConfirmedRow_(row); })
     .sort(function (a, b) {
       return dateOrder_(a.booking_date) - dateOrder_(b.booking_date);
     })
-    .slice(0, queueSize_())
-    .map(function (row) { return recordForPage_(row, peers); });
+    .slice(0, queueSize_());
+
+  // `_memory` is read only when something in the queue can use it, since the
+  // queue is on the path of every open. See `suggestCategory_` for why this
+  // is a suggestion and not a categorisation.
+  var unclassified = function (row) {
+    return String(row.category_source) === CATEGORY_SOURCE.UNCLASSIFIED;
+  };
+  var index = queue.some(unclassified)
+    ? suggestionIndex_(buildMemoryIndex_(readMemoryRecords_(SpreadsheetApp.getActiveSpreadsheet())))
+    : null;
+
+  return queue.map(function (row) {
+    var record = recordForPage_(row, peers);
+    if (index && unclassified(row)) record.suggestion = suggestCategory_(record.merchantKey, index);
+    return record;
+  });
 }
 
 // ---------------------------------------------------------------------------

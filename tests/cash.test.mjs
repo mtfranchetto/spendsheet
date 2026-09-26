@@ -103,6 +103,33 @@ describe('draining', () => {
     expect(c.__spreadsheet.getSheetByName('cash_entry').getRange('F2').getValue()).toBeTruthy();
   });
 
+  it('carries the moment it was typed when the entry is for today', () => {
+    const c = withWallet();
+    const now = new Date(2026, 6, 30, 14, 32);
+    type(c, 2, { date: new Date(2026, 6, 30), account: 'wallet', amount: 3 });
+    c.drainCashEntries_(c.readUidIndex_(tx(c)), now);
+
+    const at = tx(c).getRange(2, c.colIndex_(c.TX_COLUMNS, 'transaction_date')).getValue();
+    expect([at.getHours(), at.getMinutes()]).toEqual([14, 32]);
+    // The day it belongs to is unchanged, and it is what identity reads.
+    expect(c.dateKey(tx(c).getRange('D2').getValue())).toBe('2026-07-30');
+  });
+
+  it('keeps a bare date on an entry drained on another day', () => {
+    // Left on the tab for the nightly sync, or typed for last week: the drain
+    // happened at a moment that says nothing about when it was spent.
+    //
+    // Typed as 02:00 because that is what the app's `yyyy-mm-dd` becomes in
+    // Rome: `new Date('2026-07-28')` is UTC midnight. A test that typed local
+    // midnight passed while the app showed 02:00 on every back-dated entry.
+    const c = withWallet();
+    type(c, 2, { date: new Date(2026, 6, 28, 2, 0), account: 'wallet', amount: 3 });
+    c.drainCashEntries_(c.readUidIndex_(tx(c)), new Date(2026, 6, 30, 4, 0));
+
+    const at = tx(c).getRange(2, c.colIndex_(c.TX_COLUMNS, 'transaction_date')).getValue();
+    expect([at.getHours(), at.getMinutes()]).toEqual([0, 0]);
+  });
+
   it('puts the category you picked in the override column', () => {
     // You chose it, so it is not a guess the cascade may overrule.
     const c = withWallet();

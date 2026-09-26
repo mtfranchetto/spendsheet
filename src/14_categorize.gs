@@ -224,6 +224,74 @@ function buildMemoryIndex_(records) {
 }
 
 /**
+ * A guess at a merchant memory has never seen, from the merchants it has.
+ *
+ * **A suggestion, never a verdict, and that is what keeps both standing rules
+ * true.** The cascade still matches a key whole — `esselunga` and `esselunga
+ * torino` are two entries, and nothing here changes what a row is filed as.
+ * And every row still waits for you: this only decides what the review
+ * sheet's picker opens on, and nothing is written until you tap Confirm.
+ * A wrong guess costs you picking something else, which is what an
+ * unclassified row cost before.
+ *
+ * **Only a merchant that shares the first word is a candidate.** A key leads
+ * with the merchant's name and ends with its city, and the city is the
+ * trap: `farmacia firenze` and `trattoria firenze` share a word and nothing
+ * else. Weighting by rarity does not save it on a young book — a city that
+ * appears in one key is as rare as a name — so the rule is positional, and
+ * it is the conservative direction: a merchant whose name does not lead its
+ * key simply gets no suggestion, which is what every unclassified row had.
+ *
+ * Among the candidates, the shared words are scored, each worth less the more
+ * keys it appears in, so `rema kobenhavn` prefers `rema aarhus` to another
+ * shop in Copenhagen that happens to share the name. Ties go to the entry
+ * with more hits, because that is the one you have confirmed most. Returns
+ * null when nothing qualifies.
+ */
+
+function suggestionIndex_(memory) {
+  var entries = Object.keys(memory || {}).map(function (key) {
+    return { entry: memory[key], words: key.split(' ') };
+  });
+
+  var spread = {};
+  entries.forEach(function (item) {
+    item.words.forEach(function (word) { spread[word] = (spread[word] || 0) + 1; });
+  });
+
+  return { entries: entries, spread: spread };
+}
+
+function suggestCategory_(merchantKey, index) {
+  var key = String(merchantKey || '').trim();
+  if (!key || !index) return null;
+
+  var words = {};
+  var lead = key.split(' ')[0];
+  key.split(' ').forEach(function (word) { words[word] = true; });
+
+  var best = null;
+  var bestScore = 0;
+  index.entries.forEach(function (item) {
+    if (item.entry.key === key || item.words[0] !== lead) return;
+
+    var score = 0;
+    item.words.forEach(function (word) {
+      if (words[word]) score += 1 / index.spread[word];
+    });
+
+    if (!best || score > bestScore || (score === bestScore && item.entry.hits > best.hits)) {
+      best = item.entry;
+      bestScore = score;
+    }
+  });
+
+  return best
+    ? { category: best.category, subcategory: best.subcategory, from: best.key }
+    : null;
+}
+
+/**
  * Every enabled rule, in the order they are tried.
  *
  * One list rather than one per field: `priority` is the only thing that decides
