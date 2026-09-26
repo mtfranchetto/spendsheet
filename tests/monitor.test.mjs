@@ -367,6 +367,33 @@ describe('failure 6 — a deletion that left a copy in _removed', () => {
     expect(kinds(c.runChecks_(NOW))).toContain('rows_lost');
   });
 
+  it('gets a baseline from setup(), so the first hand delete after an upgrade is excused', () => {
+    // Otherwise the sync this blocks is the one that would have recorded it.
+    const c = built();
+    addTransactions(c, 10);
+    archive(c, 'u9');
+    c.rememberRowCount_();
+    c.PropertiesService.getScriptProperties().deleteProperty('MONITOR_REMOVED_COUNT');
+
+    c.setup();
+    archive(c, 'u4');
+    deleteUid(c, 'u4');
+
+    expect(kinds(c.runChecks_(NOW))).not.toContain('rows_lost');
+  });
+
+  it('leaves an existing baseline where it is when setup() runs again', () => {
+    const c = built();
+    remembered(c);
+    archive(c, 'u4');
+    c.setup();
+    deleteUid(c, 'u4');
+
+    // Moving the baseline to today's count would put u4's copy behind it, and
+    // a delete made properly would block the sync.
+    expect(kinds(c.runChecks_(NOW))).not.toContain('rows_lost');
+  });
+
   it('reads neither tab again when the count has not gone down', () => {
     const c = built();
     remembered(c);

@@ -62,6 +62,7 @@ function runSetup_() {
   // After the seed pass, because the row it fills has to exist first. Writes
   // only when blank, so this is one line on a new book and nothing ever after.
   seedWebAppOwner_(ss);
+  if (functionExists_('seedRemovedBaseline_')) seedRemovedBaseline_();
 
   // Working tabs with no fixed schema.
   getOrCreate_(ss, TABS.IMPORT_RAW, report);      // CSV lands here via File → Import

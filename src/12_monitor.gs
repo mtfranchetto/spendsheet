@@ -313,6 +313,22 @@ function archivedSinceRemembered_(rememberedCount) {
   return Object.keys(gone).length;
 }
 
+/**
+ * Give a book that has never remembered `_removed`'s count a baseline now.
+ *
+ * Called from `setup()`. Without it, the first hand deletion on an existing
+ * book — copied to `_removed` exactly as the docs say — would still block the
+ * sync: the baseline is absent, so nothing is excused, and the aborted sync
+ * never reaches the `rememberRowCount_` that would record one. Today's count
+ * is safe to adopt at any moment, because it excuses only rows archived after
+ * it. An existing baseline is left alone; moving it would forgive a copy.
+ */
+function seedRemovedBaseline_() {
+  var props = PropertiesService.getScriptProperties();
+  if (!isBlankCell_(props.getProperty(REMOVED_COUNT_PROP))) return;
+  props.setProperty(REMOVED_COUNT_PROP, String(currentRemovedCount_()));
+}
+
 function currentRemovedCount_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.REMOVED);
   return sheet ? lastRecordRow_(sheet, colIndex_(TX_COLUMNS, 'uid')) - 1 : 0;
