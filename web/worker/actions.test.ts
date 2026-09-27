@@ -9,10 +9,11 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { addCash, addRule, decide, deleteRecord, nextRow, RULE_COLUMNS, transfer, transferLegUid } from './actions';
+import { addCash, addRule, cashEntryAmount, decide, deleteRecord, nextRow, RULE_COLUMNS, transfer, transferLegUid } from './actions';
 import { FakeGoogle } from './fake-google';
 import { ACCOUNT_COLUMNS, CATEGORY_COLUMNS, TX_COLUMNS } from '../src/domain/schema';
 import { MAX_DECISIONS, TRANSFER_OUTSIDE } from '../src/api/contract';
+import type { CashRequest, FreshRows } from '../src/api/contract';
 import type { Cell } from '../src/sheets/records';
 
 const col = (name: string) => TX_COLUMNS.indexOf(name as never) + 1;
@@ -297,5 +298,351 @@ describe('delete', () => {
     await expect(deleteRecord(google, { uid: 'anchor', row: 2 })).rejects.toThrow(/row 2/);
     await expect(deleteRecord(google, { uid: 'cash-1', row: 5 })).rejects.toThrow(/moved/);
     expect(google.writes).toEqual([]);
+  });
+
+  it('archives the row as it was while it still existed', async () => {
+    await deleteRecord(google, { uid: 'cash-1', row: 4 });
+    const archived = google.row('_removed', 2);
+    expect([archived[col('description') - 1], archived[col('amount') - 1]]).toEqual(['Coffee', -12.5]);
+  });
+
+  it('refuses a transfer leg and an imported row, each of which something else depends on', async () => {
+    for (const source of ['transfer-leg', 'csv:budgetbakers']) {
+      set(4, 'source', source);
+      await expect(deleteRecord(google, { uid: 'cash-1', row: 4 }), source).rejects.toThrow(/cash transaction you typed/);
+    }
+    await expect(deleteRecord(google, {} as never)).rejects.toThrow(/Which transaction/);
+    expect(google.writes).toEqual([]);
+  });
+});
+
+/** Overwrite one `transactions` cell, as a test's precondition. */
+function set(row: number, name: string, value: Cell) {
+  google.tabs.transactions.grid[row - 1][col(name) - 1] = value;
+}
+const cell = (row: number, name: string) => google.cell('transactions', row, col(name));
+
+describe('decide, case by case', () => {
+  it('does not read a blank override as an instruction to clear one', async () => {
+    // A form that serialised an empty input is not a person clearing a category.
+    set(4, 'category_override', 'Groceries');
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: true, category_override: '', subcategory_override: '' }] });
+    expect(cell(4, 'category_override')).toBe('Groceries');
+  });
+
+  it('writes confirmed only when it was supplied', async () => {
+    // Writing it every time would un-confirm a ticked row whose category you corrected.
+    set(4, 'confirmed', true);
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, subcategory_override: 'Supermarket' }] });
+    expect(cell(4, 'confirmed')).toBe(true);
+    expect(cell(4, 'subcategory_override')).toBe('Supermarket');
+  });
+
+  it('un-ticks when sent false, since that is a value someone chose', async () => {
+    set(4, 'confirmed', true);
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: false }] });
+    expect(cell(4, 'confirmed')).toBe(false);
+  });
+
+  it('writes the rows it can and says which it could not', async () => {
+    const answer = await decide(google, {
+      decisions: [{ uid: 'cash-1', row: 4, confirmed: true }, { uid: 'gone', row: 3, confirmed: true }]
+    });
+    expect(answer).toMatchObject({ written: 1, skipped: 1 });
+    expect(answer.results[1]).toMatchObject({ uid: 'gone', ok: false });
+    expect(Object.keys(answer.rows)).toEqual(['4']);
+  });
+
+  it('writes nothing outside the cells that are yours', async () => {
+    // The sheet's protections are warnings; they do not stop a write.
+    await decide(google, {
+      decisions: [{ uid: 'cash-1', row: 4, confirmed: true, category_override: 'Groceries', subcategory_override: 'Supermarket', labels: ['x'] }]
+    });
+    const columns = (google.writes[0].detail as { range: string }[]).map((w) => w.range.split('!')[1].replace(/\d+$/, ''));
+    expect(columns.sort()).toEqual(['AA', 'AB', 'AD', 'T']);
+  });
+
+  it('does nothing at all when handed nothing', async () => {
+    expect(await decide(google, { decisions: [] })).toMatchObject({ written: 0, skipped: 0 });
+    expect(await decide(google, { decisions: null })).toMatchObject({ written: 0 });
+    expect(await decide(google, {})).toMatchObject({ written: 0 });
+    expect(google.calls).toEqual([]);
+  });
+
+  // Labels follow `confirmed` rather than the overrides: an empty value is a value.
+  it('clears labels when sent an empty list, unlike an override', async () => {
+    set(4, 'labels', 'kids, travel');
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, labels: [] }] });
+    expect(cell(4, 'labels')).toBe('');
+  });
+
+  it('leaves labels alone when the key is absent', async () => {
+    set(4, 'labels', 'kids, travel');
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: true }] });
+    expect(cell(4, 'labels')).toBe('kids, travel');
+  });
+
+  it('stores labels in the shape splitLabels reads back, from a list or the string the tab holds', async () => {
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, labels: ['travel', '', ' travel ', null, 'kids'] }] });
+    expect(cell(4, 'labels')).toBe('travel, kids');
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, labels: 'home,kids' }] });
+    expect(cell(4, 'labels')).toBe('home, kids');
+  });
+
+  it('does not lose a label called constructor', async () => {
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, labels: ['constructor', 'toString'] }] });
+    expect(cell(4, 'labels')).toBe('constructor, toString');
+  });
+
+  it('does not write a boolean back as a label called "false"', async () => {
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: true, labels: false }] });
+    expect(cell(4, 'labels')).toBe('');
+  });
+
+  it('refuses a label on a row that is already a transfer, and writes the rest', async () => {
+    set(4, 'type', 'transfer');
+    const answer = await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: true, labels: ['travel'] }] });
+    expect(answer.results[0]).toMatchObject({ ok: true, refused: ['labels'] });
+    expect(cell(4, 'labels')).toBe('');
+    expect(cell(4, 'confirmed')).toBe(true);
+  });
+
+  it('says why, rather than "nothing to write", when the label was all there was', async () => {
+    set(4, 'type', 'transfer');
+    const answer = await decide(google, { decisions: [{ uid: 'cash-1', row: 4, labels: ['travel'] }] });
+    expect(answer.results[0]).toMatchObject({ ok: false, reason: expect.stringMatching(/transfer/) });
+  });
+
+  /*
+    A description is changed only where no bank will fetch the row again:
+    without an `entry_reference`, a synced row's uid hashes its description,
+    and a renamed one would come back as a duplicate.
+  */
+  it('renames cash you typed, a transfer leg and an imported row', async () => {
+    for (const [source, name] of [['manual', 'Coffee with Ana'], ['transfer-leg', 'Cash for the weekend'], ['csv:budgetbakers', 'IKEA kitchen']]) {
+      set(4, 'source', source);
+      await decide(google, { decisions: [{ uid: 'cash-1', row: 4, description: name }] });
+      expect(cell(4, 'description'), source).toBe(name);
+    }
+  });
+
+  it('refuses to rename a synced row, and says why', async () => {
+    const answer = await decide(google, { decisions: [{ uid: 'bank-1', row: 3, description: 'Not this' }] });
+    expect(answer.results[0]).toMatchObject({ ok: false, reason: expect.stringMatching(/bank/) });
+    expect(cell(3, 'description')).toBe('To Fineco');
+  });
+
+  it('refuses a blank description, and leaves an absent one alone', async () => {
+    const answer = await decide(google, { decisions: [{ uid: 'cash-1', row: 4, description: '   ' }] });
+    expect(answer.results[0].ok).toBe(false);
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: true }] });
+    expect(cell(4, 'description')).toBe('Coffee');
+  });
+
+  // An amount is how much, never which way.
+  it('keeps the direction of a row that goes the other way', async () => {
+    set(4, 'amount', 50);
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, amount: 60 }] });
+    expect(cell(4, 'amount')).toBe(60);
+  });
+
+  it('refuses a blank amount, a zero and a word', async () => {
+    for (const [amount, says] of [['', /blank/], [0, /not a transaction/], ['lots', /not a number/]] as const) {
+      const answer = await decide(google, { decisions: [{ uid: 'cash-1', row: 4, amount }] });
+      expect(answer.results[0], String(amount)).toMatchObject({ ok: false, reason: expect.stringMatching(says) });
+    }
+    expect(cell(4, 'amount')).toBe(-12.5);
+  });
+
+  it('refuses an amount on anything but cash you typed, and on cash already half of a transfer', async () => {
+    // Hashed into a synced uid, half of an imported row's pairing key, mirrored by a leg's partner.
+    for (const source of ['enablebanking', 'csv:budgetbakers', 'transfer-leg']) {
+      set(4, 'source', source);
+      const answer = await decide(google, { decisions: [{ uid: 'cash-1', row: 4, amount: 8 }] });
+      expect(answer.results[0], source).toMatchObject({ ok: false, reason: expect.stringMatching(/cash you typed/) });
+    }
+    set(4, 'source', 'manual');
+    set(4, 'transfer_group', 'tr:cash-1');
+    expect((await decide(google, { decisions: [{ uid: 'cash-1', row: 4, amount: 8 }] })).results[0].ok).toBe(false);
+    expect(google.writes).toEqual([]);
+  });
+
+  it('leaves the amount alone when the key is absent, and answers the figure it holds when present', async () => {
+    await decide(google, { decisions: [{ uid: 'cash-1', row: 4, confirmed: true }] });
+    expect(cell(4, 'amount')).toBe(-12.5);
+    const answer = await decide(google, { decisions: [{ uid: 'cash-1', row: 4, amount: 8 }] });
+    expect(answer.rows['4'][col('amount') - 1]).toBe(-8);
+  });
+});
+
+describe('a rule, case by case', () => {
+  const good = { field: 'description', match_type: 'contains', pattern: 'esselunga', category: 'Groceries', subcategory: 'Supermarket' };
+
+  it('keeps the rules already there, and says it changes nothing already in the book', async () => {
+    const answer = await addRule(google, good);
+    expect(answer.message).toMatch(/next sync/);
+    expect(google.row('rules', 2)[3]).toBe('COOP');
+    expect(google.row('rules', 4).slice(0, 4)).toEqual([40, 'description', 'contains', 'esselunga']);
+  });
+
+  it('refuses a blank pattern and a match type it cannot apply, and takes a rule with no subcategory', async () => {
+    // Each refusal is a rule that would otherwise sit on the tab matching nothing, for ever.
+    await expect(addRule(google, { ...good, pattern: '' })).rejects.toThrow(/Type something/);
+    await expect(addRule(google, { ...good, match_type: 'fuzzy' })).rejects.toThrow(/can only match by/);
+    expect(google.writes).toEqual([]);
+    await expect(addRule(google, { ...good, subcategory: '' })).resolves.toBeTruthy();
+  });
+});
+
+describe('a transfer, case by case', () => {
+  it('takes the transfer subcategory you picked, and ignores one that is not a transfer', async () => {
+    await transfer(google, { uid: 'bank-1', row: 3, destination: TRANSFER_OUTSIDE, subcategory: 'Valuation change' }, NOW);
+    expect(cell(3, 'subcategory_override')).toBe('Valuation change');
+    // A name from another parent would resolve to that parent's kind and put the row back into spending.
+    await transfer(google, { uid: 'bank-1', row: 3, destination: TRANSFER_OUTSIDE, subcategory: 'Supermarket' }, NOW);
+    expect(cell(3, 'subcategory_override')).toBe('Between accounts');
+  });
+
+  it('keys the group on the debit, whichever side it was marked from', async () => {
+    await transfer(google, { uid: 'fineco-in', row: 5, destination: 'Revolut', counter: { uid: 'bank-1', row: 3 } }, NOW);
+    expect([cell(3, 'transfer_group'), cell(5, 'transfer_group')]).toEqual(['tr:bank-1', 'tr:bank-1']);
+  });
+
+  it('does not take a row that is already half of another pair', async () => {
+    set(5, 'transfer_group', 'tr:other');
+    await expect(transfer(google, { uid: 'bank-1', row: 3, destination: 'Fineco', counter: { uid: 'fineco-in', row: 5 } }, NOW))
+      .rejects.toThrow(/already in a transfer/);
+    expect(google.writes).toEqual([]);
+  });
+
+  it('does not pair across a gap wider than transfer_window_days', async () => {
+    set(5, 'booking_date', MAR3 + 10);
+    await expect(transfer(google, { uid: 'bank-1', row: 3, destination: 'Fineco', counter: { uid: 'fineco-in', row: 5 } }, NOW))
+      .rejects.toThrow(/too far apart/);
+    expect(google.writes).toEqual([]);
+  });
+
+  it('debits the destination when the money came in', async () => {
+    // Cash paid into a bank: the leg is the debit, or both accounts gain.
+    await transfer(google, { uid: 'fineco-in', row: 5, destination: 'Wallet' }, NOW);
+    expect(cell(6, 'amount')).toBe(-50);
+    expect(cell(6, 'description')).toBe('Transfer to Fineco');
+  });
+
+  it('does not read an unanswered destination as "it left my accounts"', async () => {
+    await expect(transfer(google, { uid: 'bank-1', row: 3, destination: '' }, NOW)).rejects.toThrow(/where the money went/);
+    expect(google.calls).toEqual([]);
+  });
+
+  it('builds the leg from an amount corrected in the same press', async () => {
+    await transfer(google, { uid: 'cash-1', row: 4, destination: 'House', amount: 20 }, NOW);
+    expect(cell(4, 'amount')).toBe(-20);
+    expect(cell(6, 'amount')).toBe(20);
+  });
+
+  it('refuses an amount on a row that is not cash you typed, before writing anything', async () => {
+    await expect(transfer(google, { uid: 'bank-1', row: 3, destination: 'Wallet', amount: 120 }, NOW)).rejects.toThrow(/cash you typed/);
+    expect(google.writes).toEqual([]);
+  });
+});
+
+describe('a new row, and the formulas around it', () => {
+  it("writes only the stored columns, never a formula's", async () => {
+    await transfer(google, { uid: 'bank-1', row: 3, destination: 'Wallet' }, NOW);
+    type Request = { updateCells?: { start: { columnIndex: number }; rows: { values: unknown[] }[] } };
+    const requests = google.writes.filter((w) => w.kind === 'update').flatMap((w) => w.detail as Request[]);
+    const written = requests.flatMap((r) =>
+      r.updateCells ? r.updateCells.rows[0].values.map((_, i) => TX_COLUMNS[r.updateCells!.start.columnIndex + i]) : []);
+    expect(written).toContain('transfer_group');
+    for (const spilled of ['amount_base', 'category_auto', 'subcategory_auto', 'category_source', 'category', 'subcategory', 'type', 'in_reports']) {
+      expect(written, spilled).not.toContain(spilled);
+    }
+  });
+
+  it('writes the first row of an empty book in place, under the formulas row 2 anchors', async () => {
+    // An insert at row 2 would push every anchor down to row 3.
+    const anchors = tx({ type: '=ARRAYFORMULA(type)', in_reports: '=ARRAYFORMULA(in_reports)' });
+    google.tabs.transactions.grid.splice(1, google.tabs.transactions.grid.length - 1, anchors);
+    await addCash(google, { id: 'phone-entry-0009', account: 'Wallet', amount: 2, category: 'Groceries' }, NOW);
+    expect(cell(2, 'account_name')).toBe('Wallet');
+    expect(cell(2, 'type')).toBe('=ARRAYFORMULA(type)');
+    expect(cell(2, 'in_reports')).toBe('=ARRAYFORMULA(in_reports)');
+    expect(google.row('transactions', 3)).toEqual([]);
+  });
+});
+
+describe('cash, case by case', () => {
+  let n = 0;
+  const entry = (over: { [key: string]: unknown } = {}) =>
+    ({ id: `phone-entry-${String(++n).padStart(4, '0')}`, account: 'Wallet', amount: 3, ...over }) as unknown as CashRequest;
+  const amountOf = (answer: { rows: FreshRows }) => Object.values(answer.rows)[0][col('amount') - 1];
+
+  it('signs an amount by its category, and by the direction the page chose', async () => {
+    const cases: [{ [key: string]: unknown }, number][] = [
+      [{ amount: 3.5, category: 'Groceries' }, -3.5],
+      [{ amount: 200, category: 'Income' }, 200],
+      [{ amount: 3.5, direction: 'expense', category: 'Groceries' }, -3.5],
+      [{ amount: -3.5, direction: 'expense' }, -3.5],
+      [{ amount: -200, direction: 'income', category: 'Income' }, 200],
+      [{ amount: 50, direction: 'income', category: 'Transfer' }, 50],
+      [{ amount: 50, direction: 'expense', category: 'Transfer' }, -50]
+    ];
+    for (const [over, amount] of cases) {
+      expect(amountOf(await addCash(google, entry(over), NOW)), JSON.stringify(over)).toBe(amount);
+    }
+  });
+
+  it('refuses an income the ledger would record as spending, and a direction it does not know', async () => {
+    await expect(addCash(google, entry({ amount: 200, direction: 'income' }), NOW)).rejects.toThrow(/Income needs an Income category/);
+    await expect(addCash(google, entry({ amount: 200, direction: 'income', category: 'Groceries' }), NOW)).rejects.toThrow(/Income needs/);
+    await expect(addCash(google, entry({ direction: 'sideways' }), NOW)).rejects.toThrow(/Choose Expense or Income/);
+    expect(google.writes).toEqual([]);
+  });
+
+  it('gives two identical coffees two rows, because they are two entries', async () => {
+    await addCash(google, entry({ note: 'coffee' }), NOW);
+    await addCash(google, entry({ note: 'coffee' }), NOW);
+    expect(cell(6, 'uid')).not.toBe(cell(7, 'uid'));
+    expect([cell(6, 'description'), cell(7, 'description')]).toEqual(['coffee', 'coffee']);
+  });
+
+  it('takes today, any day before it, no day, and tomorrow — a phone east of the book is already there', async () => {
+    for (const date of ['2026-03-03', '2024-01-01', '', '2026-03-04']) {
+      await expect(addCash(google, entry({ date }), NOW), date).resolves.toBeTruthy();
+    }
+  });
+
+  it('refuses a blank amount, a zero, a word, and no account', async () => {
+    // Number('') is 0 and isFinite(0) is true, so the obvious guard passes.
+    await expect(addCash(google, entry({ amount: '' }), NOW)).rejects.toThrow(/Type an amount/);
+    await expect(addCash(google, entry({ amount: '0' }), NOW)).rejects.toThrow(/not a transaction/);
+    await expect(addCash(google, entry({ amount: 'lots' }), NOW)).rejects.toThrow(/not a number/);
+    await expect(addCash(google, entry({ account: '' }), NOW)).rejects.toThrow(/Pick an account/);
+    expect(google.writes).toEqual([]);
+  });
+
+  it('stores labels in the shape splitLabels reads back, from a list or a string', async () => {
+    await addCash(google, entry({ labels: ['travel', '', 'travel', 'kids'] }), NOW);
+    expect(cell(6, 'labels')).toBe('travel, kids');
+    await addCash(google, entry({ labels: 'travel,kids' }), NOW);
+    expect(cell(7, 'labels')).toBe('travel, kids');
+  });
+
+  it('takes a transfer that carries no labels, which is how a revaluation arrives', async () => {
+    await addCash(google, entry({ account: 'House', amount: 1500, category: 'Transfer', subcategory: 'Valuation change', labels: [] }), NOW);
+    expect([cell(6, 'account_name'), cell(6, 'amount'), cell(6, 'subcategory_override')]).toEqual(['House', 1500, 'Valuation change']);
+  });
+
+  it('refuses a category this book does not have, by name, and says Setup is the fix', async () => {
+    // Stored, it would belong to no parent and move no balance.
+    await expect(addCash(google, entry({ category: 'Transfer', subcategory: 'Revaluation' }), NOW)).rejects.toThrow(/Revaluation.*Setup sheet/);
+    await expect(addCash(google, entry({ category: 'Reconciliation' }), NOW)).rejects.toThrow(/Reconciliation/);
+    await expect(addCash(google, entry(), NOW)).resolves.toBeTruthy();
+  });
+
+  it('keeps a gain positive and a loss negative under a transfer category', () => {
+    expect(cashEntryAmount(1500, 'transfer')).toBe(1500);
+    expect(cashEntryAmount(-800, 'transfer')).toBe(-800);
+    expect(cashEntryAmount(3, 'expense')).toBe(-3);
   });
 });
