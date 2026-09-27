@@ -42,6 +42,7 @@ export const ACCESS_MARGIN_SECONDS = 60;
 export const SESSION_COOKIE = '__Host-spendsheet';
 export const ACCESS_COOKIE = '__Host-spendsheet-access';
 export const SIGNIN_COOKIE = '__Host-spendsheet-signin';
+export const REFUSED_COOKIE = '__Host-spendsheet-refused';
 
 /** Who you are, and the grant that lets the Worker read the book as you. */
 export type Session = { sub: string; email: string; refresh_token: string; iat: number };
@@ -51,6 +52,9 @@ export type Access = { sub: string; access_token: string; exp: number };
 
 /** One sign-in round trip: the CSRF `state` and the PKCE verifier. */
 export type SignIn = { state: string; verifier: string; iat: number };
+
+/** Who was just turned away — shown back to the browser that tried, and to nobody else. */
+export type Refused = { sub: string; email: string; iat: number };
 
 /**
  * base64url with **no padding**. Same rule as `base64Url` in `01_jwt.gs`: a
@@ -193,6 +197,23 @@ export async function openSignIn(token: string | null, nowSeconds: number, secre
   if (typeof signIn.iat !== 'number' || signIn.iat > nowSeconds) return null;
   if (signIn.iat + SIGNIN_TTL_SECONDS <= nowSeconds) return null;
   return signIn;
+}
+
+/**
+ * The account a sign-in was just refused for, or `null`.
+ *
+ * **A cookie, not the URL.** The refusal screen turns this into a command the
+ * owner runs to admit it, and a URL is something anyone can send the owner:
+ * `?account=<their own ID>` drew a real, well-formed ID as though it were the
+ * account that had just tried. Sealed and short-lived, it can only have come
+ * from this server refusing this browser.
+ */
+export async function openRefused(token: string | null, nowSeconds: number, secret: string | undefined): Promise<Refused | null> {
+  const refused = await unseal<Refused>(token, REFUSED_COOKIE, secret);
+  if (!refused || !isText(refused.sub) || !isText(refused.email)) return null;
+  if (typeof refused.iat !== 'number' || refused.iat > nowSeconds) return null;
+  if (refused.iat + SIGNIN_TTL_SECONDS <= nowSeconds) return null;
+  return refused;
 }
 
 /**

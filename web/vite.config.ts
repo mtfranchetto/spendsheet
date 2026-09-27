@@ -4,10 +4,10 @@
  * Two things here are decisions rather than defaults.
  *
  * **`build.rollupOptions` is left alone and no CDN appears anywhere.** Every
- * dependency is installed, bundled and served from our own origin — invariant
- * 3, and the reason the sign-in flow is a redirect rather than the Google
- * Identity Services button, which would have needed a script tag pointing at
- * `accounts.google.com`. See `functions/lib/oauth.ts`.
+ * dependency is installed, bundled and served from our own origin, and it is
+ * the reason the sign-in flow is a redirect rather than the Google Identity
+ * Services button, which would have needed a script tag pointing at
+ * `accounts.google.com`. See `worker/oauth.ts`.
  *
  * **The dev server proxies the Worker's paths to `wrangler dev`.** In production the
  * page and the API are one origin, which is the whole architecture: a

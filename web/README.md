@@ -35,6 +35,7 @@ draws no dashboard yet.
 | `GET /api/health` | anyone | build, and which bindings exist. Nothing about the book. |
 | `GET /auth/signin` · `/auth/callback` | anyone | the Google round trip. A session only for an account on `ALLOWED_ACCOUNTS`. |
 | `POST /auth/signout` | this origin | clears both cookies. |
+| `GET /auth/refused` | the refused browser | who that browser was just refused as, from its own sealed ten-minute cookie. Never from the URL. |
 | `GET /connect` | signed in | the Picker. |
 | `GET /api/me` | signed in | email and account ID. Never a token. |
 | `GET /api/book` | signed in | the book's title and timezone — the proof the grant took. |
@@ -80,7 +81,7 @@ involves a multi-line key.
    | `GOOGLE_CLIENT_ID` | from step 4 |
    | `GOOGLE_CLIENT_SECRET` | from step 4 |
    | `SESSION_KEY` | `openssl rand -base64 32` |
-   | `ALLOWED_ACCOUNTS` | leave for now — see below |
+   | `ALLOWED_ACCOUNTS` | nothing — `npm run deploy` sets it; see below |
    | `SPREADSHEET_ID` | from the book's URL: `/spreadsheets/d/<this>/edit` |
    | `PICKER_API_KEY` | from step 5 |
    | `GOOGLE_PROJECT_NUMBER` | from step 6 |
@@ -90,10 +91,10 @@ involves a multi-line key.
 
 **Laptop, once**
 
-1. Open the Worker's address and sign in. You will be refused, and the page
-   shows the command that admits you, with your **account ID** already in it.
-   *Copy command*, run it here in `web/`, then sign in again. It sets the whole
-   list, so a second account goes in as `'<first>,<second>'`.
+1. Nothing to do for yourself: the last step of `npm run deploy` asks Google
+   which account `clasp` is signed in as (the one that owns the book) and puts
+   its account ID on `ALLOWED_ACCOUNTS`. It prints who it admitted. Sign in
+   with that same Google account.
 2. *Choose the book* → Google's Picker lists one file → select it. The page
    says **Connected to Spendsheet ✓** when the Worker has read its title.
 
@@ -102,6 +103,25 @@ involves a multi-line key.
 Open the address in Safari and sign in **there**, *then* Share → Add to Home
 Screen. iOS 17.2+ copies Safari's cookies into the new icon at that moment and
 never again, so the order matters.
+
+## Sharing, and who is on the list
+
+```sh
+npm run accounts -- list
+npm run accounts -- add <account id> [email]
+npm run accounts -- remove <account id>
+```
+
+Someone you share with signs in and is refused; the refusal screen shows
+them the exact `add` line to send you, with their account ID and address in
+it. Run it here and they sign in again. Sharing the viewer is not sharing the
+book: they choose it in their own Picker, so it has to be shared with them in
+Drive too — `drive.file` is the second lock.
+
+The list lives in `web/.accounts.json` (gitignored) because a Worker secret
+cannot be read back, and `wrangler secret put` replaces the whole value. Every
+change pushes the full list, so adding someone never drops anyone. Removing
+someone ends their session on their next request.
 
 ## The device checks
 
@@ -141,7 +161,12 @@ green. `npm run typecheck` here for the compiler, which Vitest never asks.
 
 Google is faked at `fetch` in `worker/router.test.ts`, with ID tokens signed by
 a key the test generates, and every refusal asserts that **nothing reached
-Google** first.
+Google** first. `scripts/accounts.test.mjs` sits beside its script, as the
+root's `scripts/` tests do.
+
+`npm run test:e2e` at the root drives this page in WebKit too (`web/e2e/`),
+with every Worker path answered by `page.route`: an unreachable server, a
+refusal, a crafted refusal link, a session ending mid-page.
 
 ## The 10ms cap
 

@@ -21,6 +21,7 @@ import {
   SESSION_COOKIE,
   ACCESS_COOKIE,
   SIGNIN_COOKIE,
+  REFUSED_COOKIE,
   type Session,
   type SignIn
 } from './session';
@@ -343,15 +344,27 @@ describe('sign-in', () => {
     expect(cookieNamed(response, SIGNIN_COOKIE)).toContain('Max-Age=0');
   });
 
-  it('refuses an account not on the list, and shows it only its own ID', async () => {
+  it('refuses an account not on the list, and tells only that browser who it was', async () => {
     google.idClaims = { sub: STRANGER_SUB, email: 'stranger@example.com' };
     const { signIn, cookie } = await start();
     const response = await finish({ code: 'c', state: signIn.state }, cookie);
 
-    expect(response.headers.get('location')).toBe(`/?signin=refused&account=${STRANGER_SUB}`);
+    // Nothing in the URL: a link is something anyone can send the owner.
+    expect(response.headers.get('location')).toBe('/?signin=refused');
     expect(cookieNamed(response, SESSION_COOKIE)).toBeUndefined();
     expect(cookieNamed(response, ACCESS_COOKIE)).toBeUndefined();
     expect(cookieNamed(response, SIGNIN_COOKIE)).toContain('Max-Age=0');
+
+    const header = cookieNamed(response, REFUSED_COOKIE)!;
+    expect(header).toContain('Max-Age=600');
+    const back = await handle(request('/auth/refused', { cookie: header.slice(0, header.indexOf(';')) }), ENV, NOW + 60);
+    expect(await back.json()).toEqual({ sub: STRANGER_SUB, email: 'stranger@example.com' });
+  });
+
+  it('clears a previous refusal once a sign-in succeeds', async () => {
+    const { signIn, cookie } = await start();
+    const response = await finish({ code: 'c', state: signIn.state }, cookie);
+    expect(cookieNamed(response, REFUSED_COOKIE)).toContain('Max-Age=0');
   });
 
   it('refuses an unverified address even on an allowed account', async () => {
@@ -517,12 +530,45 @@ describe('/api/book', () => {
   });
 });
 
+describe('/auth/refused', () => {
+  const refusedCookie = async (value: unknown, name = REFUSED_COOKIE) => `${REFUSED_COOKIE}=${await seal(value, name, KEY)}`;
+
+  it('answers nothing without a refusal of its own', async () => {
+    const response = await handle(request('/auth/refused'), ENV, NOW);
+    expect(response.status).toBe(404);
+  });
+
+  it('will not read a refusal sealed as another cookie', async () => {
+    const cookie = await refusedCookie({ sub: STRANGER_SUB, email: 's@example.com', iat: NOW }, SIGNIN_COOKIE);
+    expect((await handle(request('/auth/refused', { cookie }), ENV, NOW)).status).toBe(404);
+  });
+
+  it('forgets a refusal after ten minutes', async () => {
+    const cookie = await refusedCookie({ sub: STRANGER_SUB, email: 's@example.com', iat: NOW });
+    expect((await handle(request('/auth/refused', { cookie }), ENV, NOW + 600)).status).toBe(404);
+  });
+});
+
 describe('/connect', () => {
   it('sends someone signed out to sign in', async () => {
     const response = await handle(request('/connect'), ENV, NOW);
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toBe('/auth/signin');
     expect(calls).toEqual([]);
+  });
+
+  it('signs out a revoked grant on its way to sign-in', async () => {
+    google.refresh = { status: 400, body: { error: 'invalid_grant' } };
+    const response = await handle(request('/connect', { cookie: await sessionCookie() }), ENV, NOW);
+    expect(response.headers.get('location')).toBe('/auth/signin');
+    expect(cookieNamed(response, SESSION_COOKIE)).toContain('Max-Age=0');
+  });
+
+  it('does not send a Google outage through the consent screen', async () => {
+    google.refresh = { status: 503, body: { error: 'backendError' } };
+    const response = await handle(request('/connect', { cookie: await sessionCookie() }), ENV, NOW);
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/?connect=unavailable');
   });
 
   it('builds the Picker with the project number, the book and a nonce policy', async () => {

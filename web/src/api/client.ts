@@ -19,6 +19,8 @@
  * cookie sitting right there in the jar.
  */
 
+import type { RefusedAccount } from '../admit';
+
 export class ApiRefused extends Error {
   constructor() {
     super('Not available.');
@@ -70,13 +72,17 @@ async function json<T>(path: string, init: RequestInit = {}): Promise<T> {
 export type Health = { ok: boolean; build: string; configured: Record<string, boolean> };
 export type Me = { email: string; sub: string };
 export type Book = { title: string; timeZone: string };
+export type { RefusedAccount };
 
 export const api = {
   health: () => json<Health>('/api/health'),
   me: () => json<Me>('/api/me'),
   book: () => json<Book>('/api/book'),
   // A POST from this page carries its own Origin, which is what the Worker checks.
-  signOut: () => json<{ ok: boolean }>('/auth/signout', { method: 'POST' })
+  signOut: () => json<{ ok: boolean }>('/auth/signout', { method: 'POST' }),
+  // Who this browser was just refused as, from the Worker's sealed cookie. No
+  // refusal on record is an answer — `null` — rather than a failure to draw.
+  refused: () => json<RefusedAccount>('/auth/refused').catch(() => null)
 };
 
 /** Sign-in is a navigation, not a fetch: the browser leaves for Google and comes back. */

@@ -31,9 +31,9 @@ import { admitCommand } from '../admit';
 const SAMPLES = 5;
 
 /** What the last navigation said about signing in or connecting. Read once: it describes the past. */
-function landing(): { signin: string | null; account: string | null; connected: string | null } {
+function landing(): { signin: string | null; connected: string | null; connect: string | null } {
   const params = new URLSearchParams(window.location.search);
-  return { signin: params.get('signin'), account: params.get('account'), connected: params.get('connected') };
+  return { signin: params.get('signin'), connected: params.get('connected'), connect: params.get('connect') };
 }
 
 /** Whether this is the Home Screen icon rather than a Safari tab. */
@@ -72,19 +72,32 @@ export default function App() {
     } catch (error) {
       if (error instanceof ApiNoAccess) return { kind: 'no-access' };
       // The session ended between the two calls — Google revoked the grant, or
-      // the account left the allowlist. A state to draw, not an error.
-      if (error instanceof ApiRefused) return { kind: 'signed-out' };
+      // the account left the allowlist — and the Worker has already cleared it.
+      // Asking `me` again puts the whole screen in agreement, rather than
+      // leaving "Signed in as" above a book that says otherwise.
+      if (error instanceof ApiRefused) {
+        void refetch();
+        return { kind: 'signed-out' };
+      }
       throw error;
     }
   });
 
-  const [arrived, setArrived] = createSignal<ReturnType<typeof landing>>({ signin: null, account: null, connected: null });
+  const [arrived, setArrived] = createSignal<ReturnType<typeof landing>>({ signin: null, connected: null, connect: null });
   onMount(() => {
     const seen = landing();
     setArrived(seen);
     // Tidy the query string so a reload does not show a stale message again.
-    if (seen.signin || seen.connected) window.history.replaceState({}, '', window.location.pathname);
+    if (seen.signin || seen.connected || seen.connect) window.history.replaceState({}, '', window.location.pathname);
   });
+
+  // Who was refused comes from the Worker's sealed cookie, never the URL: the
+  // screen below turns it into a command the owner runs.
+  const [refused] = createResource(
+    () => arrived().signin === 'refused' || undefined,
+    () => api.refused()
+  );
+  const refusedCommand = () => (refused.error ? null : admitCommand(refused()));
 
   const [samples, setSamples] = createSignal<Sample[]>([]);
   const [rows, setRows] = createSignal<Record<string, number>>({});
@@ -141,18 +154,23 @@ export default function App() {
 
       <Show when={arrived().signin === 'refused'}>
         <div class="notice">
-          <p>That Google account is not on this viewer's list.</p>
-          <Show when={admitCommand(arrived().account)}>
+          <p>
+            <Show when={refused.error ? null : refused()} fallback="That Google account">
+              {(who) => <strong>{who().email}</strong>}
+            </Show>{' '}
+            is not on this viewer's list.
+          </p>
+          <Show when={refusedCommand()}>
             {(command) => (
               <>
-                <p>To let it in, run this in <code>web/</code> and sign in again:</p>
+                <p>
+                  To be let in, send this to whoever runs the viewer. They run it in <code>web/</code>, and you sign in
+                  again:
+                </p>
                 <pre>{command()}</pre>
                 <button type="button" onClick={() => navigator.clipboard?.writeText(command())}>
                   Copy command
                 </button>
-                <p class="muted">
-                  It replaces the list. To keep another account, put its ID first, comma-separated.
-                </p>
               </>
             )}
           </Show>
@@ -160,6 +178,9 @@ export default function App() {
       </Show>
       <Show when={arrived().signin === 'state' || arrived().signin === 'failed'}>
         <p class="notice">Sign-in did not complete. Try again.</p>
+      </Show>
+      <Show when={arrived().connect === 'unavailable'}>
+        <p class="notice">Google did not answer. Try choosing the book again in a moment.</p>
       </Show>
       <Show when={arrived().connected === '1'}>
         <p class="notice">Book chosen. Checking the viewer can read it…</p>
@@ -172,13 +193,20 @@ export default function App() {
         fallback={
           <section>
             <Show when={!me.loading} fallback={<p>Checking…</p>}>
-              <Show when={me.error}>
+              {/* Exclusive: a signed-in owner on a bad network is not signed out. */}
+              <Show
+                when={me.error}
+                fallback={
+                  <>
+                    <p>Not signed in.</p>
+                    <button type="button" onClick={goSignIn}>
+                      Sign in with Google
+                    </button>
+                  </>
+                }
+              >
                 <p class="notice">Could not reach the server. Check the connection and reload.</p>
               </Show>
-              <p>Not signed in.</p>
-              <button type="button" onClick={goSignIn}>
-                Sign in with Google
-              </button>
             </Show>
           </section>
         }
@@ -203,7 +231,7 @@ export default function App() {
             <section>
               <Show when={bookState()} fallback={<p>{book.error ? 'Could not reach the book. Reload to try again.' : 'Checking the book…'}</p>}>
                 {(state) => (
-                  <Show when={state().kind !== 'signed-out'} fallback={<SignedOutAgain />}>
+                  <Show when={state().kind !== 'signed-out'} fallback={<p>Checking…</p>}>
                   <Show
                     when={state().kind === 'ok' ? (state() as { book: Book }).book : null}
                     fallback={
@@ -293,16 +321,5 @@ export default function App() {
         )}
       </Show>
     </main>
-  );
-}
-
-function SignedOutAgain() {
-  return (
-    <>
-      <p>Your session has ended. Sign in again.</p>
-      <button type="button" onClick={goSignIn}>
-        Sign in with Google
-      </button>
-    </>
   );
 }

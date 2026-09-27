@@ -1,19 +1,24 @@
 /**
  * admit.ts — the refusal screen's one command.
- */
-
-/**
- * The one command that admits a refused account, with its ID already in it.
  *
- * Admission is by Google's account ID rather than the email, and the Worker
- * keeps no state to remember a first owner by — `google-identity.ts` argues
- * both. So a person still has to set the secret; this makes it one paste
- * rather than a copy, a lookup of the command and a second paste.
+ * The owner's own account is admitted by `npm run deploy`, from the account
+ * `clasp` is signed in as, so this is for everyone after: a second account of
+ * yours, or someone you are sharing the viewer with. They sign in, are
+ * refused, and send the owner this line.
+ *
+ * **It adds; it never replaces.** `scripts/accounts.mjs` keeps the list, so
+ * running a command someone else sent cannot take anyone off it.
+ *
+ * **It is built only from what the Worker sealed**, via `/auth/refused`, and
+ * still checked to the character: it is text a person pastes into a shell,
+ * and a check that trusts its caller is one refactor from trusting a URL.
  */
-export function admitCommand(account: string | null): string | null {
-  // **The ID arrives in the URL, and this turns it into something pasted into a
-  // shell.** Anyone can send a link to `?signin=refused&account=…`, so only an
-  // ID shaped like Google's — digits, nothing else — becomes a command at all.
-  if (!account || !/^[0-9]{1,64}$/.test(account)) return null;
-  return `echo '${account}' | npx wrangler secret put ALLOWED_ACCOUNTS`;
+export type RefusedAccount = { sub: string; email: string };
+
+const ACCOUNT_ID = /^[0-9]{1,64}$/;
+const EMAIL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+export function admitCommand(who: RefusedAccount | null | undefined): string | null {
+  if (!who || !ACCOUNT_ID.test(who.sub) || !EMAIL.test(who.email)) return null;
+  return `npm run accounts -- add ${who.sub} ${who.email}`;
 }

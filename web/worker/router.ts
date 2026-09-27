@@ -40,6 +40,7 @@ import {
   openSession,
   openAccess,
   openSignIn,
+  openRefused,
   cookie,
   clearCookie,
   randomToken,
@@ -47,6 +48,7 @@ import {
   SESSION_COOKIE,
   ACCESS_COOKIE,
   SIGNIN_COOKIE,
+  REFUSED_COOKIE,
   SESSION_TTL_SECONDS,
   SIGNIN_TTL_SECONDS,
   isSessionKey,
@@ -217,11 +219,19 @@ export async function handle(request: Request, env: Env, nowSeconds: number): Pr
   if (path === '/auth/signin' && request.method === 'GET') return signIn(env, url, nowSeconds);
   if (path === '/auth/callback' && request.method === 'GET') return callback(request, env, url, nowSeconds);
   if (path === '/auth/signout' && request.method === 'POST') return json({ ok: true }, 200, signedOut());
+  if (path === '/auth/refused' && request.method === 'GET') return refused(request, env, nowSeconds);
 
   if (path === '/connect' && request.method === 'GET') {
     const granted = await authorize(request, env, nowSeconds);
-    // A navigation, so a refusal is a sign-in rather than a JSON body nobody renders.
-    if (granted instanceof Response) return redirect('/auth/signin');
+    // A navigation, so the answer is a page rather than a JSON body nobody
+    // renders — and which page depends on the status. Only a refusal is a
+    // reason to sign in again; Google having a bad moment is a reason to try
+    // again, and sending that through the consent screen fixes nothing. The
+    // refusal's cookies ride along, or a revoked session stays in the jar.
+    if (granted instanceof Response) {
+      const cookies = granted.headers.getSetCookie();
+      return granted.status === 401 ? redirect('/auth/signin', cookies) : redirect('/?connect=unavailable', cookies);
+    }
     return connectPage(env, granted.token, granted.cookies);
   }
 
@@ -271,6 +281,18 @@ async function signIn(env: Env, url: URL, nowSeconds: number): Promise<Response>
 }
 
 /**
+ * The account this browser was just refused for, from its own sealed cookie.
+ *
+ * Unauthenticated by nature — nobody refused has a session — and it tells the
+ * caller only who they themselves signed in as a moment ago.
+ */
+async function refused(request: Request, env: Env, nowSeconds: number): Promise<Response> {
+  const who = await openRefused(readCookie(request.headers.get('cookie'), REFUSED_COOKIE), nowSeconds, env.SESSION_KEY);
+  if (!who) return json({ error: 'Not available.' }, 404);
+  return json({ sub: who.sub, email: who.email });
+}
+
+/**
  * The return leg, and the only place a session is minted.
  *
  * Every failure lands on `/?signin=<outcome>` rather than a JSON body — this is
@@ -278,8 +300,10 @@ async function signIn(env: Env, url: URL, nowSeconds: number): Promise<Response>
  * cleared on every exit, because a one-shot value that outlives its round trip
  * is a replay waiting to happen.
  *
- * A refusal names the account ID and nothing else: it is how you learn yours to
- * put on the allowlist, and it tells a stranger only who they already are.
+ * A refusal is recorded in a sealed cookie for `/auth/refused` to read back,
+ * never in the URL: the page turns it into the command that admits the
+ * account, and a URL is something anyone can send the owner. It tells a
+ * stranger only who they already are.
  */
 async function callback(request: Request, env: Env, url: URL, nowSeconds: number): Promise<Response> {
   const done = clearCookie(SIGNIN_COOKIE);
@@ -297,7 +321,8 @@ async function callback(request: Request, env: Env, url: URL, nowSeconds: number
   const claims = await verifyIdToken(grant.id_token, env.GOOGLE_CLIENT_ID, nowSeconds);
   if (!claims) return land('failed');
   if (!isAllowed(claims, env.ALLOWED_ACCOUNTS)) {
-    return redirect(`/?signin=refused&account=${encodeURIComponent(claims.sub)}`, [done]);
+    const who = await seal({ sub: claims.sub, email: claims.email, iat: nowSeconds }, REFUSED_COOKIE, env.SESSION_KEY);
+    return redirect('/?signin=refused', [done, cookie(REFUSED_COOKIE, who, SIGNIN_TTL_SECONDS)]);
   }
 
   const session: Session = { sub: claims.sub, email: claims.email, refresh_token: grant.refresh_token, iat: nowSeconds };
@@ -306,6 +331,7 @@ async function callback(request: Request, env: Env, url: URL, nowSeconds: number
   return redirect('/', [
     cookie(SESSION_COOKIE, await seal(session, SESSION_COOKIE, env.SESSION_KEY), SESSION_TTL_SECONDS),
     cookie(ACCESS_COOKIE, await seal(access, ACCESS_COOKIE, env.SESSION_KEY), grant.expires_in),
+    clearCookie(REFUSED_COOKIE),
     done
   ]);
 }

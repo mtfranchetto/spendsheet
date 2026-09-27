@@ -43,3 +43,6 @@ playwright-report/
 web/dist/
 web/.wrangler/
 web/.dev.vars
+# Who the viewer admits: Google account IDs and the addresses beside them.
+# People, not configuration, and the repository is public.
+web/.accounts.json
