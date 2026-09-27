@@ -278,7 +278,7 @@ describe('the write-back', () => {
   });
 
   it('writes nothing for an event a browser could have sent', () => {
-    // Door 1 can call `onEdit` by name with any JSON. Without a real range it
+    // Any page this project serves can call `onEdit` by name with any JSON. Without a real range it
     // must not reach the `catch`, or every call is a row in `_anomalies`.
     const c = bookWith([txRow('u-1', new Date(2026, 6, 1))]);
     const count = () => c.readRecords_(c.__spreadsheet.getSheetByName('_anomalies'),

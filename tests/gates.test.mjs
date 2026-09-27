@@ -2,9 +2,9 @@
  * Who may run what, held to the source rather than to a list.
  *
  * `google.script.run` reaches every global whose name lacks a trailing `_`,
- * and Door 1 — the consent redirect — is served to anyone by necessity. So
- * "public" is a property of a name, and every public function is a way in for
- * a stranger unless it gates. A new function that forgets is the realistic
+ * from any page this project serves — and the dialogs open for anyone the book
+ * is shared with. So "public" is a property of a name, and every public
+ * function is a way in for someone who is not the owner unless it gates. A new function that forgets is the realistic
  * security failure, which is why the rule below finds it by reading `src/`
  * rather than by remembering.
  */
@@ -25,11 +25,11 @@ function book() {
 }
 
 describe('the gate on every public function in the project', () => {
-  // `google.script.run` can call *any* global whose name lacks a trailing `_`,
-  // and Door 1 — the consent redirect — is served to anyone by necessity,
-  // bridge and all. So a stranger
-  // who loads that URL can call any public function, and it runs with the
-  // owner's authority. A function a stranger can reach can return balances,
+  // `google.script.run` can call *any* global whose name lacks a trailing `_`
+  // from any page this project serves, and it runs with the owner's
+  // authority. The consent redirect answers in plain text and serves no page;
+  // these gates are why that is not the only thing keeping a caller who is
+  // not the owner away from every public function. A function a stranger can reach can return balances,
   // overwrite the PEM, or spend the bank's daily allowance with nobody at the
   // keyboard.
   //
@@ -251,14 +251,14 @@ describe('the gate on every public function in the project', () => {
     c.SpreadsheetApp.getUi = () => { throw new Error('no UI in this context'); };
     expect(() => c.requireInteractive_(), 'dialog callback').not.toThrow();
 
-    // An anonymous `google.script.run` from Door 1: no UI, and no owner. The one
-    // case that must fail — it is the whole reason this gate exists.
+    // A `google.script.run` from anyone but the owner: no UI, and no owner. The
+    // one case that must fail — it is the whole reason this gate exists.
     c.Session.getActiveUser = () => ({ getEmail: () => '' });
-    expect(() => c.requireInteractive_(), 'anonymous page call').toThrow('Not available');
+    expect(() => c.requireInteractive_(), 'a caller who is not the owner').toThrow('Not available');
   });
 
   describe('requireScheduled_', () => {
-    /** Door 1's context: no UI, nobody signed in. */
+    /** A page call from nobody: no UI, nobody signed in. */
     function anonymous() {
       const c = book();
       c.Session.getActiveUser = () => ({ getEmail: () => '' });

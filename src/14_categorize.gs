@@ -837,10 +837,11 @@ function learnFromCorrections() {
  * written either**, for `commitCategorize_`'s reason: a free account keeps 100
  * revisions, and a nightly rewrite of an identical tab spends them.
  *
- * Gated on the trigger's event, like every trigger entry point: Door 1 serves
- * this name to anyone, and a rebuild writes `_memory` and spends a revision of
- * the book's history even though the tab is derived. `e` is the trigger's
- * event — see `requireScheduled_` (20_webapp.gs).
+ * Gated on the trigger's event, like every trigger entry point: a trigger
+ * names it as a public global, which any page this project serves can call,
+ * and a rebuild writes `_memory` and spends a revision of the book's history
+ * even though the tab is derived. `e` is the trigger's event — see
+ * `requireScheduled_` (04_gates.gs).
  *
  * A failure is logged and then **thrown**, which is the opposite of
  * `categorizeAfterSync_` and deliberately so: that one runs inside the sync and

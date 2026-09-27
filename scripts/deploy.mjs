@@ -15,10 +15,10 @@
  *
  * The project has one deployment: the redirect Enable Banking sends a browser
  * to after consent. It serves a frozen version, which is why 2 and 3 exist at
- * all — and since it is served to anyone, with the `google.script.run` bridge
- * attached, every public function in the project is on its surface *at the
- * version it serves*. A gate added in `09_sync.gs` and only pushed is a gate
- * the sheet has and the redirect does not.
+ * all — and `doGet` reaches across the project from there: the session
+ * exchange in `02_api.gs`, the accounts in `06_accounts.gs`, the sheet
+ * primitives in `03_sheets.gs`. A fix to any of them that is only pushed is a
+ * fix the sheet has and the redirect does not, so any `.gs` is versioned.
  *
  * `clasp deploy` (create-deployment) is deliberately never called here, and
  * `deploy.test.mjs` fails if it ever appears. Without `-i` it mints a *new*

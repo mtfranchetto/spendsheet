@@ -1004,17 +1004,14 @@ function colOf(headers, name) {
 /**
  * A value as text rather than as markup.
  *
- * This project builds three HTML pages by string concatenation — the callback
- * page in 05_auth.gs and the two dialogs — and one of them, `doGet`, is
- * reachable by anyone on the internet. It has to be: the bank's redirect
- * arrives with no Google session attached, so the web app is deployed
- * `ANYONE_ANONYMOUS`. Interpolating a query parameter into that page raw let
- * `?error=<script>…` render as markup on a Google origin, from where a script
- * can reach `google.script.run` and call this project's functions as the
- * deploying user — the account holding the bank credentials.
+ * The dialogs are built by string concatenation, and a value interpolated
+ * raw renders as markup on a Google origin — from where a script can reach
+ * `google.script.run` and call this project's functions as whoever opened the
+ * dialog. The credentials dialog in `02_api.gs` prints the redirect URL it
+ * detected and the one you saved, so it escapes both.
  *
- * Lives here rather than next to the pages that need it because it is used
- * from 02 and 05, and nothing lower may depend on anything higher.
+ * Lives here, in the pure layer, so any file that builds a dialog can reach it
+ * without depending on anything above itself.
  *
  * `&` is replaced first. Any other order re-escapes the ampersands the later
  * replacements just introduced, turning `<` into `&amp;lt;` — visible, but the

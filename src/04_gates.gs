@@ -49,7 +49,7 @@ function webAppAccessDecision_(owner, active) {
 }
 
 /**
- * `owner_email` as the set of addresses allowed through Door 2.
+ * `owner_email` as the set of addresses whose dialog callbacks are admitted.
  *
  * One cell, comma-separated, because two people share a household ledger and
  * the alternative — giving a second person the first person's Google password —
@@ -133,11 +133,11 @@ function requireOwner_() {
  * *privacy* rule — it decides what is named to the browser — and was never an
  * authorisation one; this is the missing half. The consent redirect is served
  * to *anyone* by necessity, which is why it answers in plain text and serves no
- * page, and so no bridge (`callbackText_` in `05_auth.gs`). The gates are what
- * keep that one decision from being the only thing standing between a
- * stranger and every function here: a page served from this project again, by
- * anyone, inherits a surface on which each public name already asks who is
- * calling.
+ * page, and so no bridge (`callbackText_` in `05_auth.gs`). The pages that are
+ * left are the dialogs, and they open for anyone the book is shared with — a
+ * second person's browser reaches every public name through them just as the
+ * owner's does. So each public name asks who is calling, and the plain-text
+ * redirect is not the only thing between a stranger and every function here.
  *
  * The distinguisher is the UI context, not the identity. `getUi()` is reachable
  * from a menu click and from a dialog the container opened, and throws under a
@@ -171,7 +171,8 @@ function requireInteractive_() {
  * `selfCheck`, `snapshotToDrive`, `learnScheduled`.
  *
  * A trigger names its handler as a string, so the handler has to be a public
- * global — and every public global is on Door 1's surface. None of these is
+ * global — and every public global is reachable from any page this project
+ * serves, a dialog open in someone else's browser included. None of these is
  * harmless there. Each spends something with the owner's authority: a sync
  * spends the bank's daily allowance, where an overrun is a penalty measured in
  * hours; the health check sends mail; the snapshot writes to Drive; the memory
