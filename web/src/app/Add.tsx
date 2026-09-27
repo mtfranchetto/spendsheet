@@ -48,9 +48,9 @@ export function AddCash() {
   const [date, setDate] = createSignal(latestToday());
   const [note, setNote] = createSignal('');
   const [saving, setSaving] = createSignal(false);
-  const [id, setId] = createSignal(entryId());
-  let amountField: HTMLInputElement | undefined;
-  let noteField: HTMLInputElement | undefined;
+  // One form, one entry: a retry after a failure sends the same id, and a
+  // saved entry closes the form, so the next one opens with a new id.
+  const id = entryId();
 
   const kindOf = (category: string) => overview()?.lists.categories.parents.find((parent) => parent.name === category)?.kind ?? '';
   // A label is an axis over spending; a transfer is in no total a label could filter.
@@ -60,7 +60,7 @@ export function AddCash() {
     const typed = parseAmount(amount());
     setSaving(true);
     const ok = await addCash({
-      id: id(),
+      id,
       amount: typed,
       direction: direction(),
       account: account(),
@@ -72,12 +72,9 @@ export function AddCash() {
     });
     setSaving(false);
     if (!ok) return;
-    // The next entry is a different entry.
-    setId(entryId());
-    setAmount('');
-    setNote('');
-    if (amountField) amountField.value = '';
-    if (noteField) noteField.value = '';
+    // Back to the tile it was added from, which the book's re-read updates.
+    // A second entry is one tap on "+ Add" away, and opens a fresh form.
+    go('dashboard');
   };
 
   return (
@@ -115,10 +112,7 @@ export function AddCash() {
             type="text"
             inputmode="decimal"
             placeholder={formatAmount(3.5)}
-            ref={(el) => {
-              amountField = el;
-              liveAmount(el);
-            }}
+            ref={liveAmount}
             onInput={(event) => setAmount(event.currentTarget.value)}
           />
           <label>Account</label>
@@ -149,7 +143,7 @@ export function AddCash() {
           <label>Date</label>
           <input class="field" type="date" value={date()} max={latestToday()} onInput={(event) => setDate(event.currentTarget.value)} />
           <label>Note</label>
-          <input class="field" type="text" ref={(el) => (noteField = el)} onInput={(event) => setNote(event.currentTarget.value)} />
+          <input class="field" type="text" onInput={(event) => setNote(event.currentTarget.value)} />
           <button type="button" class="primary" style={{ 'margin-top': '16px' }} disabled={saving()} onClick={() => void save()}>
             {saving() ? 'Adding…' : 'Add'}
           </button>

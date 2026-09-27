@@ -227,10 +227,22 @@ export function entryId(): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * A cash entry, or an asset's new value — which is a cash entry for the
+ * difference.
+ *
+ * **The book is read again once it lands**, because what the entry changes
+ * most visibly is not in the answer. The Worker reads back the transaction
+ * rows it wrote; a cash or asset account's balance is the `accounts` tab's own
+ * formula over those rows, which Google recomputes and nothing here can patch.
+ * Without the read, the tile you added from goes on showing the old balance.
+ */
 export async function addCash(entry: CashRequest): Promise<boolean> {
   const answer = await one<ActAnswer>('cash', () => entry);
-  if (answer) toast(answer.message === '1 added' ? 'Added.' : answer.message);
-  return !!answer;
+  if (!answer) return false;
+  toast(answer.message === '1 added' ? 'Added.' : answer.message);
+  void refresh();
+  return true;
 }
 
 export async function deleteRecord(record: PageRecord): Promise<void> {
