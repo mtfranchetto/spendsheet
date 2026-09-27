@@ -133,7 +133,7 @@ Users never need Node. Contributors do:
 npm install && npm test
 ```
 
-Tests run the **exact `.gs` files that ship** — `tests/harness.mjs` loads them into a `node:vm` context with the Google globals stubbed. No build step, no transpilation, no duplicated source.
+Tests run the **exact `.gs` files that ship** — `tests/harness.mjs` loads them into a `node:vm` context with the Google globals stubbed. No build step, no transpilation, no duplicated source. The phone app in `web/` is TypeScript; the same `npm test` runs its suites, `npm run test:e2e` drives it in WebKit, and [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) has the rest.
 
 ## Licence
 
