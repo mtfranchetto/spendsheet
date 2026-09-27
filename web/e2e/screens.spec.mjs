@@ -197,3 +197,32 @@ test('pulling down at the top reads the book again', async ({ page }) => {
   await page.waitForTimeout(300);
   expect(fake.counts['/api/read']).toBe(2);
 });
+
+test('the page cannot be pinched or double-tapped into a zoom', async ({ page }) => {
+  await worker(page, signedIn());
+  await page.goto('/');
+  await expect(page.locator('.big')).toBeVisible();
+
+  const refused = await page.evaluate(() => {
+    const viewport = document.querySelector('meta[name="viewport"]').getAttribute('content');
+    // WebKit's pinch events, which a test cannot synthesise from a real
+    // gesture — so they are sent as the plain events they are.
+    const cancelled = (type) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      document.querySelector('.big').dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    return {
+      viewport,
+      touchAction: getComputedStyle(document.documentElement).touchAction,
+      gesturestart: cancelled('gesturestart'),
+      gesturechange: cancelled('gesturechange')
+    };
+  });
+
+  expect(refused.viewport).toContain('maximum-scale=1');
+  expect(refused.viewport).toContain('user-scalable=no');
+  expect(refused.touchAction).toBe('pan-x pan-y');
+  expect(refused.gesturestart).toBe(true);
+  expect(refused.gesturechange).toBe(true);
+});
