@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from '../sheets/records';
 import { bookFromBatch } from './book';
 import { cellNumber } from './cells';
-import { clockAt, dayKey, SERIAL_EPOCH, MS_PER_DAY } from './days';
+import { dayKey, SERIAL_EPOCH } from './days';
 import { appAnalyticsData, appRecordsData } from './payloads';
 import {
   aggregate, balanceSeries, ledgerOf, matchesAccount, matchesFilters, recentBalanceTrend, resolveWindow,
@@ -33,17 +33,7 @@ import {
 import {
   ACCOUNT_COLUMNS, DASHBOARD_TREND_DAYS, PENDING_COLUMNS, QUERY_GROUP_LIMIT, QUERY_PAGE_SIZE, TX_COLUMNS
 } from './schema';
-
-const ZONE = 'Europe/Rome';
-
-/** A calendar day as a day number, `month` 1–12. */
-const day = (year: number, month: number, date: number) => Date.UTC(year, month - 1, date) / MS_PER_DAY;
-
-/** The same day as the serial a date cell holds. */
-const serial = (year: number, month: number, date: number) => day(year, month, date) + SERIAL_EPOCH;
-
-/** The book's clock at noon on a day. */
-const at = (year: number, month: number, date: number) => clockAt(new Date(Date.UTC(year, month - 1, date, 10)), ZONE);
+import { at, serial, ZONE } from './testing';
 
 /** Every clock-relative test below runs on one day, after all of July 2026. */
 const NOW = at(2026, 9, 27);
