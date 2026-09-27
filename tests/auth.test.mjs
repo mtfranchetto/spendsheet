@@ -354,45 +354,47 @@ describe('doGet', () => {
     expect(html).not.toContain('gateway error');
   });
 
-  it('renders the bank error as text, never as markup', () => {
-    // The page is `ANYONE_ANONYMOUS` — it has to be, the bank's redirect
-    // carries no Google session — so this parameter is attacker-supplied by
-    // anyone who knows the URL. Concatenated in raw it rendered as markup on
-    // a Google origin, from where a script can reach `google.script.run` and
-    // call this project's functions as the deploying user.
+  it('answers in plain text, which carries no google.script.run bridge', () => {
+    // The redirect is `ANYONE_ANONYMOUS` — it has to be, the bank's redirect
+    // carries no Google session. A page served from here would hand anyone who
+    // knows the URL a bridge to every public function in the project; a text
+    // response hands them nothing but this one.
     const c = startedFlow(sessionResponse);
-    const payload = '<img src=x onerror="alert(1)">';
-    const html = c.doGet({ parameter: { state: 'good-nonce', error: payload } }).getContent();
+    c.HtmlService = {
+      createHtmlOutput: () => { throw new Error('doGet served a page'); }
+    };
 
-    expect(html).not.toContain('<img');
-    expect(html).not.toContain('onerror="');
-    expect(html).toContain('&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+    const connected = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } });
+    expect(connected.getMimeType()).toBe('TEXT');
+    expect(connected.getContent()).toMatch(/^Connected\n/);
+
+    for (const parameter of [{}, { state: 'forged', code: 'x' }, { state: 'good-nonce', error: 'no' }]) {
+      expect(c.doGet({ parameter }).getMimeType()).toBe('TEXT');
+    }
   });
 
-  it('closes no tag it did not open, whatever the parameter contains', () => {
+  it('reflects the bank error as characters, however it is spelt', () => {
+    // As text there is nothing to escape, so nothing is: the payload comes
+    // back exactly as sent, cut to length, in a response no browser renders.
     const c = startedFlow(sessionResponse);
-    const html = c.doGet({
-      parameter: { state: 'good-nonce', error: '</p></div><script>fetch("//evil")</script>' }
-    }).getContent();
+    const payload = '</p><script>fetch("//evil")</script>';
+    const out = c.doGet({ parameter: { state: 'good-nonce', error: payload } });
 
-    expect(html).not.toContain('<script>');
-    expect(html).not.toContain('fetch("//evil")');
-    // The payload's own tags arrive inert, as characters on the page.
-    expect(html).toContain('&lt;/p&gt;&lt;/div&gt;&lt;script&gt;');
+    expect(out.getMimeType()).toBe('TEXT');
+    expect(out.getContent()).toContain('Your bank reported: ' + payload);
+    expect(out.getContent()).not.toContain('&lt;');
+
+    const long = c.doGet({ parameter: { state: 'good-nonce', error: 'x'.repeat(500) } }).getContent();
+    expect(long).toContain('x'.repeat(200));
+    expect(long).not.toContain('x'.repeat(201));
   });
 
-  it('escapes what the provider called itself on the success page', () => {
-    // Second-hand rather than direct, but it is still a string from someone
-    // else's API landing in our HTML.
-    const c = startedFlow(() => ({
-      code: 200,
-      body: JSON.stringify({ ...SESSION, aspsp: { name: '<b>Bank</b>', country: 'IT' } })
-    }));
-    const html = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
+  it('keeps the sync deadline on a line of its own', () => {
+    const c = startedFlow(sessionResponse);
+    const text = c.doGet({ parameter: { state: 'good-nonce', code: 'auth-code' } }).getContent();
 
-    expect(html).toContain('Connected');
-    expect(html).not.toContain('<b>Bank</b>');
-    expect(html).toContain('&lt;b&gt;Bank&lt;/b&gt;');
+    expect(text.split('\n\n')).toHaveLength(3);
+    expect(text).toMatch(/\n\nRun Spendsheet → Sync now within the hour/);
   });
 });
 

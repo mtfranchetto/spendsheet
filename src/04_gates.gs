@@ -107,11 +107,11 @@ function webAppOwner_() {
 }
 
 /**
- * The gate, on the server side of a page call.
+ * The gate, on the server side of a dialog's callback.
  *
  * Throws rather than returning a refusal object, because every caller
  * would otherwise have to remember to check — and the one that forgets is the
- * one that returns the balances. A throw reaches the page through
+ * one that returns the balances. A throw reaches the dialog through
  * `withFailureHandler`, which is where a refusal belongs.
  */
 function requireOwner_() {
@@ -124,19 +124,20 @@ function requireOwner_() {
 
 /**
  * The gate for a function reached from the Sheet — a menu item, or a dialog it
- * opened — and never from a page.
+ * opened.
  *
  * ## Why this is not the same gate as `requireOwner_`
  *
- * `google.script.run` reaches **every** public name. That is harmless for a script whose only door is the editor —
- * a menu item already runs for someone with edit access. It is not harmless
- * here, because Door 1 (the consent redirect) is served to *anyone* by
- * necessity, and the page it serves carries the `google.script.run` bridge. So
- * a stranger who loads that URL can call any global that lacks a trailing `_`,
- * and it runs with the owner's authority — which is what let the ungated
- * menu and diagnostic functions read balances, overwrite credentials and
- * repoint the redirect. The `_` suffix is a *privacy* rule; it was never an
- * authorisation one, and this is the missing half.
+ * `google.script.run` reaches **every** public name from any page this project
+ * serves, and runs it with the owner's authority. The `_` suffix is a
+ * *privacy* rule — it decides what is named to the browser — and was never an
+ * authorisation one; this is the missing half. The consent redirect is served
+ * to *anyone* by necessity, which is why it answers in plain text and serves no
+ * page, and so no bridge (`callbackText_` in `05_auth.gs`). The gates are what
+ * keep that one decision from being the only thing standing between a
+ * stranger and every function here: a page served from this project again, by
+ * anyone, inherits a surface on which each public name already asks who is
+ * calling.
  *
  * The distinguisher is the UI context, not the identity. `getUi()` is reachable
  * from a menu click and from a dialog the container opened, and throws under a
@@ -158,8 +159,9 @@ function requireInteractive_() {
     SpreadsheetApp.getUi();
     return;
   } catch (e) {
-    // No UI context — a page's google.script.run, or a trigger. Fall through to
-    // the identity check, which a dialog callback passes and a stranger fails.
+    // No UI context — a dialog's callback, a page's google.script.run, or a
+    // trigger. Fall through to the identity check, which a dialog callback
+    // passes and a stranger fails.
   }
   requireOwner_();
 }

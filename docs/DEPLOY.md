@@ -24,7 +24,7 @@ Menu items, dialogs and the nightly trigger all execute at HEAD, so a push is ge
 
 `npm run deploy` decides which case you are in by looking at what changed under `src/` since the last deploy it recorded. A redeploy is forced by:
 
-- **any** `src/*.gs` — the redirect runs a frozen copy of the whole project. It is served to anyone with the `google.script.run` bridge, so every public function in every file is on its surface at the version it serves: a gate pushed but not deployed is a gate the redirect does not have.
+- **any** `src/*.gs` — the redirect runs a frozen copy of the whole project, and `doGet` reaches across it: the session exchange in `02_api.gs`, the accounts in `06_accounts.gs`, the sheet primitives in `03_sheets.gs`. A fix to any of them pushed but not deployed is a fix the redirect does not have.
 - `src/appsscript.json` — a version carries the manifest.
 
 Anything else pushes and stops, and says so.

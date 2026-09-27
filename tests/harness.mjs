@@ -880,7 +880,41 @@ export function createGoogleStubs(options = {}) {
      */
     HtmlService: {
       createHtmlOutput: (html) => htmlOutput(html)
-    }
+    },
+
+    /**
+     * `MimeType` has exactly the real enum's members, and `setMimeType`
+     * refuses anything else — a misspelt member is `undefined` in production,
+     * and a fake that accepted it would pass the one call a fake of an enum
+     * exists to catch.
+     */
+    ContentService: (() => {
+      const MimeType = Object.freeze({
+        ATOM: 'ATOM', CSV: 'CSV', ICAL: 'ICAL', JAVASCRIPT: 'JAVASCRIPT', JSON: 'JSON',
+        RSS: 'RSS', TEXT: 'TEXT', VCARD: 'VCARD', XML: 'XML'
+      });
+      return {
+        MimeType,
+        createTextOutput(content = '') {
+          let text = String(content);
+          let mime = MimeType.TEXT;
+          const out = {
+            getContent: () => text,
+            setContent(c) { text = String(c); return out; },
+            append(c) { text += String(c); return out; },
+            getMimeType: () => mime,
+            setMimeType(m) {
+              if (!Object.values(MimeType).includes(m)) {
+                throw new Error(`Invalid argument: ${m}`);
+              }
+              mime = m;
+              return out;
+            }
+          };
+          return out;
+        }
+      };
+    })()
   };
 
   let triggers = [];

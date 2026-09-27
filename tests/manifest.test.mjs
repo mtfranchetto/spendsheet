@@ -111,13 +111,12 @@ describe('appsscript.json', () => {
     expect(/\bDrive\.Files\.(insert|delete)\b/.test(source)).toBe(false);
   });
 
-  it('needs no new scope for the page, since HtmlService asks for none', () => {
-    // Serving HTML is not a Google service call. `Session.` already carries
-    // userinfo.email, which is what the owner gate reads — so the whole mobile
-    // app is a second deployment of a project whose consent screen is
-    // unchanged. Worth asserting, because "add a front end, add a scope" is
-    // the assumption, and a widened consent screen is how you stop reading it.
+  it('needs no scope to answer, since HtmlService and ContentService ask for none', () => {
+    // Serving a dialog or a text response is not a Google service call.
+    // Worth asserting, because "add a front end, add a scope" is the
+    // assumption, and a widened consent screen is how you stop reading it.
     expect(/\bHtmlService\./.test(source)).toBe(true);
+    expect(/\bContentService\./.test(source)).toBe(true);
     expect(manifest.oauthScopes).toHaveLength(7);
   });
 
