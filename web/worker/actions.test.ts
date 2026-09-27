@@ -174,8 +174,18 @@ describe('transfer', () => {
     tab.grid.length = 5;
     tab.rows = 5;
     await transfer(google, { uid: 'bank-1', row: 3, destination: 'House' }, NOW);
-    expect(tab.rows).toBe(6);
     expect(google.cell('transactions', 6, col('account_id'))).toBe('acc-house');
+    expect(tab.rows).toBeGreaterThanOrEqual(6);
+  });
+
+  it('pushes a row another writer put there meanwhile down, never over it', async () => {
+    // The nightly sync appends at the same next row between this read and this write.
+    google.meanwhile = () => {
+      google.tabs.transactions.grid[5] = ['synced-meanwhile'];
+    };
+    await addCash(google, { id: 'phone-entry-0003', account: 'Wallet', amount: 2, category: 'Groceries' }, NOW);
+    expect(google.cell('transactions', 6, col('account_name'))).toBe('Wallet');
+    expect(google.cell('transactions', 7, col('uid'))).toBe('synced-meanwhile');
   });
 
   it('pairs a bank row with the counter leg the page named', async () => {

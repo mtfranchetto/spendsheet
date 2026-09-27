@@ -14,6 +14,9 @@ import { batch, signedIn, worker } from './worker.mjs';
 function keeper() {
   const book = structuredClone(batch());
   const tx = book.valueRanges.find((range) => /transactions/.test(range.range));
+  // The row count the health check remembers, so a delete that is not archived reads as rows lost.
+  const monitor = book.valueRanges.find((range) => /_monitor/.test(range.range));
+  monitor.values = [['transactions_rows', 'removed_rows'], [tx.values.length - 1, 0]];
   const header = tx.values[0];
   const rowOf = (uid) => tx.values.findIndex((cells) => cells[0] === uid) + 1;
   const read = (row) => header.map((_, i) => tx.values[row - 1][i] ?? '');
@@ -39,6 +42,8 @@ function keeper() {
       return [200, { written: results.length, skipped: 0, capped: false, results, rows }];
     },
     remove(body) {
+      const removed = book.valueRanges.find((range) => /_removed/.test(range.range));
+      removed.values = [...(removed.values ?? [['uid']]), [tx.values[body.row - 1][0]]];
       tx.values.splice(body.row - 1, 1);
       return [200, { message: 'Deleted.', rows: {}, removed: body.row }];
     }
@@ -189,6 +194,44 @@ test('cash you typed is deleted in two taps, and the row goes', async ({ page })
   await expect(row).toHaveCount(0);
   await expect.poll(() => fake.sent['/api/act/delete']?.[0].body).toEqual({ uid: 'c-1', row: at });
   await expect(page.locator('#toast')).toHaveText('Deleted.');
+
+  // The copy says where it went, so the health check does not call it lost.
+  await page.getByRole('button', { name: 'Home' }).click();
+  await expect(page.locator('.big')).toBeVisible();
+  await expect(page.getByText('Rows have disappeared')).toHaveCount(0);
+});
+
+test('a read that left while a write was out is not believed either', async ({ page }) => {
+  const { fake } = await open(page);
+  await page.goto('/');
+  await expect(esselunga(page)).toHaveCount(1);
+  await expect.poll(() => fake.counts['/api/read']).toBe(1);
+
+  // The write goes out and is held; a read leaves after it, answered from before it.
+  const releaseWrite = fake.hold('/api/act/decide');
+  await swipe(esselunga(page));
+  await expect.poll(() => fake.counts['/api/act/decide']).toBe(1);
+  const releaseRead = fake.hold('/api/read');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.locator('#screens h1').first().evaluate((target) => {
+    const touch = (type, y) => {
+      const some = document.createTouchList(document.createTouch(window, target, 1, 200, y, 200, y));
+      const none = document.createTouchList();
+      target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? none : some, targetTouches: type === 'touchend' ? none : some, changedTouches: some }));
+    };
+    touch('touchstart', 100);
+    for (let y = 110; y <= 260; y += 10) touch('touchmove', y);
+    touch('touchend', 260);
+  });
+  await expect.poll(() => fake.counts['/api/read']).toBe(2);
+
+  // The write settles first, then the read from before it lands.
+  releaseWrite();
+  await page.waitForTimeout(200);
+  releaseRead();
+  await expect.poll(() => fake.counts['/api/read']).toBe(3);
+  await page.waitForTimeout(200);
+  await expect(esselunga(page)).toHaveCount(0);
 });
 
 test('"+ Add" opens the form on that account, and a retry sends the same entry', async ({ page }) => {

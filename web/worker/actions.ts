@@ -40,7 +40,10 @@
  * **Never `values.append` on `transactions`.** It finds "the table" the way
  * `getLastRow()` does, and the `ARRAYFORMULA`s from P onward make that the
  * sheet's last row rather than the last record — the bug that once put an
- * account at row 1001. The next row is the one after the last uid in column A.
+ * account at row 1001. The next row is the one after the last uid in column A,
+ * and a new row is *inserted* there and written in the same request, typed as
+ * `updateCells` values — see `insertRow` for why an address alone is not
+ * enough.
  *
  * ## After writing, the rows are read back
  *
@@ -309,6 +312,49 @@ async function ensureRows(google: Google, sheets: Sheets, tab: string, row: numb
   await google.update([{ appendDimension: { sheetId: grid.sheetId, dimension: 'ROWS', length: row - grid.rows } }]);
 }
 
+/** One cell as `updateCells` takes it: a string is a string value, never parsed — `RAW`, by construction. */
+function cellData(value: Cell): object {
+  if (typeof value === 'number') return { userEnteredValue: { numberValue: value } };
+  if (typeof value === 'boolean') return { userEnteredValue: { boolValue: value } };
+  if (value === '' || value === null) return {};
+  return { userEnteredValue: { stringValue: String(value) } };
+}
+
+/**
+ * A new `transactions` row at `at`, **inserted and written in one
+ * `spreadsheets.batchUpdate`** — never written into a row that happens to be
+ * blank.
+ *
+ * The Apps Script writers (the sync's `appendRows_`, the cash drain) take the
+ * script lock against each other; the Worker cannot reach it. Writing into the
+ * next row by address would leave a network round trip between reading column
+ * A and writing, in which a sync could write the same row and one of the two
+ * transactions would be lost without a trace. Inserting a row at `at` instead
+ * pushes anything that landed there in the meantime down, not over — and one
+ * request is applied all or nothing, so nothing can land between the insert
+ * and the write. What remains is Apps Script's own window between reading its
+ * last row and writing after it: milliseconds inside one execution, against
+ * the Worker's hundreds.
+ */
+async function insertRow(google: Google, sheets: Sheets, at: number, fields: { [name: string]: Cell }): Promise<void> {
+  const tab = sheets.tabs[TABS.TRANSACTIONS];
+  if (!tab) throw new Refusal(`This book has no "${TABS.TRANSACTIONS}" tab. Run Spendsheet → Setup sheet first.`);
+  const requests: object[] = [];
+  // An insert must land inside the grid, so a full grid grows by one first.
+  if (at > tab.rows) requests.push({ appendDimension: { sheetId: tab.sheetId, dimension: 'ROWS', length: at - tab.rows } });
+  requests.push(
+    { insertDimension: { range: { sheetId: tab.sheetId, dimension: 'ROWS', startIndex: at - 1, endIndex: at }, inheritFromBefore: at > 2 } },
+    {
+      updateCells: {
+        start: { sheetId: tab.sheetId, rowIndex: at - 1, columnIndex: 0 },
+        rows: [{ values: TX_COLUMNS.map((name) => cellData(name in fields ? fields[name] : '')) }],
+        fields: 'userEnteredValue'
+      }
+    }
+  );
+  await google.update(requests);
+}
+
 const moved = 'That row has moved since this page read the book. Pull to refresh and try again.';
 
 // ---------------------------------------------------------------------------
@@ -507,7 +553,6 @@ export async function transfer(google: Google, request: TransferRequest, now: Da
   if (hasUid(uids, legUid)) return finish(`That transfer was already recorded on ${targetName}.`);
 
   const at = nextRow(uids);
-  await ensureRows(google, sheets, TABS.TRANSACTIONS, at);
   const legAmount = -amount;
   const leg: { [name: string]: Cell } = {
     uid: legUid,
@@ -526,12 +571,13 @@ export async function transfer(google: Google, request: TransferRequest, now: Da
     source: TX_SOURCE_TRANSFER_LEG,
     imported_at: serialAt(now, sheets.timeZone)
   };
-  writes.push({ range: `${quoted(TABS.TRANSACTIONS)}!A${at}:O${at}`, values: [TX_COLUMNS.slice(0, 15).map((name) => leg[name])] });
   const group = 'tr:' + (amount < 0 ? request.uid : legUid);
-  put('category_override', at, TRANSFER_CATEGORY_NAME);
-  put('subcategory_override', at, transferSubcategoryFor(target, amount, undefined, categories));
-  put('confirmed', at, true);
-  put('transfer_group', at, group);
+  leg.category_override = TRANSFER_CATEGORY_NAME;
+  leg.subcategory_override = transferSubcategoryFor(target, amount, undefined, categories);
+  leg.confirmed = true;
+  leg.transfer_group = group;
+  // The source is above `at` by construction, so the insert does not move it.
+  await insertRow(google, sheets, at, leg);
   put('transfer_group', request.row, group);
   touched.push(at);
   return finish(
@@ -664,20 +710,22 @@ export async function addCash(google: Google, request: CashRequest, now: Date): 
   if (hasUid(uids, uid)) return { message: 'Already added.', rows: {} };
 
   const at = nextRow(uids);
-  await ensureRows(google, sheets, TABS.TRANSACTIONS, at);
-  const currency = text(configOf(configValues).base_currency) || 'EUR';
-  const row: Cell[] = [
-    uid, accountId, accountName,
-    daySerial ?? nowSerial,
-    daySerial ?? '',
-    daySerial === null || day === today ? nowSerial : daySerial,
-    amount, currency, description, '', '', '', '', TX_SOURCE_CASH, nowSerial
-  ];
-  const writes: { range: string; values: Cell[][] }[] = [{ range: `${quoted(TABS.TRANSACTIONS)}!A${at}:O${at}`, values: [row] }];
-  if (category) writes.push({ range: txCell('category_override', at), values: [[category]] });
-  if (subcategory) writes.push({ range: txCell('subcategory_override', at), values: [[subcategory]] });
-  if (labels) writes.push({ range: txCell('labels', at), values: [[labels]] });
-  await google.write(writes);
+  await insertRow(google, sheets, at, {
+    uid,
+    account_id: accountId,
+    account_name: accountName,
+    booking_date: daySerial ?? nowSerial,
+    value_date: daySerial ?? '',
+    transaction_date: daySerial === null || day === today ? nowSerial : daySerial,
+    amount,
+    currency: text(configOf(configValues).base_currency) || 'EUR',
+    description,
+    source: TX_SOURCE_CASH,
+    imported_at: nowSerial,
+    category_override: category,
+    subcategory_override: subcategory,
+    labels
+  });
   return { message: '1 added', rows: await fresh(google, [at]) };
 }
 

@@ -202,7 +202,9 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
         const target = b.accounts.find((account) => String(account.name) === fields.destination);
         if (target && String(target.kind) === 'bank') {
           const window = configNumber(b.config, 'transfer_window_days');
-          const found = findCounterLeg(b.transactions, source, String(target.account_id), window, b.timeZone);
+          // Against the amount as it will be: an edited cash row pairs at its new figure, as the Worker checks it.
+          const amount = fields.amount === undefined ? source.amount : Number(source.amount) < 0 ? -fields.amount : fields.amount;
+          const found = findCounterLeg(b.transactions, { ...source, amount }, String(target.account_id), window, b.timeZone);
           if (found) counter = { uid: String(found.uid), row: found._row };
         }
       }

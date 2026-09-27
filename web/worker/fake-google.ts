@@ -35,6 +35,8 @@ export class FakeGoogle implements Google {
   readonly tabs: { [title: string]: Tab } = {};
   readonly calls: { kind: 'read' | 'write' | 'update' | 'sheets'; detail: unknown }[] = [];
   timeZone = 'Europe/Rome';
+  /** Runs once before the next update — another writer acting between this one's read and its write. */
+  meanwhile: (() => void) | null = null;
   private nextId = 1;
 
   /** A tab of `rows` grid rows, holding `values` from row 1 (the header) down. */
@@ -87,6 +89,9 @@ export class FakeGoogle implements Google {
 
   async update(requests: object[]): Promise<void> {
     this.calls.push({ kind: 'update', detail: requests });
+    const other = this.meanwhile;
+    this.meanwhile = null;
+    other?.();
     const byId = (id: number) => Object.values(this.tabs).find((tab) => tab.sheetId === id) as Tab;
     for (const request of requests as { [kind: string]: any }[]) {
       if (request.appendDimension) {
@@ -100,6 +105,25 @@ export class FakeGoogle implements Google {
         const cells = (from.grid[source.startRowIndex] ?? []).slice(source.startColumnIndex, source.endColumnIndex);
         while (to.grid.length <= destination.startRowIndex) to.grid.push([]);
         to.grid[destination.startRowIndex] = cells.map((value) => (value === undefined ? '' : value));
+      } else if (request.insertDimension) {
+        const { sheetId, startIndex, endIndex } = request.insertDimension.range;
+        const tab = byId(sheetId);
+        if (startIndex >= tab.rows) throw new Error('insert outside the grid');
+        while (tab.grid.length < startIndex) tab.grid.push([]);
+        tab.grid.splice(startIndex, 0, ...Array.from({ length: endIndex - startIndex }, () => [] as Cell[]));
+        tab.rows += endIndex - startIndex;
+      } else if (request.updateCells) {
+        const { start, rows } = request.updateCells;
+        const tab = byId(start.sheetId);
+        rows.forEach((row: { values: { userEnteredValue?: { [kind: string]: Cell } }[] }, i: number) => {
+          const r = start.rowIndex + i;
+          if (r >= tab.rows) throw new Error('exceeds grid limits');
+          while (tab.grid.length <= r) tab.grid.push([]);
+          row.values.forEach((cell, c) => {
+            const value = cell.userEnteredValue ? Object.values(cell.userEnteredValue)[0] : '';
+            tab.grid[r][start.columnIndex + c] = value;
+          });
+        });
       } else if (request.deleteDimension) {
         const { sheetId, startIndex, endIndex } = request.deleteDimension.range;
         const tab = byId(sheetId);

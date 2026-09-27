@@ -38,8 +38,9 @@
  * read that left **before** a write landed comes back holding the book as it
  * was, and replacing the book with it undoes the write on screen. So every
  * read is stamped with the number of writes issued when it left, and a read
- * that comes back to a different number — or while any write is out — is
- * dropped, and read again once the writes have settled. Being a read late
+ * that left while a write was out, comes back to a different number, or comes
+ * back while any write is out, is dropped — and read again once the writes
+ * have settled. Being a read late
  * costs nothing; being a write wrong costs the row.
  */
 
@@ -243,11 +244,13 @@ export async function refresh(): Promise<void> {
   const gen = generation;
   const mine = ++reads;
   const stamp = writesIssued;
+  // A write already out may not have reached Google before this read does.
+  const writing = writesOut > 0;
   setReading(true);
   try {
     const [batch, book] = await Promise.all([api.read(), api.book()]);
     if (gen !== generation || mine !== reads) return;
-    if (stamp !== writesIssued || writesOut > 0) {
+    if (writing || stamp !== writesIssued || writesOut > 0) {
       // Older than a write: it would put the row back as it was. Read again when the writes settle.
       rereadAfterWrites = true;
       if (writesOut === 0) {
@@ -370,7 +373,14 @@ export function wrote(gen: number, rows: FreshRows, removed?: number): void {
     if (removed) values.splice(removed - 1, 1);
     return { ...range, values };
   });
-  const batch = { ...h.batch, valueRanges };
+  // A deleted row is archived to `_removed`, and the row-loss check excuses the
+  // drop by exactly that uid: the copy has to say so too, or the delete reads
+  // as rows gone missing until the next full read.
+  const gone = removed ? transactionsOf(h.batch)?.[removed - 1]?.[0] : undefined;
+  const archived = gone === undefined || gone === '' ? valueRanges : valueRanges.map((range) =>
+    tabOf(range.range) === TABS.REMOVED ? { ...range, values: [...(range.values ?? [['uid']]), [gone]] } : range
+  );
+  const batch = { ...h.batch, valueRanges: archived };
   setHeld({ ...h, batch });
   if (owner) void writeCopy({ owner: owner.sub, email: owner.email, timeZone: h.timeZone, batch, savedAt: h.savedAt });
 }
@@ -381,6 +391,10 @@ export function wrote(gen: number, rows: FreshRows, removed?: number): void {
  * book is read again — a write refused for a row that moved is a page whose
  * idea of the book is out of date.
  */
+function transactionsOf(batch: BatchGet): Cell[][] | undefined {
+  return batch.valueRanges?.find((range) => tabOf(range.range) === TABS.TRANSACTIONS)?.values;
+}
+
 export function writeFailed(error: unknown): void {
   if (error instanceof ApiRefused) {
     void forgetEverything();
