@@ -15,3 +15,12 @@ const root = document.getElementById('root');
 if (!root) throw new Error('main: #root is missing from index.html');
 
 render(() => <App />, root);
+
+// Built pages only: under `vite` the shell changes on every save, and a worker
+// serving yesterday's copy of it is a debugging session nobody asked for.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {
+    // No worker is a page that needs the network to open, which is every page
+    // before this one.
+  });
+}

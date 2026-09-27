@@ -82,22 +82,27 @@ const SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets';
 /**
  * The only ranges the read route will ask for, keyed by the name a page uses.
  *
- * Wide enough for each tab's schema (`transactions` ends at AD), and quoted
- * because a tab name starting with `_` is one A1 notation is entitled to read
- * as something else. Phase 3 reads all of them in one `batchGet`.
+ * Exactly each tab's schema width — `schema.ts` in `web/src/domain` is the
+ * list, and the parity test reads the book through these ranges — so columns
+ * you add to the right of a tab never travel, and quoted because a tab name
+ * starting with `_` is one A1 notation is entitled to read as something else.
+ * The page reads all of them in one `batchGet`.
  */
 export const READ_RANGES: Record<string, string> = {
   transactions: "'transactions'!A1:AD",
-  accounts: "'accounts'!A1:Z",
-  categories: "'categories'!A1:Z",
-  labels: "'labels'!A1:Z",
-  pending: "'pending'!A1:Z",
-  _status: "'_status'!A1:Z",
-  _runs: "'_runs'!A1:Z",
-  _config: "'_config'!A1:Z",
-  _memory: "'_memory'!A1:Z",
-  _monitor: "'_monitor'!A1:Z",
-  _removed: "'_removed'!A1:AD"
+  accounts: "'accounts'!A1:R",
+  categories: "'categories'!A1:H",
+  labels: "'labels'!A1:D",
+  pending: "'pending'!A1:O",
+  _status: "'_status'!A1:I",
+  _runs: "'_runs'!A1:K",
+  // Key and value; the description is prose nothing reads.
+  _config: "'_config'!A1:B",
+  _memory: "'_memory'!A1:E",
+  _monitor: "'_monitor'!A1:B",
+  // The uid column only: the row-loss check is the one reader, and it asks
+  // whether an archived uid is still in the ledger — nothing else about it.
+  _removed: "'_removed'!A1:A"
 };
 
 const SECURITY_HEADERS: Record<string, string> = {

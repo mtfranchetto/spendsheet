@@ -835,7 +835,9 @@ export function createGoogleStubs(options = {}) {
 
     Session: {
       getEffectiveUser: () => ({ getEmail: () => options.userEmail || 'you@example.com' }),
-      getActiveUser: () => ({ getEmail: () => options.userEmail || 'you@example.com' })
+      getActiveUser: () => ({ getEmail: () => options.userEmail || 'you@example.com' }),
+      // The manifest's `timeZone`, which is what the real one reports.
+      getScriptTimeZone: () => 'Europe/Rome'
     },
 
     MimeType: { CSV: 'text/csv', PLAIN_TEXT: 'text/plain' },

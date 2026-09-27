@@ -21,7 +21,10 @@ draws no dashboard yet.
 | `worker/index.ts` | the only file that knows it is on Cloudflare. |
 | `wrangler.jsonc` | static assets from `dist/`; only `/api/*`, `/auth/*` and `/connect` reach the Worker. |
 | `public/_headers` | the CSP for every static file, which the Worker never sees. |
-| `src/sheets/records.ts` | Sheets API values → `readRecords_`-shaped records. Phase 3 builds on it. |
+| `src/sheets/records.ts` | Sheets API values → `readRecords_`-shaped records: padded rows, counted by the key column. |
+| `src/domain/` | the book, asked a question, on the phone: `21_query.gs`, `23_api.gs`'s own logic, `runChecks_` and `normalizeMerchant` in TypeScript, over day numbers and the book's clock. Framework-free. `payloads.ts` answers what the Apps Script viewer's five calls answered, in the same shapes. |
+| `src/store/copy.ts` | the last `batchGet`, in IndexedDB, for the account that read it. |
+| `public/sw.js` | the shell from this device's cache, before the network is asked anything. Never `/api`, `/auth` or `/connect`. |
 | `src/probe.ts` | the read-timing numbers the thin slice exists to take. |
 | `src/api/client.ts` | asking the Worker something, and telling a refusal from a dropped connection from a book out of reach. |
 | `src/app/` | the one screen. |
@@ -167,9 +170,22 @@ a key the test generates, and every refusal asserts that **nothing reached
 Google** first. Each `scripts/*.mjs` keeps its test beside it, as the root's
 `scripts/` tests do.
 
+**`tests/parity.test.mjs` is what holds `src/domain/` to the `.gs`.** It
+answers the preview's book (`tests/book.mjs`) with the `.gs` in the harness,
+reads the same book back the way the Sheets API sends it — through the Worker's
+own `READ_RANGES`, dates as serials, trailing empties dropped — answers it with
+the TypeScript, and deep-compares every payload at four pinned instants, with
+`TZ` pinned to the book's zone. It lives at the root because it loads the
+harness. Changing one side's behaviour without the other is a red test, and it
+was broken three ways on purpose to see that it is.
+
 `npm run test:e2e` at the root drives this page in WebKit too (`web/e2e/`),
 with every Worker path answered by `page.route`: an unreachable server, a
-refusal, a crafted refusal link, a session ending mid-page.
+refusal, a crafted refusal link, a session ending mid-page, and the stored
+copy's round trip through WebKit's real IndexedDB. `web/e2e/shell/` runs
+against the **built** page, because the service worker registers only there,
+and takes the server away for real — `setOffline` and a routed abort both stop
+a WebKit navigation before the worker is asked.
 
 ## The 10ms cap
 

@@ -20,6 +20,7 @@
  */
 
 import type { RefusedAccount } from '../admit';
+import type { BatchGet } from '../domain/book';
 
 export class ApiRefused extends Error {
   constructor() {
@@ -78,6 +79,8 @@ export const api = {
   health: () => json<Health>('/api/health'),
   me: () => json<Me>('/api/me'),
   book: () => json<Book>('/api/book'),
+  // Every tab the screens read, in one `values.batchGet`, passed through unread.
+  read: () => json<BatchGet>('/api/read'),
   // A POST from this page carries its own Origin, which is what the Worker checks.
   signOut: () => json<{ ok: boolean }>('/auth/signout', { method: 'POST' }),
   // Who this browser was just refused as, from the Worker's sealed cookie. No

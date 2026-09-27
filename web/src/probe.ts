@@ -17,18 +17,14 @@
  * and those are not records.
  */
 
+import { tabOf } from './domain/book';
 import { lastRecordIndex, type Cell } from './sheets/records';
+
+export { tabOf };
 
 export type ValueRanges = { valueRanges?: { range?: string; values?: Cell[][] }[] };
 
 export type Sample = { total: number; google: number | null; bytes: number };
-
-/** `'transactions'!A1:AD` → `transactions`. */
-export function tabOf(range: string | undefined): string {
-  const bang = String(range ?? '').lastIndexOf('!');
-  const name = bang < 0 ? String(range ?? '') : String(range).slice(0, bang);
-  return name.replace(/^'(.*)'$/, '$1').replace(/''/g, "'");
-}
 
 /** Records per tab: data rows up to the last with a first column. */
 export function rowCounts(payload: ValueRanges): Record<string, number> {

@@ -45,6 +45,11 @@ const PORT = Number(process.env.PREVIEW_PORT || 4322);
 // dev server's proxy — running or not — can change what they see.
 const VIEWER_PORT = Number(process.env.VIEWER_PORT || 4323);
 
+// The viewer again, **built**, because its service worker registers only in a
+// production page — the dev server's shell changes on every save. `web/e2e/
+// shell/` is the one directory that runs against it.
+const SHELL_PORT = Number(process.env.SHELL_PORT || 4324);
+
 export default defineConfig({
   testDir: 'tests/e2e',
   fullyParallel: true,
@@ -67,7 +72,13 @@ export default defineConfig({
     {
       name: 'viewer-webkit',
       testDir: 'web/e2e',
+      testIgnore: 'shell/**',
       use: { ...devices['iPhone 13'], baseURL: `http://localhost:${VIEWER_PORT}` }
+    },
+    {
+      name: 'viewer-shell',
+      testDir: 'web/e2e/shell',
+      use: { ...devices['iPhone 13'], baseURL: `http://localhost:${SHELL_PORT}` }
     }
   ],
 
@@ -82,6 +93,13 @@ export default defineConfig({
     {
       command: `npm --prefix web run dev -- --port=${VIEWER_PORT} --strictPort`,
       url: `http://localhost:${VIEWER_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'ignore',
+      stderr: 'pipe'
+    },
+    {
+      command: `npm --prefix web run build && npm --prefix web run preview -- --port=${SHELL_PORT} --strictPort`,
+      url: `http://localhost:${SHELL_PORT}/`,
       reuseExistingServer: !process.env.CI,
       stdout: 'ignore',
       stderr: 'pipe'

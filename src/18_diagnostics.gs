@@ -81,6 +81,21 @@ function runSmokeTests() {
     return describeSubcategoryParents_();
   }));
 
+  // Two clocks decide what "today" is, and they have to be the same clock.
+  // This script counts days in the manifest's zone; the viewer on the phone
+  // reads the book's own zone from its spreadsheet properties. A book whose
+  // zone was changed under File → Settings would put a transaction on one day
+  // here and the neighbouring one there, and "this month" would start at a
+  // different midnight on each — a disagreement no fake can show, because
+  // the harness has one zone.
+  results.push(smokeTest_('sheet', "the book's time zone is the script's", function () {
+    var book = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    var script = Session.getScriptTimeZone();
+    if (book !== script) throw new Error('the book is in ' + book + ' and the script in ' + script +
+      ' — set File → Settings → Time zone to ' + script);
+    return book;
+  }));
+
   // A book whose `owner_email` is blank refuses everyone, including you, and
   // the symptom is a page that says "not available" with nothing to read. That
   // is a live-runtime fact — `setup()` fills the row from `getEffectiveUser()`,
