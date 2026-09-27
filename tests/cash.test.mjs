@@ -218,26 +218,6 @@ describe('draining', () => {
     c.computeCashUid = () => uid;
     expect(c.drainCashEntries_(known, new Date()).inserted).toBe(0);
   });
-
-  it('reads `categories` once when the caller has already read it', () => {
-    // `appAddCash` validates the category and then drains, a few lines apart in
-    // one request. Two reads of the same tab is three round trips paid twice
-    // with somebody watching the button.
-    const c = withWallet();
-    type(c, 2, { date: new Date(2026, 6, 30), account: 'wallet', amount: 100, category: 'Transfer' });
-
-    const index = c.categoryIndex_();
-    expect(index.present).toBe(true);
-    expect(index.kinds.Transfer).toBe('transfer');
-
-    // The only way to prove a read did not happen is to make it fail.
-    c.categoryIndex_ = () => { throw new Error('read categories a second time'); };
-
-    expect(c.drainCashEntries_(
-      c.readUidIndex_(tx(c)), new Date(), index).inserted).toBe(1);
-    // An ATM withdrawal adds to the wallet — the direction came from `kinds`.
-    expect(tx(c).getRange('G2').getValue()).toBe(100);
-  });
 });
 
 describe('the wallet balance', () => {

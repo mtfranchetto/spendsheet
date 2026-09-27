@@ -1,33 +1,16 @@
 {
   "_comment": [
-    "Copy to .deploy.json and fill in the two deployment ids from `npx clasp list-deployments`.",
-    ".deploy.json is gitignored: this repo is public, and the app door's URL is the whole",
-    "of what stops a stranger reaching the page in the first place.",
+    "Copy to .deploy.json and fill in the deployment id from `npx clasp list-deployments`.",
+    ".deploy.json is gitignored: it names this book's deployment, not the project's.",
     "",
-    "`access` is both halves of the job: the deploy writes it into src/appsscript.json",
-    "before cutting that door's version, because a redeploy rebuilds the entry point from",
-    "the manifest and the API has no other way to set it — and then checks the live door",
-    "reports it. ANYONE_ANONYMOUS is 'Anyone', MYSELF is 'Only myself'. The bank door has",
-    "to be Anyone: Enable Banking redirects the consent flow to it with nobody signed in.",
-    "The app door serves balances and must be MYSELF.",
+    "This is the consent redirect Enable Banking sends the browser to. Its access comes",
+    "from src/appsscript.json, which must say ANYONE_ANONYMOUS: a redeploy rebuilds the",
+    "entry point from the manifest, and the API has no other way to set it.",
     "",
     "lastDeploy is written by the script: `commit` is how it knows which files changed",
-    "since, and `versions` records the version each door was left on — one per door,",
-    "since they are cut from different manifests. Delete it to force the next run to",
-    "treat everything as changed."
+    "since, and `version` is the version the redirect was left on. Delete it to force",
+    "the next run to treat everything as changed."
   ],
-  "doors": [
-    {
-      "key": "bank",
-      "deploymentId": "AKfycb…",
-      "description": "Spendsheet banking",
-      "access": "ANYONE_ANONYMOUS"
-    },
-    {
-      "key": "app",
-      "deploymentId": "AKfycb…",
-      "description": "Spendsheet viewer",
-      "access": "MYSELF"
-    }
-  ]
+  "deploymentId": "AKfycb…",
+  "description": "Spendsheet banking"
 }

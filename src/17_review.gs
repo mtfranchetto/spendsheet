@@ -316,8 +316,9 @@ function describeQueue_(result) {
  * to `_anomalies`, which is the one place in this project that a silent
  * failure is still findable from.
  *
- * `onEdit` is a public name Google reserves, so Door 1 lets anyone call it too.
- * A caller there can only send JSON, and JSON cannot hold a function. So a
+ * `onEdit` is a public name Google reserves, so any page this project serves
+ * can call it by name too. A caller there can only send JSON, and JSON cannot
+ * hold a function. So a
  * `range` with no `getSheet` returns here, before the `catch` below would write
  * that stranger's call into `_anomalies`, once per call.
  */
@@ -338,21 +339,7 @@ function onEdit(e) {
 
     if (sheet.getName() === TABS.CASH_ENTRY && functionExists_('onCashEntryEdit_')) {
       onCashEntryEdit_(sheet, e.range);
-      return;
     }
-
-    // Typing into `transactions` is the one write the version counter cannot
-    // see. Every write this project makes goes through `appendRows_` or
-    // `writeCell_` and bumps it; a category typed straight into the tab goes
-    // through neither, so the app's ledger cache would go on serving the old
-    // value until it expired.
-    //
-    // That blind spot is what the cache TTL was covering, and covering it with
-    // a five-minute expiry meant paying a 4.3-second read on nearly every open
-    // — a hit needs two opens inside five minutes, which is not how the app is
-    // used. Closing the hole here is what lets the TTL be long. See
-    // `LEDGER_CACHE_SECONDS`.
-    if (sheet.getName() === TABS.TRANSACTIONS) bumpDataVersion_();
   } catch (err) {
     logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'onEdit write-back failed: ' + err.message, '');
   }

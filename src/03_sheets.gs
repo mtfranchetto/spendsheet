@@ -134,8 +134,6 @@ function textSafe_(value) {
 
 function writeCell_(sheet, row, headers, name, value) {
   sheet.getRange(row, colIndex_(headers, name)).setValue(textSafe_(value));
-  forgetReadCache_();
-  if (versionedSheet_(sheet)) bumpDataVersion_();
 }
 
 function readCell_(sheet, row, headers, name) {
@@ -241,72 +239,11 @@ var ANY_COLUMN = 0;
  * schema are neither read nor disturbed.
  */
 function readRecords_(sheet, headers, keyColumn) {
-  return recordValues_(sheet, headers.length, keyColumn).map(function (values, i) {
+  return readRecordValues_(sheet, headers.length, keyColumn).map(function (values, i) {
     var record = { _row: i + 2 };
     headers.forEach(function (name, c) { record[name] = values[c]; });
     return record;
   });
-}
-
-/**
- * A read cache for the length of one page request, and off everywhere else.
- *
- * Opening the app made **35 spreadsheet round trips** over about **seven
- * distinct tabs**. `_config` was read eight times because `readConfig_` is not
- * memoised and every caller reaches for it; `accounts` four times, by four
- * functions that each fetch it for themselves; `_status` and `_runs` twice
- * each. Measured on the live book: ~175ms a trip, `bootstrapMs` 6,170 — and
- * only 315ms of that was the ledger, which is the one read that had a cache.
- *
- * The multiplier nobody put there is that **`readRecords_` is two trips**:
- * `lastRecordRow_` scans the key column, then the block is read, because
- * `getLastRow()` lies on any tab carrying an `ARRAYFORMULA`. So seven tabs is
- * fourteen unavoidable calls and the other twenty-one were the same data
- * fetched again.
- *
- * **It is opt-in, and that is the whole safety argument.** A memo that is
- * always on is a correctness bug waiting for the first function that writes a
- * cell and reads it back — `setup()` and the sync both do, repeatedly. So the
- * default is `null`, meaning off, and the only thing that switches it on is a
- * *read-only* app request. That is not a new rule to remember: it is the seam
- * this project already has, where `21_query.gs` reads and `22_actions.gs`
- * writes. `appConfirm` and `appAddCash` deliberately run without it.
- *
- * Any write clears it anyway, as insurance rather than as the argument.
- *
- * What is cached is the **raw values**, not the records built from them.
- * Handing two callers the same record objects means a field one of them sets
- * appears in the other's copy, which is the kind of bug that surfaces a month
- * later on one tab. Rebuilding the objects is microseconds; the round trip is
- * the 175ms.
- */
-var READ_CACHE = null;
-
-function withReadCache_(fn) {
-  var outer = READ_CACHE;
-  READ_CACHE = {};
-  try {
-    return fn();
-  } finally {
-    READ_CACHE = outer;
-  }
-}
-
-/** Any write invalidates it — see the note above on why this is not the argument. */
-function forgetReadCache_() {
-  if (READ_CACHE) READ_CACHE = {};
-}
-
-function recordValues_(sheet, width, keyColumn) {
-  if (!READ_CACHE) return readRecordValues_(sheet, width, keyColumn);
-
-  // `|` rather than a control character, deliberately: a literal one in a
-  // source file makes grep classify it as binary and report nothing at all.
-  var key = sheet.getName() + '|' + width + '|' + keyColumn;
-  if (!Object.prototype.hasOwnProperty.call(READ_CACHE, key)) {
-    READ_CACHE[key] = readRecordValues_(sheet, width, keyColumn);
-  }
-  return READ_CACHE[key];
 }
 
 function readRecordValues_(sheet, width, keyColumn) {
@@ -329,62 +266,6 @@ function readRecordValues_(sheet, width, keyColumn) {
  * rows given, so a tab whose later columns hold formulas or your own notes is
  * left alone.
  */
-/**
- * A number that changes whenever `transactions` does.
- *
- * The ledger cache in `21_query.gs` is keyed on this, and the whole question a
- * cache has to answer is "has anything changed since". The obvious answer — the
- * row count — is wrong here, and wrong in the direction that matters:
- * confirming a transaction writes column AB and appends nothing, so the count
- * is identical and a cache keyed on it serves the row you just confirmed
- * straight back to you. The app's own writes would be the ones it could not
- * see. Same for a category override, a subcategory correction, and every edit
- * the review queue exists to make.
- *
- * So it counts *writes*, not rows. Bumped from `appendRows_` and `writeCell_`
- * rather than from each of the dozen callers that reach for them, because a
- * list of writers someone has to keep current is the thing that goes stale —
- * and the one that gets forgotten is the one that shows you the wrong balance.
- *
- * Failing to read it returns something that can never match a stored key, so a
- * broken PropertiesService means no cache rather than a stale one. That
- * direction is not negotiable: a cache that cannot prove it is current must
- * behave as though it is not.
- */
-var DATA_VERSION_KEY = 'transactions_version';
-
-function dataVersion_() {
-  try {
-    return String(
-      PropertiesService.getScriptProperties().getProperty(DATA_VERSION_KEY) || '0');
-  } catch (e) {
-    return 'unreadable-' + Date.now();
-  }
-}
-
-function bumpDataVersion_() {
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var next = (Number(props.getProperty(DATA_VERSION_KEY)) || 0) + 1;
-    props.setProperty(DATA_VERSION_KEY, String(next));
-  } catch (e) {
-    // A version that cannot be bumped is a cache that goes on serving the old
-    // answer, so this is worth an anomaly rather than a silent pass.
-    if (typeof logAnomaly_ === 'function') {
-      logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'could not bump the data version', e.message);
-    }
-  }
-}
-
-/** Whether a write to this sheet invalidates the ledger cache. */
-function versionedSheet_(sheet) {
-  try {
-    return !!sheet && sheet.getName() === TABS.TRANSACTIONS;
-  } catch (e) {
-    return false;
-  }
-}
-
 function appendRows_(sheet, keyColumn, rows) {
   if (!rows || !rows.length) return { row: null, count: 0 };
 
@@ -402,8 +283,6 @@ function appendRows_(sheet, keyColumn, rows) {
 
   var start = lastRecordRow_(sheet, keyColumn) + 1;
   sheet.getRange(start, 1, rows.length, width).setValues(safe);
-  forgetReadCache_();
-  if (versionedSheet_(sheet)) bumpDataVersion_();
   return { row: start, count: rows.length };
 }
 

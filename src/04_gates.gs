@@ -8,8 +8,9 @@
  *     the Sheet opened. Decided on the UI context.
  *   `requireScheduled_(e)`  — a time-driven trigger named it. Decided on the
  *     event object.
- *   `requireOwner_()`       — the owner's own page called it. Decided on
- *     identity, against `owner_email` in `_config`.
+ *   `requireOwner_()`       — a dialog's callback, which has no UI of its own,
+ *     reached through `requireInteractive_`. Decided on identity, against
+ *     `owner_email` in `_config`.
  *
  * They live low in the numbering because nearly every file calls them, and
  * everything they need is in `00_config.gs` and `03_sheets.gs`: `_config`,
@@ -48,7 +49,7 @@ function webAppAccessDecision_(owner, active) {
 }
 
 /**
- * `owner_email` as the set of addresses allowed through Door 2.
+ * `owner_email` as the set of addresses whose dialog callbacks are admitted.
  *
  * One cell, comma-separated, because two people share a household ledger and
  * the alternative — giving a second person the first person's Google password —
@@ -106,11 +107,11 @@ function webAppOwner_() {
 }
 
 /**
- * The gate, on the server side of a page call.
+ * The gate, on the server side of a dialog's callback.
  *
  * Throws rather than returning a refusal object, because every caller
  * would otherwise have to remember to check — and the one that forgets is the
- * one that returns the balances. A throw reaches the page through
+ * one that returns the balances. A throw reaches the dialog through
  * `withFailureHandler`, which is where a refusal belongs.
  */
 function requireOwner_() {
@@ -123,20 +124,20 @@ function requireOwner_() {
 
 /**
  * The gate for a function reached from the Sheet — a menu item, or a dialog it
- * opened — and never from a page.
+ * opened.
  *
  * ## Why this is not the same gate as `requireOwner_`
  *
- * `google.script.run` reaches **every** public name, not only the ones in
- * `23_api.gs`. That is harmless for a script whose only door is the editor —
- * a menu item already runs for someone with edit access. It is not harmless
- * here, because Door 1 (the consent redirect) is served to *anyone* by
- * necessity, and the page it serves carries the `google.script.run` bridge. So
- * a stranger who loads that URL can call any global that lacks a trailing `_`,
- * and it runs with the owner's authority — which is what let the ungated
- * menu and diagnostic functions read balances, overwrite credentials and
- * repoint the redirect. The `_` suffix is a *privacy* rule; it was never an
- * authorisation one, and this is the missing half.
+ * `google.script.run` reaches **every** public name from any page this project
+ * serves, and runs it with the owner's authority. The `_` suffix is a
+ * *privacy* rule — it decides what is named to the browser — and was never an
+ * authorisation one; this is the missing half. The consent redirect is served
+ * to *anyone* by necessity, which is why it answers in plain text and serves no
+ * page, and so no bridge (`callbackText_` in `05_auth.gs`). The pages that are
+ * left are the dialogs, and they open for anyone the book is shared with — a
+ * second person's browser reaches every public name through them just as the
+ * owner's does. So each public name asks who is calling, and the plain-text
+ * redirect is not the only thing between a stranger and every function here.
  *
  * The distinguisher is the UI context, not the identity. `getUi()` is reachable
  * from a menu click and from a dialog the container opened, and throws under a
@@ -158,8 +159,9 @@ function requireInteractive_() {
     SpreadsheetApp.getUi();
     return;
   } catch (e) {
-    // No UI context — a page's google.script.run, or a trigger. Fall through to
-    // the identity check, which a dialog callback passes and a stranger fails.
+    // No UI context — a dialog's callback, a page's google.script.run, or a
+    // trigger. Fall through to the identity check, which a dialog callback
+    // passes and a stranger fails.
   }
   requireOwner_();
 }
@@ -169,7 +171,8 @@ function requireInteractive_() {
  * `selfCheck`, `snapshotToDrive`, `learnScheduled`.
  *
  * A trigger names its handler as a string, so the handler has to be a public
- * global — and every public global is on Door 1's surface. None of these is
+ * global — and every public global is reachable from any page this project
+ * serves, a dialog open in someone else's browser included. None of these is
  * harmless there. Each spends something with the owner's authority: a sync
  * spends the bank's daily allowance, where an overrun is a penalty measured in
  * hours; the health check sends mail; the snapshot writes to Drive; the memory

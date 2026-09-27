@@ -1,0 +1,170 @@
+import { describe, expect, it } from 'vitest';
+import { formatAmount, parseAmount } from './amount';
+import { agoWords, dayHeading, money, shortDate, withIcon } from './format';
+import { barGeometry, donutSlices, lineGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS } from './geometry';
+import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodOptionId, viewSearch } from './view';
+
+describe('format', () => {
+  it('groups thousands at four digits as well as five, so a column lines up', () => {
+    const four = money(8920.4, 'EUR');
+    const five = money(14500, 'EUR');
+    const separator = /\d(\D)\d{3}\D/.exec(five)?.[1];
+    expect(separator).toBeTruthy();
+    expect(four).toContain('8' + separator + '920');
+  });
+
+  it('draws nothing as a dash, and survives a currency Intl has never heard of', () => {
+    expect(money(null, 'EUR')).toBe('—');
+    expect(money(12, 'NOT_A_CODE')).toBe('12.00 NOT_A_CODE');
+    expect(money(12.4, 'NOT_A_CODE', { whole: true })).toBe('12 NOT_A_CODE');
+  });
+
+  it('shortens a day and a month without the year', () => {
+    expect(shortDate('2026-08-06')).toBe('6 Aug');
+    expect(shortDate('2026-08')).toBe('Aug 2026');
+    expect(shortDate('')).toBe('');
+  });
+
+  it('rounds an age outward', () => {
+    const now = 1_000_000_000_000;
+    expect(agoWords(now - 60_000, now)).toBe('a moment ago');
+    expect(agoWords(now - 10 * 60_000, now)).toBe('10 min ago');
+    expect(agoWords(now - 60 * 60_000, now)).toBe('an hour ago');
+    expect(agoWords(now - 30 * 60 * 60_000, now)).toBe('yesterday');
+  });
+
+  it("heads a day by the book's today, with a year only when it is not this one", () => {
+    expect(dayHeading('2026-09-27', '2026-09-27')).toBe('Today');
+    expect(dayHeading('2026-09-20', '2026-09-27')).toMatch(/^20 \S+$/);
+    expect(dayHeading('2025-09-20', '2026-09-27')).toMatch(/^20 \S+ 2025$/);
+  });
+
+  it('puts no leading space before a name with no icon', () => {
+    expect(withIcon('', 'Groceries')).toBe('Groceries');
+    expect(withIcon('🛒', 'Groceries')).toBe('🛒 Groceries');
+  });
+});
+
+describe('geometry', () => {
+  const label = (value: number) => String(Math.round(value));
+
+  it('keeps marks in priority order and drops the one that would overprint', () => {
+    const kept = spacedMarks([{ y: 30, label: 'zero' }, { y: 31, label: 'close' }, { y: 5, label: 'far' }]);
+    expect(kept.map((m) => m.label)).toEqual(['zero', 'far']);
+    expect(Math.abs(pixelsOf(30) - pixelsOf(31))).toBeLessThan(MARK_GAP_PIXELS);
+  });
+
+  it('centres a flat line and gives it one mark', () => {
+    const flat = lineGeometry([{ key: 'a', value: 5 }, { key: 'b', value: 5 }], label);
+    expect(flat.points).toBe('0.00,20.00 100.00,20.00');
+    expect(flat.marks).toEqual([{ y: 20, label: '5' }]);
+  });
+
+  it('marks both ends of a line before its middle', () => {
+    const line = lineGeometry([{ key: 'a', value: 0 }, { key: 'b', value: 100 }], label);
+    expect(line.marks.map((m) => m.label)).toEqual(['100', '0', '50']);
+  });
+
+  it('puts the zero line where the data says, and marks it first', () => {
+    const bars = barGeometry([{ key: 'a', income: 300, expenses: 100 }], label);
+    expect(bars.marks[0].label).toBe('0');
+    const income = bars.bars.find((bar) => bar.up)!;
+    const spend = bars.bars.find((bar) => !bar.up)!;
+    expect(income.y + income.height).toBeCloseTo(bars.zero);
+    expect(spend.y).toBeCloseTo(bars.zero);
+    // No income at all: no mark reading nothing above zero.
+    expect(barGeometry([{ key: 'a', income: 0, expenses: 50 }], label).marks.map((m) => m.label)).toEqual(['0', '-50']);
+  });
+
+  it('slices a ring of at most five whose dashes sum to the circumference', () => {
+    const rows = Array.from({ length: 7 }, (_, i) => ({ name: 'c' + i, total: 10 }));
+    const slices = donutSlices(rows);
+    expect(slices).toHaveLength(5);
+    expect(slices[0].dash).toBe('20.00 80.00');
+    expect(donutSlices([])).toEqual([]);
+  });
+});
+
+describe('view', () => {
+  it('writes nothing for the ordinary open', () => {
+    expect(viewSearch(defaultView())).toBe('');
+  });
+
+  it('round-trips a Records view through its address', () => {
+    const view = defaultView();
+    view.screen = 'records';
+    view.records = { ...view.records, period: { kind: 'month', year: 2026, month: 3 }, account: ['Revolut', 'Fineco'], label: 'travel', search: 'hotel', unconfirmedOnly: true };
+    const search = viewSearch(view);
+    expect(search).toBe('?v=records&p=month%3A2026-03&a=Revolut&a=Fineco&l=travel&q=hotel&u=1');
+    const back = parseView(search, 2026);
+    expect(back.screen).toBe('records');
+    expect(back.records.period).toEqual({ kind: 'month', year: 2026, month: 3 });
+    expect(back.records.account).toEqual(['Fineco', 'Revolut']);
+    expect(back.records.search).toBe('hotel');
+    expect(back.records.unconfirmedOnly).toBe(true);
+  });
+
+  it('keeps search and the review toggle off Charts, which has no control for either', () => {
+    const view = parseView('?v=analytics&q=hotel&u=1&p=last_month', 2026);
+    expect(view.analytics.period).toEqual({ kind: 'last_month' });
+    expect(view.records.search).toBe('');
+    expect(view.records.unconfirmedOnly).toBe(false);
+  });
+
+  it('refuses a period it cannot resolve rather than building a window from a NaN', () => {
+    expect(periodFromId('month:2026-13', null, null, 2026)).toBeNull();
+    expect(periodFromId('year:2999', null, null, 2026)).toBeNull();
+    expect(periodFromId('custom', '2026-01-01', null, 2026)).toBeNull();
+    expect(periodFromId('custom', '2026-01-01', '2026-02-01', 2026)).toEqual({ kind: 'custom', from: '2026-01-01', to: '2026-02-01' });
+    expect(periodFromId('fortnight', null, null, 2026)).toBeNull();
+    expect(parseView('?v=records&p=month:2026-13', 2026).records.period).toEqual({ kind: 'ytd' });
+  });
+
+  it('selects one option for every month, and keeps the month in the id', () => {
+    expect(periodId({ kind: 'month', year: 2026, month: 3 })).toBe('month:2026-03');
+    expect(periodOptionId({ kind: 'month', year: 2026, month: 3 })).toBe('month');
+    expect(periodId({ kind: 'year', year: 2024 })).toBe('year:2024');
+  });
+
+  it('reads All and an empty list as the same answer', () => {
+    expect(chosenAccounts('All')).toEqual([]);
+    expect(chosenAccounts('Revolut')).toEqual(['Revolut']);
+    expect(chosenAccounts(['A', 'B'])).toEqual(['A', 'B']);
+  });
+
+  it('ignores a screen it does not know', () => {
+    expect(parseView('?v=settings', 2026).screen).toBe('dashboard');
+  });
+
+  it('addresses the two forms by screen alone', () => {
+    expect(parseView('?v=add', 2026).screen).toBe('add');
+    const view = defaultView();
+    view.screen = 'value';
+    expect(viewSearch(view)).toBe('?v=value');
+  });
+});
+
+describe('amount', () => {
+  const itIT = { group: '.', decimal: ',' };
+  const enUS = { group: ',', decimal: '.' };
+
+  it('reads the last separator as the point when one or two digits follow it', () => {
+    expect(parseAmount('3,50', itIT)).toBe(3.5);
+    expect(parseAmount('3.5', itIT)).toBe(3.5);
+    expect(parseAmount('1.250', itIT)).toBe(1250);
+    expect(parseAmount('1.250,75', itIT)).toBe(1250.75);
+    expect(parseAmount('1,250', enUS)).toBe(1250);
+    expect(parseAmount('-12', enUS)).toBe(-12);
+  });
+
+  it('reads nothing as NaN, never as zero', () => {
+    expect(parseAmount('', itIT)).toBeNaN();
+    expect(parseAmount('abc', itIT)).toBeNaN();
+  });
+
+  it('groups at four digits and keeps two decimals', () => {
+    expect(formatAmount(8920.4, itIT)).toBe('8.920,40');
+    expect(formatAmount(3.5, enUS)).toBe('3.50');
+    expect(formatAmount(null, enUS)).toBe('');
+  });
+});

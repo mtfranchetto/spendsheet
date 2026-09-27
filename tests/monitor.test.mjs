@@ -126,6 +126,24 @@ describe('failure 3 — a consent is expiring', () => {
     expect(finding.detail).toMatch(/history/);
   });
 
+  it('counts the days across the spring clock change', () => {
+    // 29 March 2026 is 23 hours long in Rome, so the midnights either side of
+    // it are a whole day apart on the calendar and not in milliseconds. The
+    // zone is pinned because CI runs in UTC, where there is no change to cross.
+    const zone = process.env.TZ;
+    process.env.TZ = 'Europe/Rome';
+    try {
+      const c = built();
+      const saturday = new Date(2026, 2, 28, 9, 0, 0);
+      addConnection(c, { valid_until: new Date(2026, 2, 31, 9, 0, 0) });
+
+      const finding = c.runChecks_(saturday).filter((f) => f.kind === 'consent')[0];
+      expect(finding.subject).toMatch(/expires in 3 days/);
+    } finally {
+      process.env.TZ = zone;
+    }
+  });
+
   it('stays quiet on a consent with months left', () => {
     const c = built();
     addConnection(c);

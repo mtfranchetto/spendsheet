@@ -378,7 +378,6 @@ function rememberRowCount_() {
   record.transactions_rows = rows;
   record.removed_rows = removed;
   sheet.getRange(2, 1, 1, MONITOR_COLUMNS.length).setValues([toRow_(MONITOR_COLUMNS, record)]);
-  forgetReadCache_();
 }
 
 /**
@@ -458,14 +457,23 @@ function readRuns_() {
   return sheet ? readRecords_(sheet, RUN_COLUMNS) : [];
 }
 
-/** Whole days between two dates, positive when `to` is later. */
+/**
+ * Whole days between two dates, positive when `to` is later.
+ *
+ * **Rounded, not floored.** Two local midnights are a whole number of days
+ * apart on the calendar and not in milliseconds: across the spring clock change
+ * the gap is 23 hours, which floors to zero. So a consent expiring the Monday
+ * after read as one day nearer than it was, and a sync last seen on Friday was
+ * a day fresher on Tuesday than on the Tuesday before. The gap is always within
+ * an hour of a whole number of days, so rounding is exact.
+ */
 function daysBetween_(from, to) {
   var a = from instanceof Date ? from : new Date(from);
   var b = to instanceof Date ? to : new Date(to);
   if (isNaN(a.getTime()) || isNaN(b.getTime())) return 0;
 
   var day = 24 * 60 * 60 * 1000;
-  return Math.floor((startOfDay_(b) - startOfDay_(a)) / day);
+  return Math.round((startOfDay_(b) - startOfDay_(a)) / day);
 }
 
 function startOfDay_(date) {

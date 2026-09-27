@@ -1,325 +1,242 @@
 /**
- * App.tsx — the thin slice's whole screen.
+ * App.tsx — the shell: who you are, which screen, and the strips around it.
  *
- * It exists to answer the device checks, on the phone, from the Home Screen
- * icon, and nothing else belongs in it until phase 4 ports the real screens:
+ * Signed out, refused, unreachable and "choose the book" are the thin slice's
+ * screens, kept as they were, because each is a state the device checks
+ * proved and a test holds. Signed in, it is the Apps Script viewer's three
+ * screens and its tab bar, drawn from the book `state.ts` holds.
  *
- *   Am I signed in — and still signed in after Add to Home Screen, and after
- *   force-quitting the icon from the app switcher? The screen says whether it
- *   is running as the installed app, so a check made in a Safari tab by mistake
- *   is visible as one.
+ * ## The Solid 2 rules that fail quietly
  *
- *   Does the viewer's grant reach the book? `/api/book` reads its title, which
- *   is the proof the Picker's grant took — including a grant made on the laptop
- *   and used from the phone.
- *
- *   How long does a full read take, and how big is it? Sampled several times in
- *   one run, with Google's share split out, and a copyable summary.
- *
- * ## The three Solid rules, since none of them error
- *
- * A component body runs **once**: a signal read into a plain variable keeps its
- * first value for ever, so derived values live in the JSX or a memo. **Props
- * are getters** and must not be destructured. Nested state wants a store.
+ * A component body runs once, and reading a signal there freezes it: derived
+ * values live in JSX or a memo. Props are values, never destructured. A
+ * setter's value is seen after the microtask, and nothing reactive may write
+ * a signal — writes happen in handlers and in `state.ts`'s async code, which
+ * runs outside any owner.
  */
 
-import { createSignal, createResource, For, Show, onMount } from 'solid-js';
-import { api, call, goSignIn, goConnect, ApiRefused, ApiNoAccess, type Book, type Health, type Me } from '../api/client';
-import { googleMs, rowCounts, spread, type Sample, type ValueRanges } from '../probe';
+import { createEffect, createSignal, For, Match, onSettled, Show, Switch } from 'solid-js';
+import { api, goConnect, goSignIn, type RefusedAccount } from '../api/client';
 import { admitCommand } from '../admit';
+import { agoWords } from './format';
+import { AddCash, SetValue } from './Add';
+import { Analytics } from './Analytics';
+import { Dashboard } from './Dashboard';
+import { installPullToRefresh } from './pull';
+import { Records } from './Records';
+import { SheetHost } from './Sheet';
+import {
+  go, held, noAccess, pullToRefresh, pulled, readFailed, reading, refresh, session, signOut, toastText, view
+} from './state';
+import { viewSearch, type Screen } from './view';
 
-const SAMPLES = 5;
+/** What the last navigation said about signing in or connecting. Read once, before the URL is rewritten: it describes the past. */
+const params = new URLSearchParams(window.location.search);
+const arrived = { signin: params.get('signin'), connected: params.get('connected'), connect: params.get('connect') };
 
-/** What the last navigation said about signing in or connecting. Read once: it describes the past. */
-function landing(): { signin: string | null; connected: string | null; connect: string | null } {
-  const params = new URLSearchParams(window.location.search);
-  return { signin: params.get('signin'), connected: params.get('connected'), connect: params.get('connect') };
-}
+const TABS: { id: Screen; label: string; glyph: string }[] = [
+  { id: 'dashboard', label: 'Home', glyph: '\u{1F3E0}' },
+  { id: 'records', label: 'Records', glyph: '\u{1F4C4}' },
+  { id: 'analytics', label: 'Charts', glyph: '\u{1F4CA}' }
+];
 
-/** Whether this is the Home Screen icon rather than a Safari tab. */
-function installed(): boolean {
-  const legacy = (navigator as Navigator & { standalone?: boolean }).standalone;
-  return legacy === true || window.matchMedia('(display-mode: standalone)').matches;
-}
-
-type BookState = { kind: 'ok'; book: Book } | { kind: 'no-access' } | { kind: 'signed-out' };
-
-export default function App() {
-  const [health] = createResource<Health>(() => api.health());
-
-  // `null` is signed out, an answer rather than an error. A transport failure
-  // is left to throw: "unreachable" and "signed out" must not draw one screen.
-  const [me, { refetch }] = createResource<Me | null>(async () => {
-    try {
-      return await api.me();
-    } catch (error) {
-      if (error instanceof ApiRefused) return null;
-      throw error;
-    }
+/** The refusal notice. Who was refused comes from the Worker's sealed cookie, never the URL. */
+function Refused() {
+  const [who, setWho] = createSignal<RefusedAccount | null>(null);
+  onSettled(() => {
+    void api.refused().then((account) => setWho(account));
   });
-
-  // **Reading a resource that failed throws**, and nothing here catches it: the
-  // whole screen would go instead of the one message. So every read of one that
-  // can fail asks `.error` first, and these are the only way anything reads them
-  // — including `book`'s source, which is read like any other.
-  const signedIn = () => (me.error ? undefined : me());
-  const bookState = () => (book.error ? undefined : book());
-  const healthState = () => (health.error ? undefined : health());
-
-  const [book] = createResource(signedIn, async (): Promise<BookState> => {
-    try {
-      return { kind: 'ok', book: await api.book() };
-    } catch (error) {
-      if (error instanceof ApiNoAccess) return { kind: 'no-access' };
-      // The session ended between the two calls — Google revoked the grant, or
-      // the account left the allowlist — and the Worker has already cleared it.
-      // Asking `me` again puts the whole screen in agreement, rather than
-      // leaving "Signed in as" above a book that says otherwise.
-      if (error instanceof ApiRefused) {
-        void refetch();
-        return { kind: 'signed-out' };
-      }
-      throw error;
-    }
-  });
-
-  const [arrived, setArrived] = createSignal<ReturnType<typeof landing>>({ signin: null, connected: null, connect: null });
-  onMount(() => {
-    const seen = landing();
-    setArrived(seen);
-    // Tidy the query string so a reload does not show a stale message again.
-    if (seen.signin || seen.connected || seen.connect) window.history.replaceState({}, '', window.location.pathname);
-  });
-
-  // Who was refused comes from the Worker's sealed cookie, never the URL: the
-  // screen below turns it into a command the owner runs.
-  const [refused] = createResource(
-    () => arrived().signin === 'refused' || undefined,
-    () => api.refused()
-  );
-  const refusedCommand = () => (refused.error ? null : admitCommand(refused()));
-
-  const [samples, setSamples] = createSignal<Sample[]>([]);
-  const [rows, setRows] = createSignal<Record<string, number>>({});
-  const [probing, setProbing] = createSignal(false);
-  const [probeError, setProbeError] = createSignal<string | null>(null);
-
-  async function probe() {
-    setProbing(true);
-    setProbeError(null);
-    setSamples([]);
-    try {
-      for (let i = 0; i < SAMPLES; i++) {
-        const started = performance.now();
-        const response = await call('/api/read');
-        const body = await response.arrayBuffer();
-        const total = Math.round(performance.now() - started);
-        const payload = JSON.parse(new TextDecoder().decode(body)) as ValueRanges;
-        setSamples([...samples(), { total, google: googleMs(response.headers.get('server-timing')), bytes: body.byteLength }]);
-        setRows(rowCounts(payload));
-      }
-    } catch (error) {
-      setProbeError(
-        error instanceof ApiNoAccess ? 'The viewer cannot read the book yet — choose it first.'
-          : error instanceof ApiRefused ? 'Signed out. Sign in again.'
-          : 'The read failed. Try again.'
-      );
-    } finally {
-      setProbing(false);
-    }
-  }
-
-  const summary = () => {
-    const list = samples();
-    const google = list.map((s) => s.google).filter((ms): ms is number => ms !== null);
-    return JSON.stringify(
-      {
-        at: new Date().toISOString(),
-        installed: installed(),
-        samples: list,
-        totalMs: spread(list.map((s) => s.total)),
-        googleMs: spread(google),
-        kilobytes: list.length ? Math.round(list[list.length - 1].bytes / 1024) : null,
-        rows: rows(),
-        build: healthState()?.build
-      },
-      null,
-      2
-    );
-  };
-
+  const command = () => admitCommand(who());
   return (
-    <main>
-      <h1>Spendsheet</h1>
-
-      <Show when={arrived().signin === 'refused'}>
-        <div class="notice">
-          <p>
-            <Show when={refused.error ? null : refused()} fallback="That Google account">
-              {(who) => <strong>{who().email}</strong>}
-            </Show>{' '}
-            is not on this viewer's list.
-          </p>
-          <Show when={refusedCommand()}>
-            {(command) => (
-              <>
-                <p>
-                  To be let in, send this to whoever runs the viewer. They run it in <code>web/</code>, and you sign in
-                  again:
-                </p>
-                <pre>{command()}</pre>
-                <button type="button" onClick={() => navigator.clipboard?.writeText(command())}>
-                  Copy command
-                </button>
-              </>
-            )}
-          </Show>
-        </div>
-      </Show>
-      <Show when={arrived().signin === 'state' || arrived().signin === 'failed'}>
-        <p class="notice">Sign-in did not complete. Try again.</p>
-      </Show>
-      <Show when={arrived().connect === 'unavailable'}>
-        <p class="notice">Google did not answer. Try choosing the book again in a moment.</p>
-      </Show>
-      <Show when={arrived().connected === '1'}>
-        <p class="notice">Book chosen. Checking the viewer can read it…</p>
-      </Show>
-
-      <p class="muted">{installed() ? 'Running as the Home Screen app.' : 'Running in a browser tab.'}</p>
-
-      <Show
-        when={signedIn()}
-        fallback={
-          <section>
-            <Show when={!me.loading} fallback={<p>Checking…</p>}>
-              {/* Exclusive: a signed-in owner on a bad network is not signed out. */}
-              <Show
-                when={me.error}
-                fallback={
-                  <>
-                    <p>Not signed in.</p>
-                    <button type="button" onClick={goSignIn}>
-                      Sign in with Google
-                    </button>
-                  </>
-                }
-              >
-                <p class="notice">Could not reach the server. Check the connection and reload.</p>
-              </Show>
-            </Show>
-          </section>
-        }
-      >
-        {(session) => (
+    <div class="notice">
+      <p>
+        <Show when={who()} fallback="That Google account">
+          {(account) => <strong>{account().email}</strong>}
+        </Show>{' '}
+        is not on this viewer's list.
+      </p>
+      <Show when={command()}>
+        {(line) => (
           <>
-            <section>
-              <p>
-                Signed in as <strong>{session().email}</strong>.
-              </p>
-              <button
-                type="button"
-                onClick={async () => {
-                  await api.signOut();
-                  refetch();
-                }}
-              >
-                Sign out
-              </button>
-            </section>
-
-            <section>
-              <Show when={bookState()} fallback={<p>{book.error ? 'Could not reach the book. Reload to try again.' : 'Checking the book…'}</p>}>
-                {(state) => (
-                  <Show when={state().kind !== 'signed-out'} fallback={<p>Checking…</p>}>
-                  <Show
-                    when={state().kind === 'ok' ? (state() as { book: Book }).book : null}
-                    fallback={
-                      <>
-                        <p>The viewer cannot read your book yet.</p>
-                        <button type="button" onClick={goConnect}>
-                          Choose the book
-                        </button>
-                      </>
-                    }
-                  >
-                    {(found) => (
-                      <p>
-                        Connected to <strong>{found().title}</strong> ✓ <span class="muted">({found().timeZone})</span>
-                      </p>
-                    )}
-                  </Show>
-                  </Show>
-                )}
-              </Show>
-            </section>
-
-            <section>
-              <h2>Read timing</h2>
-              <p class="muted">
-                {SAMPLES} full reads of the book, one after another. Google's share is measured by the Worker; the
-                total is this phone's own clock.
-              </p>
-              <button type="button" disabled={probing()} onClick={probe}>
-                {probing() ? `Reading… ${samples().length}/${SAMPLES}` : 'Measure reads'}
-              </button>
-              <Show when={probeError()}>
-                <p class="notice">{probeError()}</p>
-              </Show>
-              <Show when={samples().length}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>total ms</th>
-                      <th>Google ms</th>
-                      <th>KB</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={samples()}>
-                      {(sample, index) => (
-                        <tr>
-                          <td>{index() + 1}</td>
-                          <td>{sample.total}</td>
-                          <td>{sample.google ?? '—'}</td>
-                          <td>{Math.round(sample.bytes / 1024)}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-                <p class="muted">
-                  Rows:{' '}
-                  {Object.entries(rows())
-                    .map(([tab, count]) => `${tab} ${count}`)
-                    .join(' · ')}
-                </p>
-                <Show when={!probing()}>
-                  <pre>{summary()}</pre>
-                  <button type="button" onClick={() => navigator.clipboard?.writeText(summary())}>
-                    Copy results
-                  </button>
-                </Show>
-              </Show>
-            </section>
+            <p>To be let in, send this to whoever runs the viewer. They run it in <code>web/</code>, and you sign in again:</p>
+            <pre>{line()}</pre>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(line())}>
+              Copy command
+            </button>
           </>
         )}
       </Show>
+    </div>
+  );
+}
 
-      <Show when={healthState()}>
-        {(state) => (
-          <footer class="muted">
-            <p>build {state().build}</p>
-            <p>
-              configured:{' '}
-              {Object.entries(state().configured)
-                .map(([name, ok]) => `${name} ${ok ? 'yes' : 'NO'}`)
-                .join(' · ')}
-            </p>
-          </footer>
-        )}
+function Arrived() {
+  return (
+    <>
+      <Show when={arrived.signin === 'refused'}>
+        <Refused />
       </Show>
-    </main>
+      <Show when={arrived.signin === 'state' || arrived.signin === 'failed'}>
+        <p class="notice">Sign-in did not complete. Try again.</p>
+      </Show>
+      {/* Until the first fresh read lands: after that it would be claiming work that is done. */}
+      <Show when={arrived.connected === '1' && !(held() && !held()!.fromCache)}>
+        <p class="notice">Book chosen. Reading it…</p>
+      </Show>
+      <Show when={arrived.connect === 'unavailable'}>
+        <p class="notice">Google did not answer. Try choosing the book again in a moment.</p>
+      </Show>
+    </>
+  );
+}
+
+/** Signed in: the book on screen, or why it is not. */
+function SignedIn(props: { email: string }) {
+  return (
+    <Switch
+      fallback={
+        <>
+          <Show when={readFailed() && held()?.fromCache}>
+            <div class="banner warn">
+              <div>Could not reach the book. This is the last copy this phone kept, from {agoWords(held()!.savedAt, Date.now())}.</div>
+            </div>
+          </Show>
+          <Show when={noAccess()}>
+            <div class="banner warn">
+              <div>The viewer cannot read the book right now. This is the last copy this phone kept.</div>
+              <button type="button" class="link" onClick={goConnect}>
+                Choose the book
+              </button>
+            </div>
+          </Show>
+          <Switch>
+            <Match when={view().screen === 'records'}>
+              <Records />
+            </Match>
+            <Match when={view().screen === 'analytics'}>
+              <Analytics />
+            </Match>
+            <Match when={view().screen === 'add'}>
+              <AddCash />
+            </Match>
+            <Match when={view().screen === 'value'}>
+              <SetValue />
+            </Match>
+            <Match when={view().screen === 'dashboard'}>
+              <Dashboard />
+              <footer class="muted">
+                <span>Signed in as {props.email}. </span>
+                <button type="button" class="link" onClick={() => void signOut()}>
+                  Sign out
+                </button>
+              </footer>
+            </Match>
+          </Switch>
+        </>
+      }
+    >
+      <Match when={!held() && noAccess()}>
+        <h1>Spendsheet</h1>
+        <p>The viewer cannot read your book yet.</p>
+        <button type="button" onClick={goConnect}>
+          Choose the book
+        </button>
+      </Match>
+      <Match when={!held() && readFailed()}>
+        <h1>Spendsheet</h1>
+        <div class="banner bad">Could not reach the book.</div>
+        <button type="button" onClick={() => void refresh()}>
+          Try again
+        </button>
+      </Match>
+    </Switch>
+  );
+}
+
+export default function App() {
+  let pullNode: HTMLDivElement | undefined;
+
+  // The address is the view, always — replaced, never pushed, so Back leaves the app rather than stepping through filters.
+  createEffect(
+    () => viewSearch(view()),
+    (search) => {
+      if (window.location.search !== search) window.history.replaceState(null, '', window.location.pathname + search);
+    }
+  );
+
+  // Bound once to the document, so no redraw can take it.
+  onSettled(() => {
+    if (!pullNode) return;
+    return installPullToRefresh(pullNode, pullToRefresh, reading);
+  });
+
+  const signedIn = () => {
+    const current = session();
+    return current.kind === 'in' ? current.me : null;
+  };
+
+  /*
+    "What you are looking at is the last copy, not a fresh one." Up while a
+    read is out **and** the screen is the stored copy — a cold open has a
+    spinner already, and two indicators for one wait read as two things. A
+    pull always earns it: the screen behind it is live, and nothing else
+    would say the gesture was received.
+  */
+  const strip = () => reading() && (!!held()?.fromCache || pulled());
+  const stripText = () => {
+    const h = held();
+    return h && h.fromCache ? 'Last updated ' + agoWords(h.savedAt, Date.now()) : 'Refreshing';
+  };
+
+  return (
+    <>
+      <div id="refresh" role="status" hidden={!strip()}>
+        {strip() ? stripText() : ''}
+      </div>
+      <div id="pull" ref={pullNode} hidden aria-hidden="true" />
+
+      <main id="screens">
+        <Arrived />
+        <Switch>
+          <Match when={session().kind === 'checking'}>
+            <div class="spinner">Loading…</div>
+          </Match>
+          <Match when={session().kind === 'unreachable'}>
+            <h1>Spendsheet</h1>
+            {/* Exclusive with "Not signed in": a signed-in owner on a bad network is not signed out. */}
+            <p class="notice">Could not reach the server. Check the connection and reload.</p>
+          </Match>
+          <Match when={session().kind === 'out'}>
+            <h1>Spendsheet</h1>
+            <p>Not signed in.</p>
+            <button type="button" onClick={goSignIn}>
+              Sign in with Google
+            </button>
+          </Match>
+          <Match when={signedIn()}>{(me) => <SignedIn email={me().email} />}</Match>
+        </Switch>
+      </main>
+
+      <Show when={signedIn() && held()}>
+        <nav id="tabs">
+          <For each={TABS}>
+            {(tab) => (
+              <button type="button" aria-current={view().screen === tab.id ? 'page' : undefined} onClick={() => go(tab.id)}>
+                <span class="glyph">{tab.glyph}</span>
+                {tab.label}
+              </button>
+            )}
+          </For>
+        </nav>
+      </Show>
+
+      <Show when={signedIn() && held()}>
+        <SheetHost />
+      </Show>
+
+      <div id="toast" role="status" hidden={!toastText()}>
+        {toastText()}
+      </div>
+    </>
   );
 }

@@ -227,34 +227,13 @@ function validateRedirectUrl(url) {
  * explained *why* a callback was rejected would be a probing oracle for
  * anyone who found the URL, and there is nothing a legitimate user learns
  * from the detail that they don't learn from "this didn't work".
- *
- * ## And also the mobile app, from a second deployment of this same project
- *
- * A Sheet has exactly one bound script, so there is exactly one `doGet` — a
- * second definition would not be an error, it would silently replace this one
- * and take the consent flow with it. So the app is reached by *delegation*
- * rather than by a second entry point, through the same guarded forward
- * reference `setup()` uses for the later phases.
- *
- * The delegation is first, and it is a single line, because everything below
- * it assumes a callback. Which of the two this is comes from the query string
- * alone — see `webAppRoute_` in 20_webapp.gs — and the app branch is behind an
- * owner gate that fails closed, because this URL is anonymous by necessity.
  */
 function doGet(e) {
   var params = (e && e.parameter) || {};
 
-  // `e.parameters` rather than `params`, and only across this one line: the app
-  // restores the account filter from the URL and that filter is a *set*, so
-  // `a=Cash&a=Revolut` has to arrive as two values. The route above is decided
-  // on the single-valued map, which is all `code` and `state` ever are.
-  if (functionExists_('webAppPage_') && webAppRoute_(params) === 'app') {
-    return webAppPage_((e && e.parameters) || {});
-  }
-
   try {
     if (params.error) {
-      return authPage_('Not connected',
+      return callbackText_('Not connected',
         'Your bank reported: ' + String(params.error).slice(0, 200));
     }
 
@@ -265,13 +244,13 @@ function doGet(e) {
       // mismatch leaves it alone, because this endpoint is public and
       // anything else lets a stranger cancel your consent mid-flight.
       if (check.consume) clearAuthState_();
-      return authPage_('Not connected',
+      return callbackText_('Not connected',
         'This authorisation link is no longer valid. Start again from Spendsheet → Connect a bank.');
     }
 
     if (!params.code) {
       clearAuthState_();
-      return authPage_('Not connected', 'Your bank did not return an authorisation code.');
+      return callbackText_('Not connected', 'Your bank did not return an authorisation code.');
     }
 
     clearAuthState_();
@@ -280,16 +259,16 @@ function doGet(e) {
 
     // The full-history window closes about an hour after authorisation, after
     // which the same call returns a rolling ~90 days and the backfill is gone
-    // until you re-consent. That deadline is worth stating on the one page
+    // until you re-consent. That deadline is worth stating in the one answer
     // that is guaranteed to be read.
-    return authPage_('Connected',
+    return callbackText_('Connected',
       summary.accountCount + ' account' + (summary.accountCount === 1 ? '' : 's') +
       ' linked at ' + summary.provider + '.',
       'Run Spendsheet → Sync now within the hour to capture your full history — after ' +
       'that only the last ~90 days are reachable without connecting again.');
   } catch (err) {
     clearAuthState_();
-    return authPage_('Not connected', 'Something went wrong completing the connection.');
+    return callbackText_('Not connected', 'Something went wrong completing the connection.');
   }
 }
 
@@ -334,34 +313,27 @@ function authStateReject_(reason, consume) {
 }
 
 /**
- * The callback page.
+ * The callback's answer, in plain text.
  *
- * **Every argument is escaped, without exception.** This is the one part of
- * the project a stranger can reach, and one of the values that reaches it —
- * the bank's `error` parameter — arrives on the query string. Concatenated in
- * raw, `?error=<script>…` rendered as markup on a Google origin, where a
- * script served by this project can reach `google.script.run` and invoke its
- * functions as the deploying user. Reflected markup on this page is not a
- * cosmetic bug.
+ * **Text, because this is the one URL a stranger can load.** A page served by
+ * `HtmlService` carries the `google.script.run` bridge, and the bridge reaches
+ * every public function in the project with the owner's authority — so a
+ * public page is a public API over everything the gates in `04_gates.gs` do
+ * not stop. `ContentService` serves no bridge at all, which makes `doGet`
+ * itself the whole of what an anonymous visitor can reach.
  *
- * Which is why the emphasis the connected page wants is a third *parameter*
- * rather than tags a caller passes through in `message`. There is no argument
- * here that can carry markup, so no future call site has to remember to
- * escape — the same reasoning as `localizeFormula`, and for the same reason:
- * a rule that has to be remembered at every call site is a rule that will be
- * forgotten at one of them.
+ * It also retires a rule that had to be remembered. The bank's `error`
+ * parameter arrives on the query string, and as markup it had to be escaped at
+ * every call site; as text there is nothing to escape, so there is no call
+ * site that can forget. That is the reason the note is a third parameter
+ * rather than a sentence appended to `message`: it is a separate paragraph,
+ * and nothing here takes formatting.
  */
-function authPage_(title, message, note) {
-  var ok = title === 'Connected';
-  return HtmlService.createHtmlOutput(
-    '<div style="font:15px/1.6 -apple-system,BlinkMacSystemFont,Roboto,sans-serif;' +
-    'max-width:420px;margin:80px auto;padding:0 24px;text-align:center;color:#202124">' +
-    '<div style="font-size:44px">' + (ok ? '&#9989;' : '&#9888;&#65039;') + '</div>' +
-    '<h1 style="font-size:20px;margin:16px 0 8px">' + escapeHtml_(title) + '</h1>' +
-    '<p style="color:#5f6368">' + escapeHtml_(message) + '</p>' +
-    (note ? '<p style="color:#5f6368"><b>' + escapeHtml_(note) + '</b></p>' : '') +
-    '</div>'
-  ).setTitle(title + ' — spendsheet');
+function callbackText_(title, message, note) {
+  var lines = [title, '', message];
+  if (note) lines.push('', note);
+  return ContentService.createTextOutput(lines.join('\n'))
+    .setMimeType(ContentService.MimeType.TEXT);
 }
 
 // ---------------------------------------------------------------------------

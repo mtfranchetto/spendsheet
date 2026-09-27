@@ -20,6 +20,8 @@
  */
 
 import type { RefusedAccount } from '../admit';
+import type { BatchGet } from '../domain/book';
+import { CONTRACT, CONTRACT_HEADER } from './contract';
 
 export class ApiRefused extends Error {
   constructor() {
@@ -33,6 +35,22 @@ export class ApiNoAccess extends Error {
   constructor() {
     super('The viewer cannot read the book.');
     this.name = 'ApiNoAccess';
+  }
+}
+
+/** The Worker read the request and said no, in a sentence meant for the person — shown as it is. */
+export class ApiProblem extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ApiProblem';
+  }
+}
+
+/** This page is older than the Worker it is talking to. Only a reload fixes that. */
+export class ApiStale extends Error {
+  constructor() {
+    super('A newer version of Spendsheet is out. Reloading…');
+    this.name = 'ApiStale';
   }
 }
 
@@ -59,6 +77,14 @@ export async function call(path: string, init: RequestInit = {}): Promise<Respon
     if (body?.error === 'no-access') throw new ApiNoAccess();
     throw new ApiRefused();
   }
+  if (response.status === 409) {
+    const body = (await response.clone().json().catch(() => null)) as { error?: string } | null;
+    if (body?.error === 'contract') throw new ApiStale();
+  }
+  if (response.status === 422) {
+    const body = (await response.clone().json().catch(() => null)) as { message?: string } | null;
+    throw new ApiProblem(body?.message || 'That could not be saved.');
+  }
   // A 5xx is the server or Google having a bad time — including error 1102,
   // the CPU cap — and emphatically not "you are not allowed".
   if (!response.ok) throw new ApiUnavailable(response.status);
@@ -78,12 +104,26 @@ export const api = {
   health: () => json<Health>('/api/health'),
   me: () => json<Me>('/api/me'),
   book: () => json<Book>('/api/book'),
+  // Every tab the screens read, in one `values.batchGet`, passed through unread.
+  read: () => json<BatchGet>('/api/read'),
   // A POST from this page carries its own Origin, which is what the Worker checks.
   signOut: () => json<{ ok: boolean }>('/auth/signout', { method: 'POST' }),
   // Who this browser was just refused as, from the Worker's sealed cookie. No
   // refusal on record is an answer — `null` — rather than a failure to draw.
   refused: () => json<RefusedAccount>('/auth/refused').catch(() => null)
 };
+
+/**
+ * One of the Worker's five writes. The contract version rides on every one,
+ * and the Worker refuses any other before reading anything.
+ */
+export function act<T>(name: 'decide' | 'transfer' | 'rule' | 'cash' | 'delete', body: unknown): Promise<T> {
+  return json<T>(`/api/act/${name}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', [CONTRACT_HEADER]: String(CONTRACT) },
+    body: JSON.stringify(body)
+  });
+}
 
 /** Sign-in is a navigation, not a fetch: the browser leaves for Google and comes back. */
 export function goSignIn(): void {

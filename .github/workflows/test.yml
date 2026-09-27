@@ -114,8 +114,10 @@ jobs:
 
       - run: npm ci
 
-      # The viewer's project serves `web/` through its own Vite, whose config
-      # imports the Solid plugin — a dependency of `web/` and not of the root.
+      # The viewer's projects build `web/` and serve it through its own Vite,
+      # whose config imports the Solid plugin — a dependency of `web/` and not
+      # of the root. Its browser tests also draw `tests/book.mjs`, which is why
+      # the root's install comes first.
       - run: npm ci
         working-directory: web
 

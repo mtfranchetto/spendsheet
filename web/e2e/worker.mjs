@@ -1,0 +1,120 @@
+/**
+ * worker.mjs — the Worker, answered by `page.route`, with a real book behind it.
+ *
+ * The book is `tests/book.mjs` — the one the Apps Script preview draws — read
+ * back through `tests/batch.mjs` exactly as the parity test reads it, so the
+ * numbers on screen here are numbers that test has held to the `.gs`.
+ *
+ * Every path not answered is a 500, like a Worker that is down. A path can be
+ * held: `hold('/api/read')` returns a function that releases it, which is how
+ * a test puts a read in the air and does something before it lands.
+ *
+ * An answer may be a function of the request's JSON body, for the writes —
+ * and every request's body and headers are kept, so a test can say what the
+ * page sent.
+ */
+
+import { previewBook } from '../../tests/book.mjs';
+import { asBatchGet } from '../../tests/batch.mjs';
+
+export const OWNER = '104729384756102938475';
+export const ME = { email: 'owner@example.com', sub: OWNER };
+
+let cached;
+/** The preview's book as a batchGet. Built once per worker process: the harness is not free. */
+export function batch() {
+  if (!cached) cached = asBatchGet(previewBook());
+  return cached;
+}
+
+export function signedIn() {
+  return {
+    '/api/me': [200, ME],
+    '/api/book': [200, { title: 'Spendsheet', timeZone: 'Europe/Rome' }],
+    '/api/read': [200, batch()],
+    '/api/health': [200, { ok: true, build: 'test', configured: {} }],
+    '/auth/signout': [200, { ok: true }]
+  };
+}
+
+/**
+ * Route every Worker path through `answers`, which may be changed between
+ * requests. Returns the per-path request counts and a `hold`.
+ */
+export async function worker(page, answers = {}) {
+  const counts = {};
+  const held = {};
+  const sent = {};
+  await page.route((url) => /^\/(api|auth)\//.test(url.pathname), async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    counts[path] = (counts[path] || 0) + 1;
+    const request = route.request();
+    const payload = request.postData() ? JSON.parse(request.postData()) : null;
+    (sent[path] ||= []).push({ body: payload, headers: request.headers() });
+    // Answered as of when the request arrived, then held: a held read carries the book from before anything the test does next.
+    const answer = answers[path];
+    const [status, body] = typeof answer === 'function' ? answer(payload) : answer ?? [500, { error: 'down' }];
+    if (held[path]) await held[path];
+    return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  return {
+    answers,
+    counts,
+    sent,
+    hold(path) {
+      let release;
+      held[path] = new Promise((resolve) => (release = resolve));
+      return () => {
+        delete held[path];
+        release();
+      };
+    }
+  };
+}
+
+/** The stored copy's owner, or null — read with the raw IndexedDB API, as nothing of the page's own. */
+export function storedOwner(page) {
+  return page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const open = indexedDB.open('spendsheet', 1);
+        open.onupgradeneeded = () => open.result.createObjectStore('copy');
+        open.onerror = () => resolve(null);
+        open.onsuccess = () => {
+          const db = open.result;
+          const get = db.transaction('copy', 'readonly').objectStore('copy').get('book');
+          get.onsuccess = () => {
+            db.close();
+            resolve(get.result ? get.result.owner : null);
+          };
+          get.onerror = () => {
+            db.close();
+            resolve(null);
+          };
+        };
+      })
+  );
+}
+
+/**
+ * `transactions` rows as the Worker would read them back after a write: the
+ * book's row, with `change` applied by column name. The header row is the
+ * schema, so a name is looked up rather than counted.
+ */
+export function freshRows(changes) {
+  const range = batch().valueRanges.find((entry) => /transactions/.test(entry.range));
+  const header = range.values[0];
+  const rows = {};
+  for (const [row, change] of Object.entries(changes)) {
+    const cells = header.map((_, i) => range.values[Number(row) - 1][i] ?? '');
+    for (const [name, value] of Object.entries(change)) cells[header.indexOf(name)] = value;
+    rows[row] = cells;
+  }
+  return rows;
+}
+
+/** The row a uid sits at in the book. */
+export function rowOfUid(uid) {
+  const range = batch().valueRanges.find((entry) => /transactions/.test(entry.range));
+  return range.values.findIndex((cells) => cells[0] === uid) + 1;
+}
