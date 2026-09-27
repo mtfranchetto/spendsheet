@@ -195,8 +195,17 @@ export function appDashboardData(book: Book, ledger: readonly LedgerRow[], clock
   };
 }
 
-export function appRecordsData(book: Book, ledger: readonly LedgerRow[], filters: Filters | undefined, offset: number | undefined, clock: Clock) {
-  return recordsPage(book, ledger, filters, offset, clock);
+/**
+ * `size` is the page's own addition: the `.gs` served one page per call, and
+ * the phone holding the ledger asks for everything "Load more" has shown in
+ * one pass rather than one pass per page. The rows are the same rows — a
+ * prefix of one sort — which is what the parity test holds at the default.
+ */
+export function appRecordsData(
+  book: Book, ledger: readonly LedgerRow[], filters: Filters | undefined, offset: number | undefined, clock: Clock,
+  size?: number
+) {
+  return recordsPage(book, ledger, filters, offset, clock, size);
 }
 
 export function appAnalyticsData(book: Book, ledger: readonly LedgerRow[], filters: Filters | undefined, clock: Clock) {

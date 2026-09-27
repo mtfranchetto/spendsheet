@@ -35,7 +35,7 @@ import { clockAt } from '../domain/days';
 import { appAnalyticsData, appOpenData, appOverviewData, appRecordsData } from '../domain/payloads';
 import { ledgerOf } from '../domain/query';
 import { QUERY_PAGE_SIZE } from '../domain/schema';
-import { forgetCopy, readCopy, writeCopy } from '../store/copy';
+import { forgetCopy, readAnyCopy, writeCopy, type StoredCopy } from '../store/copy';
 import { parseView, type AnalyticsFilters, type RecordsFilters, type Screen, type View } from './view';
 
 export type Session = { kind: 'checking' } | { kind: 'out' } | { kind: 'unreachable' } | { kind: 'in'; me: Me };
@@ -101,22 +101,14 @@ const derived = createRoot(() => {
     { lazy: true }
   );
 
-  // Pages concatenated up to what "Load more" has asked for. Each page is the
-  // same function the `.gs` served, at its offset, so the parity test's
-  // answer for a page is this screen's answer for it.
+  // Everything "Load more" has shown, in one pass: the first `recordsShown`
+  // rows of the same sort the `.gs` paged through, so each page the parity
+  // test holds is a slice of this list.
   const records = createMemo(
     () => {
       const b = book();
       const c = clock();
-      if (!b || !c) return null;
-      const first = appRecordsData(b, ledger(), recordsFilters(), 0, c);
-      const rows = first.rows.slice();
-      let page = first;
-      while (page.hasMore && rows.length < recordsShown()) {
-        page = appRecordsData(b, ledger(), recordsFilters(), rows.length, c);
-        rows.push(...page.rows);
-      }
-      return { ...first, rows, hasMore: rows.length < first.total };
+      return b && c ? appRecordsData(b, ledger(), recordsFilters(), 0, c, recordsShown()) : null;
     },
     { lazy: true }
   );
@@ -134,32 +126,53 @@ export const currency = () => open()?.currency || 'EUR';
 // ---------------------------------------------------------------------------
 
 let generation = 0;
-let owner: string | null = null;
+/** Who the last `/api/me` said is signed in; null until one has answered. */
+let owner: Me | null = null;
 let reads = 0;
 
-/** The open: who is this, draw what this device kept for them, then read. */
+/**
+ * The open: who is this, draw what this device kept for them, then read.
+ *
+ * The stored copy is read **alongside** `/api/me`, not after it, and drawn
+ * only once the account it belongs to is the one answering — so an online
+ * open costs one round trip before the copy appears, and never shows one
+ * account's balances to another. With no connection at all there is nobody
+ * to ask, and the copy is drawn anyway: see `readAnyCopy` for why a copy still
+ * on the device belongs to the session still on it.
+ */
 export async function start(): Promise<void> {
   const gen = generation;
+  const stored = readAnyCopy();
   let me: Me;
   try {
     me = await api.me();
   } catch (error) {
     if (gen !== generation) return;
     if (error instanceof ApiRefused) return forgetEverything();
-    // Unreachable is not signed out: the copy stays for the open that can reach us.
-    setSession({ kind: 'unreachable' });
+    // Unreachable is not signed out: the copy stays, and is drawn if there is one.
+    const copy = await stored;
+    if (gen !== generation) return;
+    if (!copy) {
+      setSession({ kind: 'unreachable' });
+      return;
+    }
+    show(copy);
+    setSession({ kind: 'in', me: { sub: copy.owner, email: copy.email ?? '' } });
+    setReadFailed(true);
     return;
   }
   if (gen !== generation) return;
-  owner = me.sub;
+  owner = me;
   setSession({ kind: 'in', me });
 
-  const copy = await readCopy(me.sub);
+  const copy = await stored;
   // Only if no read has landed meanwhile — a stored copy never replaces a fresh one.
-  if (copy && gen === generation && reads === 0) {
-    setHeld({ batch: copy.batch, timeZone: copy.timeZone, savedAt: copy.savedAt, fromCache: true });
-  }
+  if (copy && copy.owner === me.sub && gen === generation && reads === 0) show(copy);
   await refresh();
+}
+
+function show(copy: StoredCopy): void {
+  setHeld({ batch: copy.batch, timeZone: copy.timeZone, savedAt: copy.savedAt, fromCache: true });
 }
 
 /** Read the book again. The last read issued is the one that is drawn. */
@@ -172,7 +185,7 @@ export async function refresh(): Promise<void> {
   try {
     const [batch, book] = await Promise.all([api.read(), api.book()]);
     if (gen !== generation || mine !== reads) return;
-    const copy = { owner: reader, timeZone: book.timeZone, batch, savedAt: Date.now() };
+    const copy = { owner: reader.sub, email: reader.email, timeZone: book.timeZone, batch, savedAt: Date.now() };
     setNoAccess(false);
     setReadFailed(false);
     setHeld({ batch, timeZone: book.timeZone, savedAt: copy.savedAt, fromCache: false });
@@ -195,9 +208,13 @@ export async function refresh(): Promise<void> {
   }
 }
 
-/** A pull: the same read, with the strip up while it runs. */
+/** A pull: the same read, with the strip up while it runs — or, if nobody has answered yet, the whole open again. */
 export function pullToRefresh(): void {
   if (reading()) return;
+  if (!owner) {
+    void start();
+    return;
+  }
   setPulled(true);
   void refresh();
 }

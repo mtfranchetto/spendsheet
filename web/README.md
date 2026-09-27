@@ -143,7 +143,8 @@ the vantage point that misled the last storage conclusion.
 | | expected |
 |---|---|
 | Home, Records, Charts | the same numbers as the old viewer, drawn the same way |
-| Force-quit the icon and reopen it | the last copy draws at once under *Last updated …*, then the strip goes |
+| Force-quit the icon and reopen it | the last copy draws as soon as the account answers, under *Last updated …*, then the strip goes |
+| Airplane mode, then open the icon | the last copy draws, with *This is the last copy this phone kept* — not *Could not reach the server* |
 | Pull down at the top | *Refreshing*, then the strip goes |
 | A custom period on Records | both date fields fit side by side (the native date input is the one WebKit here cannot measure) |
 | Sign out, reopen | nothing of the book draws before signing in again |

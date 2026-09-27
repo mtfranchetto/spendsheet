@@ -70,6 +70,36 @@ test('the stored copy is drawn before the read lands, and says how old it is', a
   await expect(page.locator('#refresh')).toBeHidden();
 });
 
+test('with no server to ask, the stored copy is drawn anyway and says it is the last one', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect.poll(() => storedOwner(page)).toBe(OWNER);
+
+  fake.answers['/api/me'] = [503, { error: 'down' }];
+  fake.answers['/api/read'] = [503, { error: 'down' }];
+  await page.reload();
+  await expect(page.locator('.big')).toHaveText('€42,232.89');
+  await expect(page.getByText(/This is the last copy this phone kept/).first()).toBeVisible();
+  await expect(page.getByText('Could not reach the server')).toHaveCount(0);
+
+  // Back online, a pull opens properly: who, then the read.
+  fake.answers['/api/me'] = signedIn()['/api/me'];
+  fake.answers['/api/read'] = signedIn()['/api/read'];
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.reload();
+  await expect(page.getByText(/This is the last copy this phone kept/)).toHaveCount(0);
+});
+
+test('"Book chosen" goes once the book has been read', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  const release = fake.hold('/api/read');
+  await page.goto('/?connected=1');
+  await expect(page.getByText('Book chosen. Reading it…')).toBeVisible();
+  release();
+  await expect(page.locator('.big')).toHaveText('€42,232.89');
+  await expect(page.getByText('Book chosen. Reading it…')).toHaveCount(0);
+});
+
 test('signing out forgets the copy, and a read already in the air cannot put it back', async ({ page }) => {
   const fake = await worker(page, signedIn());
   await page.goto('/');

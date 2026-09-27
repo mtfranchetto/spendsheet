@@ -363,7 +363,8 @@ export function analytics(book: Book, ledger: readonly LedgerRow[], filters: Fil
 }
 
 export function recordsPage(
-  book: Book, ledger: readonly LedgerRow[], filters: Filters | undefined, offset: number | undefined, clock: Clock
+  book: Book, ledger: readonly LedgerRow[], filters: Filters | undefined, offset: number | undefined, clock: Clock,
+  size: number = QUERY_PAGE_SIZE
 ) {
   const request = filters || {};
   const window = resolveWindow(request.period, clock);
@@ -377,7 +378,7 @@ export function recordsPage(
     });
 
   const start = Math.max(0, Math.floor(Number(offset) || 0));
-  const page = matched.slice(start, start + QUERY_PAGE_SIZE);
+  const page = matched.slice(start, start + Math.max(1, Math.floor(size)));
   const peers = transferPeers(ledger);
 
   return {

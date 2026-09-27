@@ -43,6 +43,8 @@ const KEY = 'book';
 export type StoredCopy = {
   /** The Google account ID (`sub`) that read it. */
   owner: string;
+  /** Who that is, for "Signed in as" on an open that cannot reach the server to ask. */
+  email?: string;
   timeZone: string;
   batch: BatchGet;
   /** `Date.now()` when it was read, for "as of" on screen. */
@@ -100,15 +102,28 @@ function defaultFactory(): IDBFactory | undefined {
   }
 }
 
-/** The stored copy, if there is one and `owner` read it. */
-export async function readCopy(owner: string, factory = defaultFactory()): Promise<StoredCopy | null> {
+/**
+ * Whatever copy this device holds, whoever read it — for the caller that will
+ * check the owner itself once it knows who is asking, or that cannot find out.
+ *
+ * The one case with no way to ask is an open with no connection, and there the
+ * copy is drawn for the account that read it: every sign-out and every refusal
+ * forgets it, and signing in as someone else replaces it with their first
+ * read, so a copy still here belongs to the session still here.
+ */
+export async function readAnyCopy(factory = defaultFactory()): Promise<StoredCopy | null> {
   try {
     const copy = (await withStore('readonly', (store) => store.get(KEY), factory)) as StoredCopy | undefined;
-    if (!copy || !owner || copy.owner !== owner || !copy.batch) return null;
-    return copy;
+    return copy && copy.owner && copy.batch ? copy : null;
   } catch {
     return null;
   }
+}
+
+/** The stored copy, if there is one and `owner` read it. */
+export async function readCopy(owner: string, factory = defaultFactory()): Promise<StoredCopy | null> {
+  const copy = await readAnyCopy(factory);
+  return copy && owner && copy.owner === owner ? copy : null;
 }
 
 /** Replace the stored copy. `false` when it could not be kept, which costs only the next open. */

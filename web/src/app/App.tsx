@@ -77,7 +77,8 @@ function Arrived() {
       <Show when={arrived.signin === 'state' || arrived.signin === 'failed'}>
         <p class="notice">Sign-in did not complete. Try again.</p>
       </Show>
-      <Show when={arrived.connected === '1'}>
+      {/* Until the first fresh read lands: after that it would be claiming work that is done. */}
+      <Show when={arrived.connected === '1' && !(held() && !held()!.fromCache)}>
         <p class="notice">Book chosen. Reading it…</p>
       </Show>
       <Show when={arrived.connect === 'unavailable'}>
@@ -93,6 +94,11 @@ function SignedIn(props: { email: string }) {
     <Switch
       fallback={
         <>
+          <Show when={readFailed() && held()?.fromCache}>
+            <div class="banner warn">
+              <div>Could not reach the book. This is the last copy this phone kept, from {agoWords(held()!.savedAt, Date.now())}.</div>
+            </div>
+          </Show>
           <Show when={noAccess()}>
             <div class="banner warn">
               <div>The viewer cannot read the book right now. This is the last copy this phone kept.</div>
