@@ -389,8 +389,7 @@ describe('the menu', () => {
  *
  * A name ending in `_` is exempt: those are private by convention and are
  * reached from anywhere in the concatenated scope, so "called once" says
- * nothing. `app*` is exempt because `google.script.run` calls it by name from a
- * file this test cannot see — `tests/app.test.mjs` holds that surface instead.
+ * nothing.
  */
 describe('nothing public is left with no way to reach it', () => {
   const ENTRY_POINTS = ['onOpen', 'onEdit', 'doGet', 'doPost', 'setup'];

@@ -164,15 +164,21 @@ export function porcelainPaths(output) {
 /**
  * `.deploy.json`, or the reason it cannot be used.
  *
- * Pure, so the refusal of a file still listing two deployments has a test: one
- * of them no longer exists, and redeploying it would fail half-way through a
- * run that had already moved the other.
+ * Pure, so the refusal of a file still listing two deployments has a test.
+ * The second one is the Apps Script viewer's, which this code no longer
+ * serves: redeploying it would put a viewer with no page behind the owner's
+ * home-screen icon, and leaving it untouched leaves a frozen one there, still
+ * answering and still writing. Archiving it is the only right answer, and it
+ * is a human's — so the refusal says so rather than doing it.
  */
 export function configProblem(config) {
   if (Array.isArray(config.doors)) {
-    return '.deploy.json lists deployments under "doors". There is one now: replace\n' +
-      '  "doors" with the consent redirect\'s own "deploymentId" and "description" —\n' +
-      '  see .deploy.example.json.';
+    return '.deploy.json lists deployments under "doors". There is one now:\n' +
+      '  1. Archive the app deployment (access "Only myself") in Deploy → Manage\n' +
+      '     deployments. Left live, it goes on serving and writing from a frozen\n' +
+      '     version whose ledger cache nothing invalidates any more.\n' +
+      '  2. Replace "doors" with the consent redirect\'s own "deploymentId" and\n' +
+      '     "description" — see .deploy.example.json.';
   }
   for (const field of ['deploymentId', 'description']) {
     if (!config[field]) return `.deploy.json is missing "${field}".`;

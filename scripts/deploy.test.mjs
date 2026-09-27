@@ -102,6 +102,9 @@ describe('.deploy.json', () => {
   it('refuses a file still listing several, before one of them is redeployed alone', () => {
     const problem = configProblem({ doors: [{ key: 'bank' }, { key: 'app' }] });
     expect(problem).toContain('.deploy.example.json');
+    // The app deployment is not merely forgotten: left live, it serves a frozen
+    // viewer whose cache nothing invalidates.
+    expect(problem).toMatch(/Archive the app deployment/);
   });
 
   it('names a missing field', () => {

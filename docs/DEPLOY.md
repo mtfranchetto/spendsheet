@@ -71,7 +71,10 @@ Gitignored — it names this book's deployment, not the project's. Copy `.deploy
 
 `lastDeploy` is written by the script. `commit` is how it knows which files changed since; `version` is the version the redirect was left on. Delete it to make the next run treat everything as changed.
 
-A `.deploy.json` that still lists `doors` is refused before anything is pushed: replace the list with the bank door's `deploymentId` and `description`.
+A `.deploy.json` that still lists `doors` is refused before anything is pushed. It dates from when the phone app was a second Apps Script deployment, and moving off it takes two steps, once:
+
+1. **Archive the app deployment** — Deploy → Manage deployments → the one with access *Only myself* → Archive. Nothing redeploys it any more, so left live it goes on serving from the version it was last given: balances from a ledger cache nothing invalidates now, and writes through code that no longer exists here. The old home-screen icon stops working, which is the point; the new one comes from [`web/README.md`](../web/README.md).
+2. **Replace the list** with the bank door's `deploymentId` and `description`.
 
 ## Options
 
