@@ -82,8 +82,10 @@ async function withStore<T>(
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
     });
-    const result = await request(work(tx.objectStore(STORE)));
-    await done;
+    // Awaited together, so both have a handler from the start: a failed
+    // request fails its transaction too, and a `done` nobody was waiting on
+    // yet would surface as an unhandled rejection beside the `false` we return.
+    const [result] = await Promise.all([request(work(tx.objectStore(STORE))), done]);
     return result;
   } finally {
     db.close();

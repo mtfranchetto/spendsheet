@@ -17,15 +17,31 @@
   prompt — the decided behaviour. When a new `index.html` arrives, the files it
   names are fetched in the same background step, so the next open does not
   find a shell pointing at scripts it never saw; only after they are all in is
-  anything the new shell no longer names deleted.
+  anything the new shell no longer names deleted. Install does the same.
 */
 
 const CACHE = 'shell-v1';
 const SHELL = '/';
 const WORKER_PATHS = /^\/(api|auth|connect)(\/|$)/;
 
+/*
+  Install adopts the shell exactly as a revalidation does, files first.
+
+  Caching `/` alone was the first draft, and it fails twice. On a first visit
+  the page's own scripts were fetched before this worker existed, so nothing
+  else ever puts them here — the next open offline is a shell with no script.
+  And a new `sw.js` installs over the same cache, so a bare `add` replaced the
+  old shell with a new `index.html` naming hashed files nobody had fetched.
+  A shell that cannot bring its files fails the install, and the old worker
+  goes on serving the old, whole one.
+*/
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.add(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const response = await fetch(SHELL, { cache: 'no-cache' });
+    if (!keepable(response)) throw new Error('shell not fetched');
+    await adoptShell(await caches.open(CACHE), response);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {

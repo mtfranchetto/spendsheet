@@ -52,9 +52,11 @@ test('after one visit, the shell draws with the server gone, and no Worker answe
 
   try {
     await page.goto(ORIGIN + '/');
+    // One visit and nothing else. That page's own scripts were fetched before
+    // the worker existed, so only its install can have put them in the cache
+    // — an online reload here would fill it by the back door and hide an
+    // install that kept the page and not what the page loads.
     await page.evaluate(() => navigator.serviceWorker.ready);
-    // The first load was fetched before the worker existed; the second is its.
-    await page.reload();
     await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
 
     const cached = await page.evaluate(async () => {
