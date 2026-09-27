@@ -49,6 +49,7 @@ import {
   SIGNIN_COOKIE,
   SESSION_TTL_SECONDS,
   SIGNIN_TTL_SECONDS,
+  isSessionKey,
   type Session
 } from './session';
 import { verifyIdToken, isAllowed, accountAllowed } from './google-identity';
@@ -127,11 +128,61 @@ function redirect(location: string, cookies: string[] = []): Response {
 const refuse = (cookies: string[] = []) => json({ error: 'Not available.' }, 401, cookies);
 
 /** The book is there but this grant cannot open it: pick it again at `/connect`. */
-const noAccess = () => json({ error: 'no-access' }, 403);
+const noAccess = (cookies: string[]) => json({ error: 'no-access' }, 403, cookies);
 
 const signedOut = () => [clearCookie(SESSION_COOKIE), clearCookie(ACCESS_COOKIE)];
 
-type Authorized = { session: Session; token: string; cookies: string[] };
+/** `cached` says the token came from the cookie rather than a refresh just now. */
+type Authorized = { session: Session; token: string; cookies: string[]; cached: boolean };
+
+/**
+ * A fresh access token from the session's refresh token, sealed into its
+ * cookie. A revoked grant signs out; Google having a bad moment does not.
+ */
+async function renew(session: Session, env: Env, nowSeconds: number): Promise<Authorized | Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return json({ error: 'Not configured.' }, 500);
+  const refreshed = await refreshAccess(session.refresh_token, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
+  if (!refreshed.ok) return refreshed.revoked ? refuse(signedOut()) : json({ error: 'google-unavailable' }, 503);
+
+  const access = { sub: session.sub, access_token: refreshed.access_token, exp: nowSeconds + refreshed.expires_in };
+  const sealed = await seal(access, ACCESS_COOKIE, env.SESSION_KEY);
+  return { session, token: refreshed.access_token, cookies: [cookie(ACCESS_COOKIE, sealed, refreshed.expires_in)], cached: false };
+}
+
+/**
+ * A call to Google as the signed-in account: the upstream response, or the
+ * Worker's own answer when there is nothing to pass on.
+ *
+ * A 401 on a *cached* token is retried once with a fresh one. Google can stop
+ * honouring a token before its `exp` — the grant revoked under Third-party
+ * connections, say — and without the retry the cookie would go on presenting
+ * it for up to an hour, every read failing as if Google were down. The refresh
+ * then either recovers or reports `invalid_grant`, which signs out. A 401 on a
+ * token minted a moment ago is not worth a second refresh, so it clears the
+ * cookie and reports Google unavailable.
+ */
+async function googleFetch(
+  url: string | URL,
+  env: Env,
+  nowSeconds: number,
+  granted: Authorized
+): Promise<{ upstream: Response } | { answer: Response }> {
+  const ask = () => fetch(url, { headers: { authorization: `Bearer ${granted.token}` } });
+
+  let upstream = await ask();
+  if (upstream.status === 401 && granted.cached) {
+    const renewed = await renew(granted.session, env, nowSeconds);
+    if (renewed instanceof Response) return { answer: renewed };
+    Object.assign(granted, renewed);
+    upstream = await ask();
+  }
+  if (upstream.status === 401) {
+    return { answer: json({ error: 'google-unavailable' }, 503, [clearCookie(ACCESS_COOKIE)]) };
+  }
+  if (upstream.status === 403 || upstream.status === 404) return { answer: noAccess(granted.cookies) };
+  if (!upstream.ok) return { answer: json({ error: 'upstream', status: upstream.status }, 502, granted.cookies) };
+  return { upstream };
+}
 
 /**
  * Steps 2 and 3: a session, and a Google access token to act on it with.
@@ -149,15 +200,8 @@ async function authorize(request: Request, env: Env, nowSeconds: number): Promis
   if (!accountAllowed(session.sub, env.ALLOWED_ACCOUNTS)) return refuse(signedOut());
 
   const cached = await openAccess(readCookie(cookies, ACCESS_COOKIE), session.sub, nowSeconds, env.SESSION_KEY);
-  if (cached) return { session, token: cached.access_token, cookies: [] };
-
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return json({ error: 'Not configured.' }, 500);
-  const refreshed = await refreshAccess(session.refresh_token, env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
-  if (!refreshed.ok) return refreshed.revoked ? refuse(signedOut()) : json({ error: 'google-unavailable' }, 503);
-
-  const access = { sub: session.sub, access_token: refreshed.access_token, exp: nowSeconds + refreshed.expires_in };
-  const sealed = await seal(access, ACCESS_COOKIE, env.SESSION_KEY);
-  return { session, token: refreshed.access_token, cookies: [cookie(ACCESS_COOKIE, sealed, refreshed.expires_in)] };
+  if (cached) return { session, token: cached.access_token, cookies: [], cached: true };
+  return renew(session, env, nowSeconds);
 }
 
 export async function handle(request: Request, env: Env, nowSeconds: number): Promise<Response> {
@@ -190,8 +234,8 @@ export async function handle(request: Request, env: Env, nowSeconds: number): Pr
     // Who, and nothing else. No route but `/connect` ever returns a token.
     return json({ email: granted.session.email, sub: granted.session.sub }, 200, granted.cookies);
   }
-  if (path === '/api/book' && request.method === 'GET') return book(env, granted);
-  if (path === '/api/read' && request.method === 'GET') return read(env, url, granted);
+  if (path === '/api/book' && request.method === 'GET') return book(env, nowSeconds, granted);
+  if (path === '/api/read' && request.method === 'GET') return read(env, url, nowSeconds, granted);
 
   return json({ error: 'No such route.' }, 404, granted.cookies);
 }
@@ -206,7 +250,8 @@ function health(env: Env): Response {
     build: env.BUILD_SHA ?? 'dev',
     configured: {
       client: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
-      sessionKey: Boolean(env.SESSION_KEY),
+      // Its shape, not its presence: a key pasted without base64 is set and useless.
+      sessionKey: isSessionKey(env.SESSION_KEY),
       allowedAccounts: Boolean(env.ALLOWED_ACCOUNTS),
       spreadsheet: Boolean(env.SPREADSHEET_ID),
       picker: Boolean(env.PICKER_API_KEY && env.GOOGLE_PROJECT_NUMBER)
@@ -215,7 +260,7 @@ function health(env: Env): Response {
 }
 
 async function signIn(env: Env, url: URL, nowSeconds: number): Promise<Response> {
-  if (!env.GOOGLE_CLIENT_ID || !env.SESSION_KEY) return json({ error: 'Not configured.' }, 500);
+  if (!env.GOOGLE_CLIENT_ID || !isSessionKey(env.SESSION_KEY)) return json({ error: 'Not configured.' }, 500);
 
   const state = randomToken();
   const verifier = randomToken(48);
@@ -273,17 +318,18 @@ async function callback(request: Request, env: Env, url: URL, nowSeconds: number
  * removed, or the book replaced by a copy. The page answers all three the same
  * way, with a link to `/connect`.
  */
-async function book(env: Env, granted: Authorized): Promise<Response> {
+async function book(env: Env, nowSeconds: number, granted: Authorized): Promise<Response> {
   if (!env.SPREADSHEET_ID) return json({ error: 'Not configured.' }, 500, granted.cookies);
 
-  const upstream = await fetch(
+  const got = await googleFetch(
     `${SHEETS}/${encodeURIComponent(env.SPREADSHEET_ID)}?fields=properties(title,timeZone)`,
-    { headers: { authorization: `Bearer ${granted.token}` } }
+    env,
+    nowSeconds,
+    granted
   );
-  if (upstream.status === 403 || upstream.status === 404) return noAccess();
-  if (!upstream.ok) return json({ error: 'upstream', status: upstream.status }, 502, granted.cookies);
+  if ('answer' in got) return got.answer;
 
-  const body = (await upstream.json()) as { properties?: { title?: string; timeZone?: string } };
+  const body = (await got.upstream.json()) as { properties?: { title?: string; timeZone?: string } };
   return json({ title: body.properties?.title ?? '', timeZone: body.properties?.timeZone ?? '' }, 200, granted.cookies);
 }
 
@@ -298,7 +344,7 @@ async function book(env: Env, granted: Authorized): Promise<Response> {
  * headers: the one number phase 2 exists to take, and one a page can read
  * beside its own clock to tell Google's share from the network's.
  */
-async function read(env: Env, url: URL, granted: Authorized): Promise<Response> {
+async function read(env: Env, url: URL, nowSeconds: number, granted: Authorized): Promise<Response> {
   if (!env.SPREADSHEET_ID) return json({ error: 'Not configured.' }, 500, granted.cookies);
 
   const asked = url.searchParams.getAll('tab');
@@ -317,11 +363,10 @@ async function read(env: Env, url: URL, granted: Authorized): Promise<Response> 
   endpoint.searchParams.set('dateTimeRenderOption', 'SERIAL_NUMBER');
 
   const started = Date.now();
-  const upstream = await fetch(endpoint, { headers: { authorization: `Bearer ${granted.token}` } });
+  const got = await googleFetch(endpoint, env, nowSeconds, granted);
   const took = Date.now() - started;
-
-  if (upstream.status === 403 || upstream.status === 404) return noAccess();
-  if (!upstream.ok) return json({ error: 'upstream', status: upstream.status }, 502, granted.cookies);
+  if ('answer' in got) return got.answer;
+  const upstream = got.upstream;
 
   const headers = new Headers({
     ...SECURITY_HEADERS,

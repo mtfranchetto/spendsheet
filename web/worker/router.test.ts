@@ -83,6 +83,8 @@ let google: {
   grantScope: string;
   refresh: { status: number; body: unknown };
   sheets: { status: number; body: unknown };
+  /** Access tokens Sheets answers 401 to, as it does for a revoked grant's. */
+  rejected: string[];
 };
 
 beforeEach(() => {
@@ -92,7 +94,8 @@ beforeEach(() => {
     idClaims: {},
     grantScope: `openid email ${DRIVE_FILE_SCOPE}`,
     refresh: { status: 200, body: { access_token: 'ya29.refreshed', expires_in: 3599 } },
-    sheets: { status: 200, body: { valueRanges: [{ range: 'transactions!A1:AD', values: [['uid'], ['u1']] }] } }
+    sheets: { status: 200, body: { valueRanges: [{ range: 'transactions!A1:AD', values: [['uid'], ['u1']] }] } },
+    rejected: []
   };
 
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -121,6 +124,9 @@ beforeEach(() => {
       return reply(google.refresh.status, google.refresh.body);
     }
     if (url.startsWith('https://sheets.googleapis.com/')) {
+      if (google.rejected.includes(String(headers.get('authorization')).replace('Bearer ', ''))) {
+        return reply(401, { error: { code: 401, status: 'UNAUTHENTICATED' } });
+      }
       if (url.includes('fields=')) return reply(google.sheets.status, { properties: { title: 'Spendsheet', timeZone: 'Europe/Rome' } });
       return reply(google.sheets.status, google.sheets.body);
     }
@@ -215,6 +221,18 @@ describe('the gate', () => {
   it('lets nobody in when the allowlist is unset', async () => {
     const response = await handle(request('/api/me', { cookie: await signedIn() }), { ...ENV, ALLOWED_ACCOUNTS: undefined }, NOW);
     expect(response.status).toBe(401);
+  });
+
+  it('will not start a sign-in with a key that is set but not a key', async () => {
+    // Pasted without base64, it is present and useless: sealing would throw out
+    // of the Worker as a Cloudflare error page rather than saying so.
+    const env = { ...ENV, SESSION_KEY: 'a-long-typed-password-not-base64-bytes' };
+    const response = await handle(request('/auth/signin'), env, NOW);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Not configured.' });
+
+    const health = (await (await handle(request('/api/health'), env, NOW)).json()) as { configured: Record<string, boolean> };
+    expect(health.configured.sessionKey).toBe(false);
   });
 
   it('refuses everything when the session key is missing', async () => {
@@ -394,6 +412,47 @@ describe('Google access', () => {
 
     expect(response.status).toBe(401);
     expect(cookieNamed(response, SESSION_COOKIE)).toContain('Max-Age=0');
+  });
+
+  it('retries once with a fresh token when Google stops honouring the cached one', async () => {
+    // Otherwise the cookie goes on presenting a dead token for up to an hour and
+    // every read fails as though Google were down.
+    google.rejected = ['ya29.cached'];
+    const response = await handle(request('/api/book', { cookie: await signedIn() }), ENV, NOW);
+
+    expect(response.status).toBe(200);
+    expect(calls.map((c) => new URL(c.url).host)).toEqual(['sheets.googleapis.com', 'oauth2.googleapis.com', 'sheets.googleapis.com']);
+    expect(calls[2].authorization).toBe('Bearer ya29.refreshed');
+    expect(cookieNamed(response, ACCESS_COOKIE)).toContain('Max-Age=3599');
+  });
+
+  it('signs out when that retry finds the grant revoked', async () => {
+    google.rejected = ['ya29.cached'];
+    google.refresh = { status: 400, body: { error: 'invalid_grant' } };
+    const response = await handle(request('/api/read', { cookie: await signedIn() }), ENV, NOW);
+
+    expect(response.status).toBe(401);
+    expect(cookieNamed(response, SESSION_COOKIE)).toContain('Max-Age=0');
+  });
+
+  it('does not refresh twice for a token it minted a moment ago', async () => {
+    google.rejected = ['ya29.refreshed'];
+    const response = await handle(request('/api/read', { cookie: await sessionCookie() }), ENV, NOW);
+
+    expect(response.status).toBe(503);
+    expect(calls.filter((c) => c.url.endsWith('/token'))).toHaveLength(1);
+    expect(cookieNamed(response, ACCESS_COOKIE)).toContain('Max-Age=0');
+  });
+
+  it('keeps a token it just refreshed even when the book is out of reach', async () => {
+    // Dropped, every later request against a book not yet picked would go back
+    // to Google's token endpoint first.
+    google.sheets = { status: 403, body: {} };
+    const response = await handle(request('/api/book', { cookie: await sessionCookie() }), ENV, NOW);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no-access' });
+    expect(cookieNamed(response, ACCESS_COOKIE)).toContain('Max-Age=3599');
   });
 
   it('does not sign out because Google had a bad moment', async () => {

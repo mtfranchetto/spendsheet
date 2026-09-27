@@ -91,8 +91,9 @@ involves a multi-line key.
 **Laptop, once**
 
 1. Open the Worker's address and sign in. You will be refused, and the page
-   shows your **account ID**. Set `ALLOWED_ACCOUNTS` to it (more than one:
-   comma-separated), then sign in again.
+   shows the command that admits you, with your **account ID** already in it.
+   *Copy command*, run it here in `web/`, then sign in again. It sets the whole
+   list, so a second account goes in as `'<first>,<second>'`.
 2. *Choose the book* → Google's Picker lists one file → select it. The page
    says **Connected to Spendsheet ✓** when the Worker has read its title.
 

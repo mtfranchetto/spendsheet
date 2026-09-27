@@ -83,15 +83,24 @@ export function unb64url(text: string): Uint8Array<ArrayBuffer> {
  * typed string is a password, and the gate fails closed on a missing or
  * malformed key rather than sealing with whatever it was given.
  */
-async function aesKey(secret: string | undefined): Promise<CryptoKey | null> {
+function keyBytes(secret: string | undefined): Uint8Array<ArrayBuffer> | null {
   if (!secret) return null;
-  let raw: Uint8Array<ArrayBuffer>;
   try {
-    raw = unb64url(secret.trim());
+    const raw = unb64url(secret.trim());
+    return raw.length === 32 ? raw : null;
   } catch {
     return null;
   }
-  if (raw.length !== 32) return null;
+}
+
+/** Whether `SESSION_KEY` is usable — what `/api/health` reports and sign-in checks first. */
+export function isSessionKey(secret: string | undefined): boolean {
+  return keyBytes(secret) !== null;
+}
+
+async function aesKey(secret: string | undefined): Promise<CryptoKey | null> {
+  const raw = keyBytes(secret);
+  if (!raw) return null;
   return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 

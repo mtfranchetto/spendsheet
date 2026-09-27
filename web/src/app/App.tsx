@@ -26,6 +26,7 @@
 import { createSignal, createResource, For, Show, onMount } from 'solid-js';
 import { api, call, goSignIn, goConnect, ApiRefused, ApiNoAccess, type Book, type Health, type Me } from '../api/client';
 import { googleMs, rowCounts, spread, type Sample, type ValueRanges } from '../probe';
+import { admitCommand } from '../admit';
 
 const SAMPLES = 5;
 
@@ -41,7 +42,7 @@ function installed(): boolean {
   return legacy === true || window.matchMedia('(display-mode: standalone)').matches;
 }
 
-type BookState = { kind: 'ok'; book: Book } | { kind: 'no-access' };
+type BookState = { kind: 'ok'; book: Book } | { kind: 'no-access' } | { kind: 'signed-out' };
 
 export default function App() {
   const [health] = createResource<Health>(() => api.health());
@@ -57,11 +58,22 @@ export default function App() {
     }
   });
 
-  const [book] = createResource(me, async (): Promise<BookState> => {
+  // **Reading a resource that failed throws**, and nothing here catches it: the
+  // whole screen would go instead of the one message. So every read of one that
+  // can fail asks `.error` first, and these are the only way anything reads them
+  // — including `book`'s source, which is read like any other.
+  const signedIn = () => (me.error ? undefined : me());
+  const bookState = () => (book.error ? undefined : book());
+  const healthState = () => (health.error ? undefined : health());
+
+  const [book] = createResource(signedIn, async (): Promise<BookState> => {
     try {
       return { kind: 'ok', book: await api.book() };
     } catch (error) {
       if (error instanceof ApiNoAccess) return { kind: 'no-access' };
+      // The session ended between the two calls — Google revoked the grant, or
+      // the account left the allowlist. A state to draw, not an error.
+      if (error instanceof ApiRefused) return { kind: 'signed-out' };
       throw error;
     }
   });
@@ -116,7 +128,7 @@ export default function App() {
         googleMs: spread(google),
         kilobytes: list.length ? Math.round(list[list.length - 1].bytes / 1024) : null,
         rows: rows(),
-        build: health()?.build
+        build: healthState()?.build
       },
       null,
       2
@@ -130,10 +142,20 @@ export default function App() {
       <Show when={arrived().signin === 'refused'}>
         <div class="notice">
           <p>That Google account is not on this viewer's list.</p>
-          <p>
-            Its account ID is <code>{arrived().account}</code>. To let it in, add that ID to{' '}
-            <code>ALLOWED_ACCOUNTS</code> and sign in again.
-          </p>
+          <Show when={admitCommand(arrived().account)}>
+            {(command) => (
+              <>
+                <p>To let it in, run this in <code>web/</code> and sign in again:</p>
+                <pre>{command()}</pre>
+                <button type="button" onClick={() => navigator.clipboard?.writeText(command())}>
+                  Copy command
+                </button>
+                <p class="muted">
+                  It replaces the list. To keep another account, put its ID first, comma-separated.
+                </p>
+              </>
+            )}
+          </Show>
         </div>
       </Show>
       <Show when={arrived().signin === 'state' || arrived().signin === 'failed'}>
@@ -146,10 +168,13 @@ export default function App() {
       <p class="muted">{installed() ? 'Running as the Home Screen app.' : 'Running in a browser tab.'}</p>
 
       <Show
-        when={me()}
+        when={signedIn()}
         fallback={
           <section>
             <Show when={!me.loading} fallback={<p>Checking…</p>}>
+              <Show when={me.error}>
+                <p class="notice">Could not reach the server. Check the connection and reload.</p>
+              </Show>
               <p>Not signed in.</p>
               <button type="button" onClick={goSignIn}>
                 Sign in with Google
@@ -176,8 +201,9 @@ export default function App() {
             </section>
 
             <section>
-              <Show when={book()} fallback={<p>{book.error ? 'Could not reach the book. Reload to try again.' : 'Checking the book…'}</p>}>
+              <Show when={bookState()} fallback={<p>{book.error ? 'Could not reach the book. Reload to try again.' : 'Checking the book…'}</p>}>
                 {(state) => (
+                  <Show when={state().kind !== 'signed-out'} fallback={<SignedOutAgain />}>
                   <Show
                     when={state().kind === 'ok' ? (state() as { book: Book }).book : null}
                     fallback={
@@ -194,6 +220,7 @@ export default function App() {
                         Connected to <strong>{found().title}</strong> ✓ <span class="muted">({found().timeZone})</span>
                       </p>
                     )}
+                  </Show>
                   </Show>
                 )}
               </Show>
@@ -252,7 +279,7 @@ export default function App() {
         )}
       </Show>
 
-      <Show when={health()}>
+      <Show when={healthState()}>
         {(state) => (
           <footer class="muted">
             <p>build {state().build}</p>
@@ -266,5 +293,16 @@ export default function App() {
         )}
       </Show>
     </main>
+  );
+}
+
+function SignedOutAgain() {
+  return (
+    <>
+      <p>Your session has ended. Sign in again.</p>
+      <button type="button" onClick={goSignIn}>
+        Sign in with Google
+      </button>
+    </>
   );
 }
