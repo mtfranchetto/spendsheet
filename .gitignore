@@ -46,3 +46,11 @@ web/.dev.vars
 # Who the viewer admits: Google account IDs and the addresses beside them.
 # People, not configuration, and the repository is public.
 web/.accounts.json
+
+# Credentials that arrive as files: a Google OAuth client download (the
+# viewer's setup reads one), a service account, a PKCS#12 bundle, a .env.
+client_secret*.json
+service-account*.json
+*.p12
+.env
+.env.*

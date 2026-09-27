@@ -2,7 +2,7 @@
 
 Sync your bank transactions into a Google Sheet, automatically, for free.
 
-No server. No subscription. No Docker. No account with anyone except your bank and Google. The Sheet **is** the database — so if this project dies tomorrow, your data doesn't go with it.
+No server to run. No subscription. No Docker. No account with anyone except your bank and Google — plus a free Cloudflare one if you want the phone app. The Sheet **is** the database — so if this project dies tomorrow, your data doesn't go with it.
 
 Built on [Enable Banking](https://enablebanking.com)'s free tier (PSD2 open banking, EU/EEA/UK) and Google Apps Script, which runs on Google's servers at no cost.
 
