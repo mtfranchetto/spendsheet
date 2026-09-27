@@ -226,3 +226,23 @@ test('the page cannot be pinched or double-tapped into a zoom', async ({ page })
   expect(refused.gesturestart).toBe(true);
   expect(refused.gesturechange).toBe(true);
 });
+
+test('the strip at the top has room under the status bar at rest, and still pins to the top when scrolled', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect.poll(() => storedOwner(page)).toBe(OWNER);
+  // Up on every open that has a copy to draw, until the read lands.
+  const release = fake.hold('/api/read');
+  await page.reload();
+  const strip = page.locator('#refresh');
+  await expect(strip).toHaveText(/Last updated/);
+
+  expect((await strip.boundingBox()).y).toBeGreaterThanOrEqual(8);
+
+  await page.evaluate(() => {
+    document.body.style.minHeight = '3000px';
+    window.scrollTo(0, 400);
+  });
+  await expect.poll(async () => (await strip.boundingBox()).y).toBe(0);
+  release();
+});
