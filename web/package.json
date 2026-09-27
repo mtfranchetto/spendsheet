@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "serve": "wrangler dev",
     "deploy": "vite build && wrangler deploy --var BUILD_SHA:$(git rev-parse --short HEAD) && node scripts/accounts.mjs ensure",
-    "accounts": "node scripts/accounts.mjs"
+    "accounts": "node scripts/accounts.mjs",
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "solid-js": "^1.9.9"

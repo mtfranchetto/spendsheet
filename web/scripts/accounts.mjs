@@ -104,13 +104,11 @@ export function claspCredentials(rc) {
 }
 
 /**
- * Who `clasp` is signed in as: `{ sub, email }`, from Google.
- *
- * A fresh access token every time rather than the saved one, which is usually
- * expired — and the token is used for this one question and dropped. Nothing
- * here writes to `.clasprc.json`.
+ * A fresh access token from clasp's login, rather than the saved one, which is
+ * usually expired. Used for one question and dropped; nothing here writes to
+ * `.clasprc.json`.
  */
-export async function claspAccount({ rcPath = CLASPRC_PATH, fetchImpl = fetch } = {}) {
+export async function claspAccessToken({ rcPath = CLASPRC_PATH, fetchImpl = fetch } = {}) {
   if (!existsSync(rcPath)) throw new Error('clasp is not signed in here. Run `npx clasp login` at the repository root.');
   const credentials = claspCredentials(JSON.parse(readFileSync(rcPath, 'utf8')));
   if (!credentials) throw new Error(`${rcPath} holds no refresh token clasp can use. Run \`npx clasp login\` again.`);
@@ -127,7 +125,12 @@ export async function claspAccount({ rcPath = CLASPRC_PATH, fetchImpl = fetch } 
   });
   if (!token.ok) throw new Error(`Google refused clasp's login (${token.status}). Run \`npx clasp login\` again.`);
   const { access_token: accessToken } = await token.json();
+  return accessToken;
+}
 
+/** Who `clasp` is signed in as: `{ sub, email }`, from Google. */
+export async function claspAccount({ rcPath = CLASPRC_PATH, fetchImpl = fetch } = {}) {
+  const accessToken = await claspAccessToken({ rcPath, fetchImpl });
   const info = await fetchImpl('https://www.googleapis.com/oauth2/v3/userinfo', {
     headers: { authorization: `Bearer ${accessToken}` }
   });
@@ -140,14 +143,16 @@ export async function claspAccount({ rcPath = CLASPRC_PATH, fetchImpl = fetch } 
 }
 
 /** `wrangler secret put`, with the value on stdin so it never appears in a process list. */
-export function pushSecret(value, run = spawnSync) {
-  const result = run('npx', ['wrangler', 'secret', 'put', 'ALLOWED_ACCOUNTS'], {
+export function putSecret(name, value, run = spawnSync) {
+  const result = run('npx', ['wrangler', 'secret', 'put', name], {
     cwd: WEB,
     input: value,
     stdio: ['pipe', 'inherit', 'inherit']
   });
-  if (result.status !== 0) throw new Error('wrangler secret put ALLOWED_ACCOUNTS failed — is `npx wrangler login` done?');
+  if (result.status !== 0) throw new Error(`wrangler secret put ${name} failed — is \`npx wrangler login\` done?`);
 }
+
+export const pushSecret = (value, run = spawnSync) => putSecret('ALLOWED_ACCOUNTS', value, run);
 
 /** Push the list if Cloudflare does not already have exactly this value. */
 function sync(list, { path, run, log }) {

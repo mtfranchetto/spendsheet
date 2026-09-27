@@ -47,10 +47,22 @@ cannot see the book, and the page offers `/connect`.
 
 ## One-time setup
 
-Documented rather than scripted, per the repo's governing rule. None of it
-involves a multi-line key.
+Three commands and a console visit. `scripts/setup.mjs` argues why the
+secrets are scripted despite the repo's rule for one-time operations.
 
-**Google Cloud**
+**1. Create the Worker** (to learn its address)
+
+```sh
+npx wrangler login     # protect the Cloudflare account with 2FA or a passkey:
+                       # anyone who can deploy here can capture your token
+npm run deploy         # prints https://spendsheet.<you>.workers.dev
+```
+
+The deploy's last step admits you: it asks Google which account `clasp` is
+signed in as (the one that owns the book) and puts that account ID on
+`ALLOWED_ACCOUNTS`. It prints who it admitted — sign in as that account.
+
+**2. Google Cloud console** (Google has no API for this part)
 
 1. Create a project. **Attach no billing account** — Google plans to bill
    Sheets API usage over quota later in 2026, and it cannot bill a project
@@ -63,40 +75,28 @@ involves a multi-line key.
    and no unverified-app warning.
 4. Credentials → OAuth client, type *Web application*. Authorised redirect URI:
    `https://<your worker>.workers.dev/auth/callback`, plus
-   `http://localhost:8787/auth/callback` for local development.
+   `http://localhost:8787/auth/callback` for local development. **Download
+   JSON** on the dialog that follows.
 5. Credentials → API key. Restrict it to the website `https://<your worker>.workers.dev/*`
-   and to the Picker API only.
-6. Note the **project number** from the project dashboard. The Picker needs it,
-   and without it no `drive.file` grant is recorded.
+   and to the Picker API only. Copy it.
 
-**Cloudflare**
+**3. Every secret at once**
 
-1. `npx wrangler login`, and protect the Cloudflare account with a passkey or
-   2FA: anyone who can deploy here can ship a Worker that captures your token.
-2. `npm run deploy` once, to create the Worker and learn its address.
-3. The secrets, one each with `npx wrangler secret put <NAME>`:
+```sh
+npm run setup -- ~/Downloads/client_secret_<...>.json
+```
 
-   | name | value |
-   |---|---|
-   | `GOOGLE_CLIENT_ID` | from step 4 |
-   | `GOOGLE_CLIENT_SECRET` | from step 4 |
-   | `SESSION_KEY` | `openssl rand -base64 32` |
-   | `ALLOWED_ACCOUNTS` | nothing — `npm run deploy` sets it; see below |
-   | `SPREADSHEET_ID` | from the book's URL: `/spreadsheets/d/<this>/edit` |
-   | `PICKER_API_KEY` | from step 5 |
-   | `GOOGLE_PROJECT_NUMBER` | from step 6 |
+It asks for the API key and nothing else. The client ID and secret come from
+the file, the project number from the client ID, the spreadsheet from the
+Apps Script project `.clasp.json` names, and `SESSION_KEY` is generated —
+unless the Worker already has one, because replacing it signs every device out.
+It checks everything before writing anything. Then `/api/health` should say
+`true` for every entry under `configured`.
 
-   The API key and project number are not secrets, but the repository is
-   public, so they are set the same way rather than committed.
+**4. Laptop, once**
 
-**Laptop, once**
-
-1. Nothing to do for yourself: the last step of `npm run deploy` asks Google
-   which account `clasp` is signed in as (the one that owns the book) and puts
-   its account ID on `ALLOWED_ACCOUNTS`. It prints who it admitted. Sign in
-   with that same Google account.
-2. *Choose the book* → Google's Picker lists one file → select it. The page
-   says **Connected to Spendsheet ✓** when the Worker has read its title.
+*Choose the book* → Google's Picker lists one file → select it. The page says
+**Connected to Spendsheet ✓** when the Worker has read its title.
 
 **Phone**
 
@@ -161,8 +161,8 @@ green. `npm run typecheck` here for the compiler, which Vitest never asks.
 
 Google is faked at `fetch` in `worker/router.test.ts`, with ID tokens signed by
 a key the test generates, and every refusal asserts that **nothing reached
-Google** first. `scripts/accounts.test.mjs` sits beside its script, as the
-root's `scripts/` tests do.
+Google** first. Each `scripts/*.mjs` keeps its test beside it, as the root's
+`scripts/` tests do.
 
 `npm run test:e2e` at the root drives this page in WebKit too (`web/e2e/`),
 with every Worker path answered by `page.route`: an unreachable server, a
