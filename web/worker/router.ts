@@ -23,15 +23,20 @@
  * A refusal at any step happens **before anything reaches Google**, and the
  * tests hold it to that by failing on any `fetch`.
  *
- * ## Reads pass through; nothing here writes yet
+ * ## Reads pass through; writes are five named actions
  *
  * A free-plan Worker gets 10ms of CPU per request, and waiting on `fetch` does
  * not count. So `/api/read` hands Google's body back without reading it: it
  * costs the same at forty rows or forty thousand. It can only ask for the tabs
  * in `READ_RANGES`, only of `SPREADSHEET_ID`, and only with `values.batchGet` —
- * so it is never an open proxy to Google carrying your token. Writes arrive in
- * phase 5 as named actions carrying `22_actions.gs`'s checks; a raw write
- * pass-through could not tell a confirmation from an overwrite of history.
+ * so it is never an open proxy to Google carrying your token.
+ *
+ * Writes are `POST /api/act/<name>`, one of the five in `actions.ts`, each
+ * carrying `22_actions.gs`'s checks; a raw write pass-through could not tell a
+ * confirmation from an overwrite of history. A write must also carry the
+ * contract version the page was built against (`src/api/contract.ts`), and any
+ * other number is a 409 before anything is read: a page older than this
+ * Worker reloads rather than sending a shape nobody agreed on.
  */
 
 import {
@@ -57,6 +62,8 @@ import {
 import { verifyIdToken, isAllowed, accountAllowed } from './google-identity';
 import { authorizeUrl, exchangeCode, refreshAccess } from './oauth';
 import { connectPage } from './connect';
+import { addCash, addRule, decide, deleteRecord, Refusal, transfer, type Google, type Sheets } from './actions';
+import { CONTRACT, CONTRACT_HEADER } from '../src/api/contract';
 
 export type Env = {
   /** The OAuth client the sign-in redirect uses, and the `aud` an ID token must carry. */
@@ -172,9 +179,17 @@ async function googleFetch(
   url: string | URL,
   env: Env,
   nowSeconds: number,
-  granted: Authorized
+  granted: Authorized,
+  body?: unknown
 ): Promise<{ upstream: Response } | { answer: Response }> {
-  const ask = () => fetch(url, { headers: { authorization: `Bearer ${granted.token}` } });
+  const ask = () =>
+    body === undefined
+      ? fetch(url, { headers: { authorization: `Bearer ${granted.token}` } })
+      : fetch(url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${granted.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        });
 
   let upstream = await ask();
   if (upstream.status === 401 && granted.cached) {
@@ -251,6 +266,9 @@ export async function handle(request: Request, env: Env, nowSeconds: number): Pr
   }
   if (path === '/api/book' && request.method === 'GET') return book(env, nowSeconds, granted);
   if (path === '/api/read' && request.method === 'GET') return read(env, url, nowSeconds, granted);
+  if (path.startsWith('/api/act/') && request.method === 'POST') {
+    return act(request, env, nowSeconds, granted, path.slice('/api/act/'.length));
+  }
 
   return json({ error: 'No such route.' }, 404, granted.cookies);
 }
@@ -406,4 +424,93 @@ async function read(env: Env, url: URL, nowSeconds: number, granted: Authorized)
   });
   for (const value of granted.cookies) headers.append('set-cookie', value);
   return new Response(upstream.body, { status: 200, headers });
+}
+
+const ACTIONS: { [name: string]: (google: Google, body: never, now: Date) => Promise<unknown> } = {
+  decide: (google, body) => decide(google, body),
+  transfer: (google, body, now) => transfer(google, body, now),
+  rule: (google, body) => addRule(google, body),
+  cash: (google, body, now) => addCash(google, body, now),
+  delete: (google, body) => deleteRecord(google, body)
+};
+
+/** Anything Google answered that was not a success, carried out of an action as the Worker's own answer. */
+class Answered extends Error {
+  constructor(readonly response: Response) {
+    super('answered');
+  }
+}
+
+/**
+ * One named write. The contract, the action's name and a JSON body are all
+ * checked before anything reaches Google, and a `Refusal` from the action is a
+ * 422 carrying its sentence — about the request, never about the caller, so it
+ * is shown as it is.
+ */
+async function act(request: Request, env: Env, nowSeconds: number, granted: Authorized, name: string): Promise<Response> {
+  if (request.headers.get(CONTRACT_HEADER) !== String(CONTRACT)) {
+    return json({ error: 'contract', contract: CONTRACT }, 409, granted.cookies);
+  }
+  if (!Object.hasOwn(ACTIONS, name)) return json({ error: 'No such route.' }, 404, granted.cookies);
+  if (!env.SPREADSHEET_ID) return json({ error: 'Not configured.' }, 500, granted.cookies);
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'bad request' }, 400, granted.cookies);
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'bad request' }, 400, granted.cookies);
+
+  try {
+    const google = sheetsFor(env.SPREADSHEET_ID, env, nowSeconds, granted);
+    const answer = await ACTIONS[name](google, body as never, new Date(nowSeconds * 1000));
+    return json(answer, 200, granted.cookies);
+  } catch (error) {
+    if (error instanceof Answered) return error.response;
+    if (error instanceof Refusal) return json({ error: 'problem', message: error.message }, 422, granted.cookies);
+    throw error;
+  }
+}
+
+/** The `Google` an action writes through: four calls, all to the one spreadsheet, all as the signed-in account. */
+function sheetsFor(spreadsheetId: string, env: Env, nowSeconds: number, granted: Authorized): Google {
+  const base = `${SHEETS}/${encodeURIComponent(spreadsheetId)}`;
+  const call = async (url: string | URL, body?: unknown) => {
+    const got = await googleFetch(url, env, nowSeconds, granted, body);
+    if ('answer' in got) throw new Answered(got.answer);
+    return got.upstream;
+  };
+  return {
+    async read(ranges) {
+      const endpoint = new URL(`${base}/values:batchGet`);
+      for (const range of ranges) endpoint.searchParams.append('ranges', range);
+      endpoint.searchParams.set('valueRenderOption', 'UNFORMATTED_VALUE');
+      endpoint.searchParams.set('dateTimeRenderOption', 'SERIAL_NUMBER');
+      const answer = (await (await call(endpoint)).json()) as { valueRanges?: { values?: never[][] }[] };
+      return ranges.map((_, i) => answer.valueRanges?.[i]?.values ?? []);
+    },
+    async write(data) {
+      await call(`${base}/values:batchUpdate`, { valueInputOption: 'RAW', data });
+    },
+    async update(requests) {
+      await call(`${base}:batchUpdate`, { requests });
+    },
+    async sheets() {
+      const answer = (await (
+        await call(`${base}?fields=properties.timeZone,sheets.properties(sheetId,title,gridProperties.rowCount)`)
+      ).json()) as {
+        properties?: { timeZone?: string };
+        sheets?: { properties?: { sheetId?: number; title?: string; gridProperties?: { rowCount?: number } } }[];
+      };
+      const tabs: Sheets['tabs'] = {};
+      for (const sheet of answer.sheets ?? []) {
+        const props = sheet.properties ?? {};
+        if (props.title !== undefined && props.sheetId !== undefined) {
+          tabs[props.title] = { sheetId: props.sheetId, rows: props.gridProperties?.rowCount ?? 0 };
+        }
+      }
+      if (!answer.properties?.timeZone) throw new Refusal('The book did not say which timezone it keeps.');
+      return { timeZone: answer.properties.timeZone, tabs };
+    }
+  };
 }

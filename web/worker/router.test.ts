@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { handle, READ_RANGES, type Env } from './router';
+import { CONTRACT, CONTRACT_HEADER } from '../src/api/contract';
 import { forgetJwks } from './google-identity';
 import { codeChallenge, DRIVE_FILE_SCOPE } from './oauth';
 import {
@@ -611,5 +612,67 @@ describe('routes', () => {
   it('answers an unknown path with 404, after the gate', async () => {
     expect((await handle(request('/api/nothing'), ENV, NOW)).status).toBe(401);
     expect((await handle(request('/api/nothing', { cookie: await signedIn() }), ENV, NOW)).status).toBe(404);
+  });
+});
+
+describe('/api/act', () => {
+  const act = async (name: string, body: unknown, over: { contract?: string | null; cookie?: string; origin?: string } = {}) => {
+    const headers = new Headers({ origin: over.origin ?? ORIGIN, 'content-type': 'application/json' });
+    if (over.contract !== null) headers.set(CONTRACT_HEADER, over.contract ?? String(CONTRACT));
+    const cookie = over.cookie ?? (await signedIn());
+    if (cookie) headers.set('cookie', cookie);
+    return handle(
+      new Request(`${ORIGIN}/api/act/${name}`, { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) }),
+      ENV,
+      NOW
+    );
+  };
+
+  it('refuses a write with no session, before reaching Google', async () => {
+    const response = await act('decide', { decisions: [] }, { cookie: '' });
+    expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses a write from another origin', async () => {
+    const response = await act('decide', { decisions: [] }, { origin: 'https://evil.example' });
+    expect(response.status).toBe(403);
+    expect(calls).toEqual([]);
+  });
+
+  it('answers a page on another contract with a 409 and reads nothing', async () => {
+    for (const contract of [null, '0', String(CONTRACT + 1)]) {
+      const response = await act('decide', { decisions: [] }, { contract });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: 'contract', contract: CONTRACT });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses an action it does not know and a body that is not an object', async () => {
+    expect((await act('overwrite', {})).status).toBe(404);
+    expect((await act('decide', 'not json')).status).toBe(400);
+    expect((await act('decide', [1, 2])).status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+
+  it("answers an action's refusal as a 422 with its sentence", async () => {
+    const response = await act('delete', { uid: '', row: 5 });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: 'problem', message: 'Which transaction?' });
+    expect(calls).toEqual([]);
+  });
+
+  it('writes RAW, to this spreadsheet only', async () => {
+    const row = ['u1', ...Array(29).fill('')];
+    google.sheets.body = { valueRanges: [{ values: [row] }, { values: [['category', 'subcategory', 'kind', 'icon']] }] };
+    const response = await act('decide', { decisions: [{ uid: 'u1', row: 7, confirmed: true }] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ written: 1 });
+
+    const write = calls.find((call) => call.url.endsWith('/values:batchUpdate'));
+    expect(write?.url).toBe('https://sheets.googleapis.com/v4/spreadsheets/book-1/values:batchUpdate');
+    expect(JSON.parse(write!.body)).toEqual({ valueInputOption: 'RAW', data: [{ range: "'transactions'!AB7", values: [[true]] }] });
+    expect(calls.every((call) => call.url.startsWith('https://sheets.googleapis.com/v4/spreadsheets/book-1'))).toBe(true);
   });
 });
