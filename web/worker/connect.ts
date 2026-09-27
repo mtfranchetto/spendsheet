@@ -135,11 +135,13 @@ export function connectPage(env: ConnectEnv, token: string, cookies: string[]): 
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     // **The origin, and not `no-referrer` like every other response.** The
-    // Picker's API key is restricted to this site, and Google checks that
+    // Picker's API key is restricted by website, and Google checks that
     // restriction against the Referer — with none, it answers "The API
     // developer key is invalid", which reads as a wrong key rather than a
     // header. `strict-origin` sends the origin alone, never the path, and
-    // nothing over plain HTTP; the token is in the body, not the URL.
+    // nothing over plain HTTP; the token is in the body, not the URL. The
+    // key also has to allow `docs.google.com`, whose frame makes some of the
+    // Picker's own requests — the README's setup says so.
     'referrer-policy': 'strict-origin'
   });
   for (const value of cookies) headers.append('set-cookie', value);

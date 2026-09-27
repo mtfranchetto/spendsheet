@@ -77,8 +77,11 @@ signed in as (the one that owns the book) and puts that account ID on
    `https://<your worker>.workers.dev/auth/callback`, plus
    `http://localhost:8787/auth/callback` for local development. **Download
    JSON** on the dialog that follows.
-5. Credentials → API key. Restrict it to the website `https://<your worker>.workers.dev/*`
-   and to the Picker API only. Copy it.
+5. Credentials → API key. Restrict it to the Picker API only, and to two
+   websites: `https://<your worker>.workers.dev/*` **and** `https://docs.google.com/*`.
+   The Picker runs in a `docs.google.com` frame and some of its requests are
+   checked against that address; with only the Worker's, Google answers "The
+   API developer key is invalid". Copy it.
 
 **3. Every secret at once**
 
