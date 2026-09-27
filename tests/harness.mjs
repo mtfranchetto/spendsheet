@@ -12,7 +12,7 @@
  * which is why CI greps for import/export in src/.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -565,19 +565,12 @@ class FakeSpreadsheet {
  * in any order — and a fake that returned a bare object from `setTitle` would
  * make the *order* of those calls load-bearing in tests and nowhere else.
  */
-function htmlOutput(html, file = null) {
+function htmlOutput(html) {
   const out = {
-    file,
     title: null,
-    metaTags: [],
-    xFrameOptionsMode: null,
-    faviconUrl: null,
     getContent: () => html,
     setTitle(t) { out.title = t; return out; },
     getTitle: () => out.title,
-    addMetaTag(name, content) { out.metaTags.push({ name, content }); return out; },
-    setXFrameOptionsMode(mode) { out.xFrameOptionsMode = mode; return out; },
-    setFaviconUrl(url) { out.faviconUrl = url; return out; },
     setWidth() { return out; },
     setHeight() { return out; }
   };
@@ -881,119 +874,12 @@ export function createGoogleStubs(options = {}) {
     }),
 
     /**
-     * `createHtmlOutputFromFile` really reads `src/<name>.html`, because the
-     * alternative is a fake that returns a placeholder and lets a test claim
-     * the page was served when the file does not exist. Apps Script throws
-     * when the file is missing, and so does this.
-     *
-     * The output is chainable in the same order the real one is, and every
-     * call is recorded — `addMetaTag('viewport', …)` is the difference between
-     * a page laid out at the phone's width and one pretending to be a 980px
-     * desktop, and it is invisible in the content.
-     *
-     * **`getContent` gives markup back, which is not what was put in.** An
-     * `HtmlOutput` holds HTML, so a `<` that opens no tag comes back escaped —
-     * which is fine for the fragments this idiom is documented for and fatal
-     * for a file of bare JavaScript, where the first `<` is a less-than. That
-     * cost this project every screen of the app; `include_` reads through
-     * `getRawContent` for exactly this reason. The fake escapes here so a
-     * return to the documented-looking call fails in the suite rather than on
-     * the phone — the same rule as `XFrameOptionsMode` listing two members: be
-     * no more forgiving than the real thing.
+     * The dialogs' one call. Nothing here serves a file or a template, so the
+     * fake offers neither — a caller that reached for one would be reaching
+     * for a method this project no longer has a use for, and should fail.
      */
     HtmlService: {
-      createHtmlOutput: (html) => htmlOutput(html),
-      createHtmlOutputFromFile: (name) => {
-        const path = join(SRC, `${name}.html`);
-        if (!existsSync(path)) {
-          throw new Error(`No html file named ${name} was found in the script.`);
-        }
-        const source = readFileSync(path, 'utf8');
-        return htmlOutput(source.replace(/<(?![a-zA-Z/!?])/g, '&lt;'), name);
-      },
-      /**
-       * A template, faithful in the one way that matters: it throws.
-       *
-       * Apps Script raises a ReferenceError when a scriptlet names a variable
-       * the caller never assigned, and that is the realistic failure — a
-       * placeholder renamed on one side only, which takes the page down for
-       * the only person allowed to open it. A fake that quietly prints nothing
-       * cannot fail on it, and this project has already paid twice for a stub
-       * being more forgiving than the real thing (`XFrameOptionsMode.IFRAME`,
-       * `DriveApp.getFoldersByName`).
-       *
-       * `<?!= x ?>` prints raw and `<?= x ?>` escapes, as they do in Apps
-       * Script. Nothing else of the scriptlet language is modelled, because
-       * nothing else is used — a fake that grew a `<? if ?>` would be inviting
-       * one into the page.
-       *
-       * **`include_('page.x')` is the second shape, and it is resolved by
-       * calling `include_`** — the one in `src/20_webapp.gs`, out of the same
-       * sandbox the template is being served from, rather than by a second
-       * implementation here that reads the file itself. `page.html` is a shell
-       * of a dozen of those, so a fake that left them unresolved would serve a
-       * document with no application in it and every content assertion would
-       * pass by describing the shell. Recursive, because a partial may include
-       * another; bounded, because a file including itself is otherwise a stack
-       * overflow whose trace names no file.
-       */
-      createTemplateFromFile: (name) => {
-        const path = join(SRC, `${name}.html`);
-        if (!existsSync(path)) {
-          throw new Error(`No html file named ${name} was found in the script.`);
-        }
-
-        const includes = (text, depth) => {
-          if (depth > 10) throw new Error('include_ nested more than ten deep — a cycle?');
-          return text.replace(
-            /<\?!?=\s*include_\(\s*['"]([\w.-]+)['"]\s*\)\s*;?\s*\?>/g,
-            (all, file) => {
-              if (typeof sandbox.include_ !== 'function') {
-                throw new Error('ReferenceError: "include_" is not defined.');
-              }
-              return includes(sandbox.include_(file), depth + 1);
-            });
-        };
-
-        const source = readFileSync(path, 'utf8');
-        const template = {
-          /**
-           * The file, unprocessed — no scriptlets resolved and no markup made
-           * of it. This is how `include_` reads a partial, and the whole point
-           * is that it is the one reader that does not go through an
-           * `HtmlOutput` and so cannot escape a `<` that opens no tag.
-           */
-          getRawContent() { return source; },
-          evaluate() {
-            const filled = includes(source, 0).replace(
-              /<\?(!?)=\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\?>/g,
-              (all, raw, key) => {
-                if (!Object.prototype.hasOwnProperty.call(template, key)) {
-                  throw new Error(`ReferenceError: "${key}" is not defined.`);
-                }
-                const value = template[key];
-                const text = value === null || value === undefined ? '' : String(value);
-                return raw ? text : text
-                  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-              });
-            return htmlOutput(filled, name);
-          }
-        };
-        return template;
-      },
-
-      /**
-       * Exactly the two members the real enum has, and no more.
-       *
-       * The first version listed `IFRAME` as well — which belongs to
-       * `SandboxMode`, a different enum — and so a call passing
-       * `XFrameOptionsMode.IFRAME` read as fine here while evaluating to
-       * `undefined` in production and taking the app page down. A fake that
-       * invents a member cannot fail on a typo, which is most of what a fake
-       * of an enum is *for*. Same rule as `DriveApp` deliberately not offering
-       * `getFoldersByName`: be no more forgiving than the real thing.
-       */
-      XFrameOptionsMode: { ALLOWALL: 'ALLOWALL', DEFAULT: 'DEFAULT' }
+      createHtmlOutput: (html) => htmlOutput(html)
     }
   };
 
