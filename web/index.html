@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+
+    <!--
+      The viewport tag, and it is load-bearing rather than boilerplate.
+
+      A browser with no viewport meta lays the document out at the 980px width
+      it assumes a desktop site wants and then scales the result to the window,
+      so a 390px screen is not a 390px layout. On the Apps Script side this had
+      to be hung on the HtmlService wrapper with `addMetaTag`, because Apps
+      Script strips one written into the file — and the preview server had to
+      reproduce it or every phone-shaped test was measuring an 868px container
+      behind a screenshot that looked like a phone.
+
+      Owning the document means that whole class of problem is gone: the tag is
+      just here, and dev, preview and production cannot disagree about it.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!--
+      Added to the Home Screen, this is what makes it open as its own app
+      rather than in a Safari tab. It is also what makes it a separate
+      application with a separate session — the thing that killed the old
+      cache. Here that is fine: the session lives in a server-set cookie, which
+      is not script-writable storage and not subject to ITP's cap.
+
+      Both spellings, because the standard one is the replacement and the Apple
+      one is still what iOS reads. WebKit warns about the Apple spelling and
+      obeys it; dropping it would silence a console warning by breaking the
+      only platform this is for.
+    -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Spendsheet" />
+    <meta name="theme-color" content="#111417" />
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- Nothing here is worth a search engine's time, and it is one person's finances. -->
+    <meta name="robots" content="noindex, nofollow" />
+
+    <title>Spendsheet</title>
+
+    <!--
+      `apple-touch-icon` must be a PNG — iOS does not accept an SVG for it, and
+      with no icon at all a Home Screen clip gets a screenshot of whatever the
+      page looked like when you added it. Since phase 1's whole verification is
+      opening this from the icon, an icon you can find matters more than usual.
+      Rendered from `icon.svg` by `rsvg-convert`; both are committed.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <link rel="stylesheet" href="/src/app/app.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

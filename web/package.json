@@ -1,0 +1,27 @@
+{
+  "name": "spendsheet-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Spendsheet viewer: a static Solid app and one same-origin edge function.",
+  "scripts": {
+    "tools": "./scripts/tools.sh",
+    "tools:install": "./scripts/tools.sh install",
+    "infra": "./scripts/infra.sh",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "serve": "wrangler pages dev dist",
+    "deploy": "wrangler pages deploy dist --project-name spendsheet"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.9"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.1.14",
+    "vite-plugin-solid": "^2.11.9",
+    "wrangler": "^4.45.0"
+  }
+}
