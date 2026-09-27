@@ -544,15 +544,13 @@ function describeWebAppContext() {
   var report = {
     activeUser: safeEmail_(function () { return Session.getActiveUser().getEmail(); }),
     effectiveUser: safeEmail_(function () { return Session.getEffectiveUser().getEmail(); }),
-    owner: typeof webAppOwner_ === 'function' ? webAppOwner_() : '(20_webapp.gs not loaded)',
+    owner: webAppOwner_(),
     deploymentUrl: detectedWebAppUrl_(),
     pinnedRedirectUrl:
       PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL) || ''
   };
 
-  report.allowed = typeof webAppAccessDecision_ === 'function'
-    ? webAppAccessDecision_(report.owner, report.activeUser).ok
-    : false;
+  report.allowed = webAppAccessDecision_(report.owner, report.activeUser).ok;
 
   logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app context', report);
 

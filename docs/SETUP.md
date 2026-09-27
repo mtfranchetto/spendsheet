@@ -30,7 +30,7 @@ There's no bulk import in the editor, and drag-and-drop does nothing. If you'd r
 
 Reload the spreadsheet — `onOpen()` is a simple trigger, so the menu only appears on a fresh load, not when you save the script.
 
-**Spendsheet → Set up and maintain → Setup sheet.** It builds 20 tabs, seeded and formatted.
+**Spendsheet → Set up and maintain → Setup sheet.** It builds 21 tabs, seeded and formatted.
 
 The first run asks you to authorize it, and **Google shows you two warning screens on the way**. Both are expected. They are documented here rather than left as a surprise, because the second one is designed to look like the interstitial you get on a site with a broken certificate, and hitting it in the first five minutes of a finance tool reads as "something is wrong".
 

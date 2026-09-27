@@ -35,6 +35,9 @@ var TABS = {
   // thing does, and nothing else ever should. Same schema as `transactions`, so
   // putting a row back is a paste rather than a reconstruction.
   REMOVED: '_removed',
+  // The row-loss detector's remembered counts, copied out of script properties
+  // so the phone can read them. One row; see `rememberRowCount_`.
+  MONITOR: '_monitor',
   // Dropdowns driving one QUERY. Visible and without an underscore because it
   // is a thing you use rather than machinery you ignore.
   REPORTS: 'reports',
@@ -354,6 +357,7 @@ var IMPORT_MAP_COLUMNS = ['preset', 'source_header', 'target_column'];
 var CATEGORY_MAP_COLUMNS = ['preset', 'source_category', 'category', 'subcategory'];
 var MEMORY_COLUMNS = ['merchant_key', 'category', 'subcategory', 'hits', 'last_seen'];
 var TEST_COLUMNS = ['run_at', 'suite', 'name', 'result', 'detail'];
+var MONITOR_COLUMNS = ['transactions_rows', 'removed_rows'];
 
 /** Anomaly kinds. Things go here instead of being silently dropped. */
 var ANOMALY_KIND = {
@@ -508,7 +512,7 @@ var DEFAULT_CONFIG = [
   // deployment of this project is anonymous by necessity (the bank's redirect
   // carries no Google session) and both deployments run the same doGet, so the
   // app branch checks the caller against this. Blank means refuse everyone —
-  // see webAppAccessDecision_ in 20_webapp.gs for why it fails closed.
+  // see webAppAccessDecision_ in 04_gates.gs for why it fails closed.
   ['owner_email', '', 'Who may open the mobile web app. Comma-separate to share it — see docs/SHARING.md. Filled by Setup sheet. Blank refuses everyone.'],
   // Stored rather than detected. `ScriptApp.getService().getUrl()` answers for
   // the context it is called from, so from the menu it returns the HEAD

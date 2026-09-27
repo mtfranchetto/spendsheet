@@ -45,22 +45,6 @@
  */
 
 /**
- * The gate, on the server side of a page call.
- *
- * Throws rather than returning a refusal object, because every caller here
- * would otherwise have to remember to check — and the one that forgets is the
- * one that returns the balances. A throw reaches the page through
- * `withFailureHandler`, which is where a refusal belongs.
- */
-function requireOwner_() {
-  var decision = webAppAccessDecision_(webAppOwner_(), activeUserEmail_());
-  if (!decision.ok) {
-    Logger.log('api refused: ' + decision.reason);
-    throw new Error('Not available.');
-  }
-}
-
-/**
  * The top of the dashboard, and nothing that needs the ledger.
  *
  * ## Why the screen is two calls rather than one

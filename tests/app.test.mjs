@@ -336,6 +336,26 @@ describe('the gate on every public function in the project', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('keeps the gates, and everything they call, below the web app', () => {
+    // Every menu item and trigger opens with a gate, so a gate that lived in
+    // (or leaned on) a front door's file would make the whole Sheet depend on
+    // that door existing. 20–23 serve the app; nothing the gates run may be
+    // defined there. Walked transitively, because the owner check is four
+    // helpers deep before it reaches `_config`.
+    const seen = new Set();
+    const queue = [...GATES, 'seedWebAppOwner_'];
+    while (queue.length) {
+      const name = queue.shift();
+      if (seen.has(name)) continue;
+      seen.add(name);
+      queue.push(...callees[name]);
+    }
+    expect(seen.has('webAppAccessDecision_')).toBe(true);
+    const misplaced = [...seen].filter((name) => Number(fns[name].file.slice(0, 2)) >= 20)
+      .map((name) => `${name} (${fns[name].file})`);
+    expect(misplaced).toEqual([]);
+  });
+
   it('gates every trigger handler on the event, not on the UI', () => {
     // A trigger has no UI and no signed-in user, so `requireInteractive_`
     // alone would pass the rule above and refuse every unattended run. Read

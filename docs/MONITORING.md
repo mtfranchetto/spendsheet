@@ -58,7 +58,7 @@ Each needs its own detector, because none of them catches the others.
 | 3 | A consent is expiring or expired | `valid_until` against today | `consent_warning_days` |
 | 4 | It ran "fine" and returned nothing | zero rows fetched across N consecutive days | `empty_run_threshold_days` |
 | 5 | It never ran at all | `selfCheck()` on a **separate trigger**, reading only `_runs` | `stale_threshold_days` |
-| 6 | Rows disappeared | row count went *down* — never legitimate in an append-only tab. Alert **and abort** | — |
+| 6 | Rows disappeared | row count went *down* by more than the rows copied to `_removed` since — never legitimate in an append-only tab. Alert **and abort** | — |
 
 Two of these are deliberately reluctant to fire, because an alarm you learn to ignore is worse than none:
 
@@ -68,6 +68,10 @@ Two of these are deliberately reluctant to fire, because an alarm you learn to i
 ### When rows disappear, syncing stops
 
 Failure 6 doesn't warn, it **aborts**. Appending to a tab that has silently lost rows writes new history on top of a hole, and every run afterwards makes the restore harder.
+
+A drop is excused only by rows copied to `_removed` since the count was last remembered, and only by those whose uid is gone from `transactions`. That is how a deletion made through the proper door — the phone's, or *Remove synced duplicates* — accounts for itself. A sort, a deleted range or a bad undo copies nothing there, so it is still caught.
+
+The remembered counts live in Script Properties, and are copied into the hidden `_monitor` tab so the phone can read them too.
 
 The way out: File → Version history to restore what was lost. If the smaller sheet is actually what you meant — you deleted test rows on purpose — **Spendsheet → Set up and maintain → Accept row count** unblocks it. That step is manual by design; a detector that resets itself can't detect anything.
 

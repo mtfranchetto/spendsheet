@@ -30,6 +30,7 @@
 
 var ALERT_PROP = 'MONITOR_ALERTS';
 var ROW_COUNT_PROP = 'MONITOR_ROW_COUNT';
+var REMOVED_COUNT_PROP = 'MONITOR_REMOVED_COUNT';
 
 var ALERT_KIND = {
   CONSENT: 'consent',
@@ -238,22 +239,99 @@ function checkFailingAccounts_() {
  * three fire `onEdit` on `transactions`, which bumps the version and drops the
  * cache. The thing that must not be late is the sync, and it is not:
  * `assertNoRowLoss_` calls this with no argument and scans the tab.
+ *
+ * **A drop is excused only by rows archived to `_removed` since the count was
+ * remembered, and only by those whose uid is gone from `transactions`.** A
+ * deletion that goes through the proper door copies the row there first, and
+ * a writer that cannot reach script properties — so cannot re-baseline — is
+ * still accounted for by the copy it left. A sort, a deleted range or a bad
+ * undo writes nothing to `_removed`, so this excuses none of the things the
+ * detector exists for. Each half of the rule closes a hole: counting only rows
+ * *added* since the remember stops an old copy from excusing a new loss, and
+ * requiring the uid to be *gone* stops a copy left behind by a delete that
+ * then failed from excusing some other row's disappearance. Distinct uids,
+ * because the same row copied twice is still one row.
+ *
+ * Only a drop pays for this: the archive and the ledger's uids are read when
+ * the count has gone down, never on the ordinary path.
  */
 function checkRowLoss_(knownCount) {
   var current = knownCount === undefined || knownCount === null
     ? currentRowCount_()
     : Number(knownCount);
-  var recorded = Number(
-    PropertiesService.getScriptProperties().getProperty(ROW_COUNT_PROP) || 0);
+  var props = PropertiesService.getScriptProperties();
+  var recorded = Number(props.getProperty(ROW_COUNT_PROP) || 0);
 
   if (!recorded || current >= recorded) return [];
+
+  var archived = archivedSinceRemembered_(props.getProperty(REMOVED_COUNT_PROP));
+  if (current + archived >= recorded) return [];
 
   return [alert_(ALERT_KIND.ROWS_LOST, '',
     'Rows have disappeared from transactions',
     'transactions held ' + recorded + ' rows and now holds ' + current + '. That tab is ' +
     'append-only, so this is never legitimate — a sort, a deleted range, or an undo that ' +
-    'took more than it appeared to. Syncing is blocked until it is resolved: File → Version ' +
+    'took more than it appeared to.' +
+    (archived ? ' ' + archived + ' of the missing rows have a copy in ' + TABS.REMOVED +
+      ', which does not account for the rest.' : '') +
+    ' Syncing is blocked until it is resolved: File → Version ' +
     'history to restore, then Spendsheet → Accept row count.')];
+}
+
+/**
+ * How many rows archived to `_removed` since `rememberedCount` are gone from
+ * `transactions` — the part of a drop that a deletion accounted for.
+ *
+ * `rememberedCount` is the property as stored. **Absent means excuse nothing**,
+ * not zero: a book whose count was remembered before `_removed`'s was would
+ * otherwise treat every row it has ever archived as new, and one old copy
+ * would excuse one real loss. `Number(null)` is `0`, which is exactly that.
+ * An archive that has shrunk since excuses nothing either.
+ */
+function archivedSinceRemembered_(rememberedCount) {
+  if (isBlankCell_(rememberedCount)) return 0;
+  var remembered = Number(rememberedCount);
+  if (!isFinite(remembered)) return 0;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var removed = ss.getSheetByName(TABS.REMOVED);
+  var tx = ss.getSheetByName(TABS.TRANSACTIONS);
+  if (!removed || !tx) return 0;
+
+  var uidColumn = colIndex_(TX_COLUMNS, 'uid');
+  var archive = readColumn_(removed, uidColumn);
+  if (archive.length <= remembered) return 0;
+
+  var present = {};
+  readColumn_(tx, uidColumn).forEach(function (uid) { present[String(uid)] = true; });
+
+  var gone = {};
+  archive.slice(remembered).forEach(function (uid) {
+    if (isBlankCell_(uid) || present[String(uid)]) return;
+    gone[String(uid)] = true;
+  });
+  return Object.keys(gone).length;
+}
+
+/**
+ * Give a book that has never remembered `_removed`'s count a baseline now.
+ *
+ * Called from `setup()`. Without it, the first hand deletion on an existing
+ * book — copied to `_removed` exactly as the docs say — would still block the
+ * sync: the baseline is absent, so nothing is excused, and the aborted sync
+ * never reaches the `rememberRowCount_` that would record one. Today's count
+ * is safe to adopt at any moment, because it excuses only rows archived after
+ * it. An existing baseline is left alone; moving it would forgive a copy.
+ */
+function seedRemovedBaseline_() {
+  var props = PropertiesService.getScriptProperties();
+  if (!isBlankCell_(props.getProperty(REMOVED_COUNT_PROP))) return;
+  props.setProperty(REMOVED_COUNT_PROP, String(currentRemovedCount_()));
+}
+
+function currentRemovedCount_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.REMOVED);
+  return sheet ? lastRecordRow_(sheet, colIndex_(TX_COLUMNS, 'uid')) - 1 : 0;
 }
 
 function currentRowCount_() {
@@ -276,10 +354,31 @@ function assertNoRowLoss_() {
   throw new Error(loss[0].detail);
 }
 
-/** Record the count as legitimate. Called after every successful append. */
+/**
+ * Record the count as legitimate. Called after every successful append.
+ *
+ * `_removed`'s count is remembered beside it, in the same write, because it is
+ * the baseline `checkRowLoss_` measures new archive rows from. Both are also
+ * mirrored into `_monitor`, because script properties are reachable only from
+ * Apps Script and the phone's health check has to reach the same numbers. The
+ * properties stay the record; the tab is a copy, and a book whose `_monitor`
+ * does not exist yet simply has no copy until setup() is run again.
+ */
 function rememberRowCount_() {
-  PropertiesService.getScriptProperties()
-    .setProperty(ROW_COUNT_PROP, String(currentRowCount_()));
+  var rows = currentRowCount_();
+  var removed = currentRemovedCount_();
+  var counts = {};
+  counts[ROW_COUNT_PROP] = String(rows);
+  counts[REMOVED_COUNT_PROP] = String(removed);
+  PropertiesService.getScriptProperties().setProperties(counts);
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.MONITOR);
+  if (!sheet) return;
+  var record = {};
+  record.transactions_rows = rows;
+  record.removed_rows = removed;
+  sheet.getRange(2, 1, 1, MONITOR_COLUMNS.length).setValues([toRow_(MONITOR_COLUMNS, record)]);
+  forgetReadCache_();
 }
 
 /**

@@ -200,7 +200,7 @@ Deleting the history costs more than it looks. It understates the years the acco
 
 The asymmetry is the argument: you can hide a dormant account at any point, but you cannot un-delete its history without redoing the import.
 
-If you delete rows from `transactions` **by hand**, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Run **Spendsheet → Set up and maintain → Accept row count** immediately afterwards.
+If you delete rows from `transactions` **by hand**, the row count goes down, the row-loss detector fires and the next sync **aborts** — by design, since an append-only tab losing rows is never legitimate. Copy each row to `_removed` first and the drop is accounted for; otherwise run **Spendsheet → Set up and maintain → Accept row count** immediately afterwards.
 
 The two deletions this project performs itself — *Remove synced duplicates*, and deleting one cash transaction from the phone — re-baseline that count as part of the operation, so neither leaves the sync blocked. Both also copy every row to `_removed` first, and both refuse the first data row, which anchors every formula on the tab.
 
@@ -286,9 +286,10 @@ See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 | `_import_raw` | where a CSV lands via File → Import |
 | `_import_staged` | formula-mapped rows, and `include`/`why` for each. Only the columns an export can fill, so it is narrower than `transactions` |
 | `_removed` | same columns as `transactions`. Rows deleted by **Remove synced duplicates**, or one cash transaction deleted from the phone, so putting one back is a paste |
+| `_monitor` | one row: `transactions_rows`, `removed_rows` — the counts the row-loss detector last remembered, copied out of Script Properties so the phone can read them |
 | `_tests` | smoke test results |
 
-`_runs` is what powers the row-count regression guard: if the row count *decreased* since the last run, that's never legitimate in an append-only tab, so the sync alerts and aborts rather than carrying on.
+The row-count regression guard remembers the count in Script Properties after every append: if it has *decreased* since, by more than the rows copied to `_removed` in between, that's never legitimate in an append-only tab, so the sync alerts and aborts rather than carrying on.
 
 ---
 

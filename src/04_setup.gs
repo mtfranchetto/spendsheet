@@ -52,6 +52,7 @@ function runSetup_() {
   buildTable_(ss, TABS.CATEGORY_MAP, CATEGORY_MAP_COLUMNS, report, DEFAULT_CATEGORY_MAP);
   buildTable_(ss, TABS.MEMORY, MEMORY_COLUMNS, report);
   buildTable_(ss, TABS.REMOVED, TX_COLUMNS, report);
+  buildTable_(ss, TABS.MONITOR, MONITOR_COLUMNS, report);
   buildTable_(ss, TABS.REVIEW, REVIEW_COLUMNS, report);
   buildTable_(ss, TABS.TESTS, TEST_COLUMNS, report);
 
@@ -60,7 +61,8 @@ function runSetup_() {
 
   // After the seed pass, because the row it fills has to exist first. Writes
   // only when blank, so this is one line on a new book and nothing ever after.
-  if (functionExists_('seedWebAppOwner_')) seedWebAppOwner_(ss);
+  seedWebAppOwner_(ss);
+  if (functionExists_('seedRemovedBaseline_')) seedRemovedBaseline_();
 
   // Working tabs with no fixed schema.
   getOrCreate_(ss, TABS.IMPORT_RAW, report);      // CSV lands here via File → Import
@@ -1494,7 +1496,7 @@ function hidePrivateTabs_(ss, report) {
 
 /**
  * Drop the empty starter tab a blank spreadsheet comes with, so you end up
- * with exactly our 19 and no stray "Sheet1". Only ever removes a sheet that
+ * with exactly our tabs and no stray "Sheet1". Only ever removes a sheet that
  * is both untouched and not one of ours — an empty tab you created on purpose
  * and named something else is left alone.
  */
