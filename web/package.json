@@ -3,17 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The Spendsheet viewer: a static Solid app and one same-origin edge function.",
+  "description": "The Spendsheet viewer: a static Solid app and one Worker in front of /api, /auth and /connect.",
   "scripts": {
     "tools": "./scripts/tools.sh",
     "tools:install": "./scripts/tools.sh install",
-    "infra": "./scripts/infra.sh",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "serve": "wrangler pages dev dist",
-    "deploy": "wrangler pages deploy dist --project-name spendsheet"
+    "serve": "wrangler dev",
+    "deploy": "vite build && wrangler deploy --var BUILD_SHA:$(git rev-parse --short HEAD)"
   },
   "dependencies": {
     "solid-js": "^1.9.9"

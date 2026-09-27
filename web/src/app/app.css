@@ -114,3 +114,39 @@ footer p {
   margin: 4px 0;
   word-break: break-word;
 }
+
+h2 {
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  text-align: right;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+
+pre {
+  overflow-x: auto;
+  font-size: 0.78rem;
+  background: var(--line);
+  padding: 12px;
+  border-radius: 8px;
+}
+
+code {
+  overflow-wrap: anywhere;
+}

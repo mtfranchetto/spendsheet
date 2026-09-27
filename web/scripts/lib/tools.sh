@@ -2,18 +2,16 @@
 #
 # lib/tools.sh — what this project needs on a machine, in one table.
 #
-# Sourced, never run. `scripts/tools.sh` is the command; `scripts/infra.sh`
-# sources this for its preflight, so "you are missing gcloud" arrives before
-# anything has been created rather than half way through creating it.
+# Sourced, never run. `scripts/tools.sh` is the command.
 #
 # ## Why a table rather than a README section
 #
 # The governing rule says one-time human operations get documented rather than
 # automated, and setting up a laptop is as one-time as it gets. What earns this
-# its place is the *check*, which is not one-time at all: `infra.sh` creates
-# cloud resources, and a missing tool discovered in the middle leaves half a
-# service account and a Pages project behind. Knowing the answer before
-# starting is worth more here than the install is.
+# its place is the *check*, which is not one-time at all: a deploy or a
+# `wrangler secret put` that stops half way for a missing or signed-out tool
+# leaves a Worker with some of its secrets. Knowing the answer before starting
+# is worth more here than the install is.
 #
 # So the install half is the convenience and the check half is the point.
 #
@@ -24,11 +22,9 @@
 # there is no reason it becomes acceptable because it is convenient. Missing
 # brew prints the command and stops.
 #
-# **It never signs anything in.** `gcloud auth login` and `wrangler login` open
-# a browser and want a human. It reports whether each is authenticated, which is
-# the part that is actually easy to get wrong — an unauthenticated `gcloud` fails
-# in the middle of `infra.sh` with a message about credentials that reads like a
-# permissions problem.
+# **It never signs anything in.** `wrangler login` opens a browser and wants a
+# human. It reports whether it is authenticated, which is the part that is
+# actually easy to get wrong.
 #
 # Written for bash 3.2, because that is what `/bin/bash` is on macOS and a
 # script that only runs under Homebrew's bash is a script that fails on exactly
@@ -41,18 +37,13 @@
 #   cask:<name>      a Homebrew cask
 #   npm              installed per-project by `npm install`, never globally
 #   manual           a human has to do it
-#
-# The gcloud cask is `gcloud-cli`, not `google-cloud-sdk`. The old name still
-# resolves as an alias, which is exactly why it is worth naming the current one
-# here — an alias that works is an alias nobody notices until it stops.
 TOOLS_TABLE='
 brew|required|manual|installs everything else on macOS
 node|required|brew:node|vite, vitest and wrangler all run on it
 npm|required|brew:node|comes with node
 git|required|manual|ships with the Xcode command line tools
-openssl|required|brew:openssl|generates SESSION_SECRET in infra.sh
-gcloud|required|cask:gcloud-cli|creates the service account and its key
-wrangler|required|npm|deploys Pages and writes its secrets
+openssl|required|brew:openssl|generates SESSION_KEY
+wrangler|required|npm|deploys the Worker and writes its secrets
 gh|optional|brew:gh|opens pull requests
 jq|optional|brew:jq|reads JSON in scripts and by hand
 rsvg-convert|optional|brew:librsvg|regenerates apple-touch-icon.png from icon.svg
@@ -73,7 +64,6 @@ tool_version() {
   case "$1" in
     wrangler) "${TOOLS_WEB_DIR}/node_modules/.bin/wrangler" --version 2>/dev/null | tail -1 ;;
     node|npm) "$1" --version 2>/dev/null ;;
-    gcloud) gcloud version 2>/dev/null | head -1 | sed 's/Google Cloud SDK //' ;;
     openssl) openssl version 2>/dev/null | cut -d' ' -f1-2 ;;
     git) git --version 2>/dev/null | sed 's/git version //' ;;
     gh) gh --version 2>/dev/null | head -1 | sed 's/gh version //' | cut -d' ' -f1 ;;
@@ -138,22 +128,13 @@ tools_auth() {
   echo
   echo "Sign-in"
 
-  if ! tool_present gcloud; then
-    printf '  %-14s %s\n' "gcloud" "- (not installed)"
-  elif gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | grep -q .; then
-    printf '  %-14s %-9s %s\n' "gcloud" "ok" \
-      "$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -1)"
-  else
-    printf '  %-14s %-9s %s\n' "gcloud" "SIGN IN" "gcloud auth login"
-  fi
-
   # `wrangler whoami` exits **0 while telling you it is not authenticated**, so
   # the exit code is not the answer and trusting it reported a signed-out CLI
-  # as ready — which would have failed in the middle of `infra.sh`, after the
-  # service account existed. The test is therefore a *positive* signal in the
-  # output: an authenticated run prints an Account ID, and a signed-out one
-  # cannot. Biased that way on purpose — a false "sign in" wastes a moment, a
-  # false "ok" wastes a half-created cloud project.
+  # as ready — which would have failed half way through writing the secrets.
+  # The test is therefore a *positive* signal in the output: an authenticated
+  # run prints an Account ID, and a signed-out one cannot. Biased that way on
+  # purpose — a false "sign in" wastes a moment, a false "ok" wastes a
+  # half-configured Worker.
   if ! tool_present wrangler; then
     printf '  %-14s %s\n' "wrangler" "- (run npm install in web/)"
   elif "${TOOLS_WEB_DIR}/node_modules/.bin/wrangler" whoami 2>/dev/null | grep -qi 'account id'; then

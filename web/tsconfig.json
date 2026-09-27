@@ -22,5 +22,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", "functions"]
+  "include": ["src", "worker"]
 }

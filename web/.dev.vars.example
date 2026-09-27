@@ -1,31 +1,31 @@
-# Copy to `.dev.vars` — which is gitignored, because the line below is a
-# private key in the clear and this repo is meant to go public.
+# Copy to `.dev.vars` — gitignored, because the client secret and the session
+# key below are credentials and this repo is meant to go public.
 #
 #   cp .dev.vars.example .dev.vars
 #
-# `wrangler pages dev` reads this file and hands it to the function as `env`.
-# The names match `Env` in `functions/lib/router.ts` exactly; a typo here shows
-# up as `/api/health` reporting that binding as missing, which is the whole
-# reason that route reports them one by one.
+# `wrangler dev` reads this file and hands it to the Worker as `env`. The names
+# match `Env` in `worker/router.ts` exactly; a typo shows up as `/api/health`
+# reporting that binding as missing, which is why it reports them one by one.
+# Deployed, each of these is a `wrangler secret put <NAME>` instead.
 
-# The one Google account allowed in. Unset means nobody gets in, never everybody.
-OWNER_EMAIL=you@example.com
-
-# Any long random string. Rotating it signs everyone out, which is the intent.
-#   openssl rand -base64 48
-SESSION_SECRET=
-
-# From the OAuth client (Web application) in the Google console. Its authorised
-# redirect URI must include  http://localhost:4322/api/callback  for local dev,
-# alongside the deployed one.
+# From the OAuth client (Web application) in the Google Cloud console. Its
+# authorised redirect URIs must include  http://localhost:8787/auth/callback
+# for local development, alongside the deployed origin's /auth/callback.
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 
-# The service-account JSON, on ONE line. Newlines inside `private_key` stay as
-# the literal two characters backslash-n, exactly as the downloaded file has
-# them — `pemToDer` in `service-account.ts` accepts either spelling precisely
-# because this is the step that corrupts them.
-SERVICE_ACCOUNT_KEY={"client_email":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"}
+# 32 random bytes of base64. Seals every cookie; rotating it signs every device out.
+#   openssl rand -base64 32
+SESSION_KEY=
+
+# Google account IDs allowed in, comma-separated. Leave empty on the first run:
+# sign in, read your ID off the refusal, put it here, sign in again.
+ALLOWED_ACCOUNTS=
 
 # The book, from its URL: docs.google.com/spreadsheets/d/<THIS>/edit
 SPREADSHEET_ID=
+
+# For /connect's Picker. The API key is restricted in the console to this origin
+# and the Picker API; the project number is on the Cloud project's dashboard.
+PICKER_API_KEY=
+GOOGLE_PROJECT_NUMBER=

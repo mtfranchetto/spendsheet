@@ -9,7 +9,7 @@
  * Identity Services button, which would have needed a script tag pointing at
  * `accounts.google.com`. See `functions/lib/oauth.ts`.
  *
- * **The dev server proxies `/api` to `wrangler pages dev`.** In production the
+ * **The dev server proxies the Worker's paths to `wrangler dev`.** In production the
  * page and the API are one origin, which is the whole architecture: a
  * server-set first-party cookie is what escapes ITP's seven-day cap, and an API
  * on a different registrable domain would make us third party again. Proxying
@@ -26,15 +26,13 @@ export default defineConfig({
 
   server: {
     port: 4322,
-    proxy: {
-      // `wrangler pages dev` on 8788 serves `functions/`. Started separately —
-      // one process per job, so a crashed API does not take the page with it
-      // and the logs stay readable.
-      '/api': {
-        target: 'http://127.0.0.1:8788',
-        changeOrigin: false
-      }
-    }
+    // `wrangler dev` on 8787 runs the Worker. Started separately — one process
+    // per job, so a crashed Worker does not take the page with it and the logs
+    // stay readable. Every path the Worker owns in production is proxied, so
+    // the browser sees one origin here exactly as it does deployed.
+    proxy: Object.fromEntries(
+      ['/api', '/auth', '/connect'].map((path) => [path, { target: 'http://127.0.0.1:8787', changeOrigin: false }])
+    )
   },
 
   build: {

@@ -1,32 +1,36 @@
 /**
- * client.ts — one place that knows how to ask the server something.
+ * client.ts — one place that knows how to ask the Worker something.
  *
- * ## A dropped connection is not a refusal, and the page has always known it
+ * ## A dropped connection is not a refusal
  *
  * This is the rule that cost the most on the Apps Script side, so it is built
- * in here from the first call rather than added after it bites again. A
- * transport failure and a gate refusal used to be reported identically, so the
- * boot treated every failure as the gate and called `cacheForget()` on a
- * perfectly good copy — one queued execution, or one lift, and the next open
- * was cold with nothing on screen explaining why. It presented as *"two
- * refreshes give cached data and the third doesn't"*.
- *
- * On `fetch` the distinction is finally structural rather than guessed at: a
- * rejected promise is the transport, and a 401 is the gate. `ApiRefused` and
- * `ApiUnavailable` are separate types for that reason, and **anything acting on
- * the meaning of a failure has to ask which it was.**
+ * in from the first call. A transport failure and a gate refusal used to be
+ * reported identically, and the boot treated every failure as the gate — one
+ * queued execution and a perfectly good cached copy was wiped. On `fetch` the
+ * difference is structural: a rejected promise is the transport, a 401 is the
+ * gate, and a 403 `no-access` is the book being out of this grant's reach,
+ * which is a third thing again. **Anything acting on the meaning of a failure
+ * has to ask which it was.**
  *
  * ## `credentials: same-origin` is not the default it looks like
  *
  * `fetch` omits cookies unless told, and the session cookie is `HttpOnly` — so
- * a forgotten `credentials` would present as a permanently signed-out app with
- * a cookie sitting right there in the jar, which is a confusing morning.
+ * a forgotten `credentials` presents as a permanently signed-out app with a
+ * cookie sitting right there in the jar.
  */
 
 export class ApiRefused extends Error {
   constructor() {
     super('Not available.');
     this.name = 'ApiRefused';
+  }
+}
+
+/** Signed in, but Google will not let this grant read the book. Pick it again at `/connect`. */
+export class ApiNoAccess extends Error {
+  constructor() {
+    super('The viewer cannot read the book.');
+    this.name = 'ApiNoAccess';
   }
 }
 
@@ -37,48 +41,49 @@ export class ApiUnavailable extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** The response, once it is known to be a success. Everything else is one of the three errors. */
+export async function call(path: string, init: RequestInit = {}): Promise<Response> {
   let response: Response;
-
   try {
     response = await fetch(path, { ...init, credentials: 'same-origin' });
   } catch (cause) {
-    // Never a refusal: the request did not arrive, so nothing decided anything
-    // about it. Retrying is reasonable; forgetting a cached copy is not.
+    // The request did not arrive, so nothing decided anything about it.
     throw new ApiUnavailable(cause);
   }
 
   if (response.status === 401) throw new ApiRefused();
-
-  // A 5xx is the server having a bad time rather than a verdict about the
-  // caller — including error 1102, which is what exceeding the CPU cap looks
-  // like from out here and is emphatically not "you are not allowed".
+  if (response.status === 403) {
+    const body = (await response.clone().json().catch(() => null)) as { error?: string } | null;
+    if (body?.error === 'no-access') throw new ApiNoAccess();
+    throw new ApiRefused();
+  }
+  // A 5xx is the server or Google having a bad time — including error 1102,
+  // the CPU cap — and emphatically not "you are not allowed".
   if (!response.ok) throw new ApiUnavailable(response.status);
-
-  return (await response.json()) as T;
+  return response;
 }
 
-export type Health = {
-  ok: boolean;
-  build: string;
-  configured: Record<string, boolean>;
-};
+async function json<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await (await call(path, init)).json()) as T;
+}
 
-export type Me = { email: string; exp: number };
+export type Health = { ok: boolean; build: string; configured: Record<string, boolean> };
+export type Me = { email: string; sub: string };
+export type Book = { title: string; timeZone: string };
 
 export const api = {
-  health: () => request<Health>('/api/health'),
-  me: () => request<Me>('/api/me'),
-  signOut: () => request<{ ok: boolean }>('/api/signout', { method: 'POST' }),
-
-  /** A batch read of the book. Ranges are `tab!A1:AD`. */
-  values: (ranges: string[]) => {
-    const query = ranges.map((range) => `range=${encodeURIComponent(range)}`).join('&');
-    return request<{ valueRanges?: { values?: unknown[][] }[] }>(`/api/values?${query}`);
-  }
+  health: () => json<Health>('/api/health'),
+  me: () => json<Me>('/api/me'),
+  book: () => json<Book>('/api/book'),
+  // A POST from this page carries its own Origin, which is what the Worker checks.
+  signOut: () => json<{ ok: boolean }>('/auth/signout', { method: 'POST' })
 };
 
-/** Sign-in is a navigation, not a fetch — see `functions/lib/oauth.ts`. */
+/** Sign-in is a navigation, not a fetch: the browser leaves for Google and comes back. */
 export function goSignIn(): void {
-  window.location.href = '/api/signin';
+  window.location.href = '/auth/signin';
+}
+
+export function goConnect(): void {
+  window.location.href = '/connect';
 }

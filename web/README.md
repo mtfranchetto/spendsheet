@@ -1,147 +1,151 @@
 # web — the Spendsheet viewer, off Apps Script
 
-Phase 1 of the plan in `plan-for-life-after-valiant-rabbit.md`. A static Solid
-app and one same-origin edge function, on Cloudflare Pages. **Door 2 is
-untouched and is still the app in daily use** — nothing here replaces anything
-yet.
+A static Solid app and one small Cloudflare Worker in front of three paths. The
+Sheet stays the datastore; the Worker reads it with **your own** Google grant,
+limited by `drive.file` to the one book. **Door 2 is untouched and is still the
+app in daily use** until the cutover.
 
-## Why this exists
-
-Three problems, and only one of them is speed.
-
-The round-trip floor is Google's: ~3,350ms for the `/exec` document before a
-line of page code runs, ~2,700ms per `google.script.run` call. Server work was
-halved twice and the open still costs ~6s.
-
-The page's storage is *ephemeral*, not merely short-lived — on
-`…-script.googleusercontent.com` inside `script.google.com` it is third party by
-the only definition WebKit counts, so `localStorage` is partitioned into an
-in-memory map that dies with the application. An iOS Home Screen web clip is an
-application iOS ends whenever it wants the process back, so the icon warms
-never.
-
-And Door 2 is the source of the whole two-manifest deploy apparatus.
-
-On a first-party origin all three go away at once. The Sheet stays the
-datastore.
+This is phase 2 of the plan: the thin slice that settles the unknowns only the
+phone can answer. It signs in, connects the book, and measures a full read. It
+draws no dashboard yet.
 
 ## Layout
 
 | | |
 |---|---|
-| `src/sheets/records.ts` | the adapter: Sheets API values → `readRecords_`-shaped records. The one piece the port of `21_query.gs` needs. |
-| `src/query/` | empty until phase 2, when `21_query.gs` lands here as pure TypeScript. |
-| `src/api/client.ts` | one place that knows how to ask the server something, and that tells a refusal from a dropped connection. |
-| `src/app/` | the Solid app. Phase 1's screen only. |
-| `functions/lib/router.ts` | every route. Pure `(Request, Env, now) => Response` — no Cloudflare types, so it tests under plain Vitest. |
-| `functions/lib/session.ts` | the signed `HttpOnly` cookie, which is the reason this architecture was chosen. |
-| `functions/lib/oauth.ts` | sign-in by redirect, so no third-party script runs on the page. |
-| `functions/lib/google-identity.ts` | verifying Google's ID token against its JWKS. |
-| `functions/lib/service-account.ts` | the credential that reaches the Sheet. `01_jwt.gs` in WebCrypto. |
-| `functions/api/[[path]].ts` | the only file that knows it is on Cloudflare. Five lines. |
-| `scripts/tools.sh` | is this machine ready, and make it ready. |
-| `scripts/lib/tools.sh` | the table of what "ready" means, sourced by both. |
-| `scripts/infra.sh` | accounts and secrets. |
+| `worker/router.ts` | every route. Pure `(Request, Env, now) => Response`, no Cloudflare types, so it tests under plain Vitest. |
+| `worker/session.ts` | three AES-GCM sealed cookies: the session (`sub`, email, refresh token; 400 days), the hour-long access token, and one sign-in round trip. Nothing is stored on the server. |
+| `worker/oauth.ts` | sign-in by redirect, with PKCE, `drive.file` and offline access. |
+| `worker/google-identity.ts` | verifying Google's ID token, and the `ALLOWED_ACCOUNTS` check by account ID. |
+| `worker/connect.ts` | the Picker page — the only page that loads a Google script and the only response that carries a token. |
+| `worker/index.ts` | the only file that knows it is on Cloudflare. |
+| `wrangler.jsonc` | static assets from `dist/`; only `/api/*`, `/auth/*` and `/connect` reach the Worker. |
+| `public/_headers` | the CSP for every static file, which the Worker never sees. |
+| `src/sheets/records.ts` | Sheets API values → `readRecords_`-shaped records. Phase 3 builds on it. |
+| `src/probe.ts` | the read-timing numbers the thin slice exists to take. |
+| `src/api/client.ts` | asking the Worker something, and telling a refusal from a dropped connection from a book out of reach. |
+| `src/app/` | the one screen. |
+| `scripts/tools.sh` | is this machine ready. |
 
-## Two deviations from the approved plan
+## Routes
 
-**Sign-in is an OAuth redirect, not the Google Identity Services button.** GIS
-requires `accounts.google.com/gsi/client` in the document — a script from an
-origin we do not control, on the page that renders bank balances. That is the
-exact objection raised against Firebase's SDK, and invariant 3 ("no CDN at
-runtime") forbids it in as many words. The redirect flow needs no script at all.
-It costs one extra secret (`GOOGLE_CLIENT_SECRET`) and carries one risk that
-**must be settled on the phone**: an iOS Home Screen web clip navigating to
-another origin may hand off to Safari rather than staying in the clip, and a
-sign-in that completes in a different container sets the cookie somewhere
-useless. If it does, swapping GIS back in is contained — both flows end at the
-same place, an ID token through `verifyIdToken`. See `functions/lib/oauth.ts`.
+| | who | what |
+|---|---|---|
+| `/`, `/assets/*` | anyone | static files. No code runs, no data. |
+| `GET /api/health` | anyone | build, and which bindings exist. Nothing about the book. |
+| `GET /auth/signin` · `/auth/callback` | anyone | the Google round trip. A session only for an account on `ALLOWED_ACCOUNTS`. |
+| `POST /auth/signout` | this origin | clears both cookies. |
+| `GET /connect` | signed in | the Picker. |
+| `GET /api/me` | signed in | email and account ID. Never a token. |
+| `GET /api/book` | signed in | the book's title and timezone — the proof the grant took. |
+| `GET /api/read?tab=…` | signed in | one `values.batchGet` over a fixed list of tabs, handed back unread, with Google's time in `Server-Timing`. |
 
-**`infra.sh` is under `web/`, not in the repo's `scripts/`,** where the standing
-rule is that every script keeps a test beside it.
+Every request other than GET must carry this origin in `Origin`, checked before
+routing. A 401 means sign in; a 403 `no-access` means signed in but the grant
+cannot see the book, and the page offers `/connect`.
 
-## Setting a machine up
+## One-time setup
 
-```sh
-npm run tools            # what is present, what is missing, what needs signing in
-npm run tools:install    # install whatever is missing
-```
+Documented rather than scripted, per the repo's governing rule. None of it
+involves a multi-line key.
 
-`tools.sh` changes nothing in check mode and exits non-zero if a required tool
-is absent, which is why `infra.sh` runs it first: everything that script does
-*creates* something, so discovering a missing `gcloud` half way through leaves a
-real service account behind and a script that cannot simply be re-run over it.
+**Google Cloud**
 
-It will not install Homebrew — that means piping a script off the internet into
-a shell, and there is no reason that becomes acceptable because it is
-convenient. It also never signs you in; `gcloud auth login` and
-`wrangler login` want a browser and a human. It reports which of them still do.
+1. Create a project. **Attach no billing account** — Google plans to bill
+   Sheets API usage over quota later in 2026, and it cannot bill a project
+   with no account.
+2. Enable the **Google Sheets API** and the **Google Picker API**.
+3. OAuth consent screen: External, scopes `openid`, `email` and
+   `.../auth/drive.file`, then **Publish app → In production**. In Testing,
+   Google expires the grant after seven days and the phone asks you to sign in
+   every week. None of these scopes is sensitive, so there is no verification
+   and no unverified-app warning.
+4. Credentials → OAuth client, type *Web application*. Authorised redirect URI:
+   `https://<your worker>.workers.dev/auth/callback`, plus
+   `http://localhost:8787/auth/callback` for local development.
+5. Credentials → API key. Restrict it to the website `https://<your worker>.workers.dev/*`
+   and to the Picker API only.
+6. Note the **project number** from the project dashboard. The Picker needs it,
+   and without it no `drive.file` grant is recorded.
 
-Watch for one trap it now handles: **`wrangler whoami` exits 0 while telling you
-it is not authenticated**, so the check looks for an Account ID in the output
-rather than trusting the exit code. It is biased towards a false "sign in" over
-a false "ok", because the second one fails in the middle of `infra.sh`.
+**Cloudflare**
 
-## Running it
+1. `npx wrangler login`, and protect the Cloudflare account with a passkey or
+   2FA: anyone who can deploy here can ship a Worker that captures your token.
+2. `npm run deploy` once, to create the Worker and learn its address.
+3. The secrets, one each with `npx wrangler secret put <NAME>`:
+
+   | name | value |
+   |---|---|
+   | `GOOGLE_CLIENT_ID` | from step 4 |
+   | `GOOGLE_CLIENT_SECRET` | from step 4 |
+   | `SESSION_KEY` | `openssl rand -base64 32` |
+   | `ALLOWED_ACCOUNTS` | leave for now — see below |
+   | `SPREADSHEET_ID` | from the book's URL: `/spreadsheets/d/<this>/edit` |
+   | `PICKER_API_KEY` | from step 5 |
+   | `GOOGLE_PROJECT_NUMBER` | from step 6 |
+
+   The API key and project number are not secrets, but the repository is
+   public, so they are set the same way rather than committed.
+
+**Laptop, once**
+
+1. Open the Worker's address and sign in. You will be refused, and the page
+   shows your **account ID**. Set `ALLOWED_ACCOUNTS` to it (more than one:
+   comma-separated), then sign in again.
+2. *Choose the book* → Google's Picker lists one file → select it. The page
+   says **Connected to Spendsheet ✓** when the Worker has read its title.
+
+**Phone**
+
+Open the address in Safari and sign in **there**, *then* Share → Add to Home
+Screen. iOS 17.2+ copies Safari's cookies into the new icon at that moment and
+never again, so the order matters.
+
+## The device checks
+
+Only the phone can answer these, from the Home Screen icon. Desktop WebKit was
+the vantage point that misled the last storage conclusion. **If any fails, the
+plan changes here**, before any screen is built.
+
+| | expected |
+|---|---|
+| 1. Sign in in Safari, add to Home Screen, open the icon | already signed in. The screen says *Running as the Home Screen app*. |
+| 1b. Sign out inside the icon, sign in from it | either works in place or needs the icon re-added. Both are acceptable (once a year); record which. |
+| 2. Force-quit the icon from the app switcher, reopen | still signed in |
+| 3. On the phone, without picking on the phone | *Connected to Spendsheet ✓* — the laptop's grant carries over. If not, the phone shows *Choose the book* once. |
+| 4. *Measure reads* | five samples. *Copy results* and paste them into the PR. |
+
+Also worth a look while there: CPU time per request on the Cloudflare dashboard
+(Workers → spendsheet → Metrics), which should sit far below 10ms because reads
+are never parsed.
+
+## Running it locally
 
 ```sh
 npm install
 cp .dev.vars.example .dev.vars        # then fill it in
-
-npm run build                          # dist/
-npx wrangler pages dev dist            # the API, on :8788
-npm run dev                            # the page, on :4322, proxying /api
+npm run build && npm run serve        # page and Worker together on :8787
 ```
 
-Two processes on purpose: a crashed API should not take the page down with it,
-and the logs stay readable. The proxy means the browser sees **one origin** in
-dev exactly as in production — so cookie behaviour under test is the cookie
-behaviour that ships, rather than something that works locally and fails on the
-phone.
+`npm run dev` runs Vite on :4322 with the Worker's paths proxied to :8787, for
+working on the page with hot reload.
 
 ## Tests
 
-`npm test` **at the repository root** runs these alongside the `.gs` suites —
-Vitest's default include is the whole repo, so `web/**/*.test.ts` is collected
-with no config change. Check the file list rather than the total after touching
-any config: a suite that stops being collected reports green.
+`npm test` **at the repository root** runs these alongside the `.gs` suites:
+Vitest's default include is the whole repo. Check the file list rather than the
+total after touching any config — a suite that stops being collected reports
+green. `npm run typecheck` here for the compiler, which Vitest never asks.
 
-`npm run typecheck` here for the app; `tsc` does not run under Vitest.
-
-Every router test runs **without a network**, and that is the point rather than
-a convenience: each asserts a request is turned away *before* anything reaches
-for a credential.
-
-## What phase 1 has to prove, and where
-
-Two of these can only be answered on the actual phone, from the Home Screen
-icon. WebKit on a laptop cannot answer either — it does not apply ITP's
-third-party rules the way the phone does, which is exactly how the last storage
-measurement was taken correctly and generalised too far.
-
-| | |
-|---|---|
-| Sign in, add to Home Screen, **force-quit from the app switcher**, reopen | still signed in — the gesture that could refute the whole premise |
-| Sign in from the icon | does the redirect stay in the clip, or hand off to Safari |
-| Sign in with a second Google account | lands on `/?signin=wrong-account`, no session |
-| `GET /api/ledger-probe` against the real ledger | the CPU figure on the Cloudflare dashboard |
-
-The probe is **throwaway — delete it at the end of phase 1.** It deliberately
-parses and walks the whole ledger, which is what the recommended read path
-exists to avoid. It gates nothing: `/api/values` is pass-through and has nothing
-to parse, so a bad number changes no decision already made. It only says whether
-server-side aggregation was ever an option, which is the one thing that would
-justify option C's D1 mirror.
+Google is faked at `fetch` in `worker/router.test.ts`, with ID tokens signed by
+a key the test generates, and every refusal asserts that **nothing reached
+Google** first.
 
 ## The 10ms cap
 
-A free-plan Worker gets 10ms of CPU per invocation. Waiting on `fetch` does not
-count — only our own code does. Overrunning is a hard stop, not a slowdown: the
-isolate is killed and the client gets error 1102 as a 5xx, and it fails on the
-*size of the work* rather than on luck, which makes it a cliff that gets closer
-as the ledger grows.
-
-So `/api/values` returns the upstream body without touching it. **"Proxy" has to
-mean pass-through and not transform** — a `TransformStream` touching each chunk
-can hit 1102 halfway and truncate the body, which is worse than failing, because
-a truncated JSON array is a shorter ledger rather than an error.
+A free-plan Worker gets 10ms of CPU per request. Waiting on `fetch` does not
+count, only our own code. So `/api/read` hands Google's body back without
+reading it, and the aggregation runs in the browser, where there is no cap. The
+row counts and byte counts on the screen are measured by the page for the same
+reason. Writes, in phase 5, will read one or two rows each for the same reason.

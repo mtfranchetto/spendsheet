@@ -1,19 +1,21 @@
 /**
- * google-identity.ts — proving the tap on the sign-in button was the owner's.
+ * google-identity.ts — proving who signed in, and whether they are let in.
  *
- * Google Identity Services hands the page an **ID token**: a JWT signed by
- * Google asserting who signed in. The page posts it here once; from then on the
- * session cookie carries the answer and Google is not involved again. That is
- * the shape that makes option B work on iOS — there is no silent-refresh
- * iframe left for Safari's third-party cookie blocking to break, because there
- * is no access token to refresh. The credential we hold for the *data* is a
- * service account, and the browser never sees it.
+ * The code exchange hands back an **ID token**: a JWT signed by Google asserting
+ * who signed in. It is verified once, at the callback; from then on the sealed
+ * session cookie carries the answer.
  *
- * ## The scopes are the reason this is cheap
+ * ## Admitted by account ID, never by address
  *
- * `openid email profile` and nothing else. They are basic and non-sensitive, so
- * there is no app verification, no scope review, and no unverified-app screen
- * standing between you and your own spreadsheet.
+ * `ALLOWED_ACCOUNTS` lists Google account IDs — the token's `sub` — because an
+ * address can change hands and an account ID never does. Someone refused is
+ * shown their own ID and nothing else, which is how the owner learns theirs on
+ * the first sign-in: read it off the refusal, add it to the secret, sign in
+ * again.
+ *
+ * This is one of two independent locks. The other is `drive.file`: a grant
+ * belongs to whoever picked the file, so an account let in by mistake still
+ * cannot open a book that was never shared with it.
  *
  * ## What is checked, and why each one
  *
@@ -30,8 +32,9 @@
  *
  *   `iss` must be Google, in either of the two spellings it uses.
  *
- *   `email_verified` must be true, because the email is what the owner check
- *   compares and an unverified one is a claim rather than a fact.
+ *   `email_verified` must be true. The allowlist compares `sub`, not the
+ *   address, but the address is what the page shows you as "signed in as", and
+ *   an unverified one is a claim rather than a fact.
  *
  * Expiry is checked against a `nowSeconds` parameter for the same reason
  * `buildJwt` in `01_jwt.gs` takes one: a token whose validity depends on when
@@ -150,6 +153,7 @@ export async function verifyIdToken(
     if (!(typeof claims.exp === 'number' && claims.exp > nowSeconds)) return null;
     if (claims.email_verified !== true) return null;
     if (typeof claims.email !== 'string' || !claims.email) return null;
+    if (typeof claims.sub !== 'string' || !claims.sub) return null;
 
     return claims;
   } catch {
@@ -158,19 +162,22 @@ export async function verifyIdToken(
 }
 
 /**
- * Whether these claims belong to the one person allowed in.
+ * Whether these claims belong to an account on the allowlist.
  *
- * Compared case-insensitively because Google is case-insensitive about the
- * local part in practice and a configured address is typed by a human. Not
- * normalised any further than that — stripping dots or a `+tag` to make
- * addresses "the same" is how two different accounts become one.
- *
- * Fails closed on an unset owner. An empty `OWNER_EMAIL` must mean nobody gets
- * in, not everybody, and a missing binding is exactly how that would happen.
+ * `allowed` is the secret as stored: account IDs separated by commas, spaces or
+ * newlines. Fails closed on an unset or empty list — a missing binding must
+ * mean nobody gets in, not everybody — and an empty entry can never match,
+ * because it is dropped before the comparison.
  */
-export function isOwner(claims: IdentityClaims | null, ownerEmail: string | undefined): boolean {
-  if (!claims || !ownerEmail) return false;
-  return claims.email.trim().toLowerCase() === ownerEmail.trim().toLowerCase();
+export function isAllowed(claims: IdentityClaims | null, allowed: string | undefined): boolean {
+  return Boolean(claims) && accountAllowed(claims!.sub, allowed);
+}
+
+/** The same test for an account ID a session already carries. */
+export function accountAllowed(sub: string | undefined, allowed: string | undefined): boolean {
+  if (typeof sub !== 'string' || !sub) return false;
+  const ids = String(allowed ?? '').split(/[\s,]+/).filter(Boolean);
+  return ids.includes(sub);
 }
 
 /** Test seam: drop the cached key set. */

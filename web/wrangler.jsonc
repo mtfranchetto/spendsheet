@@ -1,0 +1,30 @@
+// The viewer: static files, and one Worker in front of three paths.
+//
+// Secrets are never here — the repository is public. They go in with
+// `wrangler secret put`, one per name in `Env` (worker/router.ts); see
+// web/README.md for the list and where each comes from.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "spendsheet",
+  "main": "worker/index.ts",
+  // No newer than the runtime the locked Wrangler ships, or `wrangler dev`
+  // refuses to start while `wrangler deploy` succeeds.
+  "compatibility_date": "2026-08-18",
+
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    // Only these reach the Worker. Everything else is a static file served
+    // with no code running, so a flood of requests can spend the free plan's
+    // daily allowance and still never stop the page from drawing. `/connect`
+    // is here because its CSP is per-response, and a static file's headers
+    // come from `public/_headers`, which the Worker never sees.
+    "run_worker_first": ["/api/*", "/auth/*", "/connect"]
+  },
+
+  // Off, because invocation logs record requests and the Worker handles
+  // cookies holding a Google grant. Nothing here writes a log line either.
+  // CPU time per request is on the dashboard's metrics, which this does not
+  // switch off.
+  "observability": { "enabled": false }
+}

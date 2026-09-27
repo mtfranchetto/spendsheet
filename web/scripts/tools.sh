@@ -9,12 +9,11 @@
 #
 #   ./scripts/tools.sh install   install whatever is missing, then report.
 #
-# The table of what "ready" means lives in `lib/tools.sh`, so `infra.sh` can
-# ask the same question without duplicating the answer.
+# The table of what "ready" means lives in `lib/tools.sh`.
 #
-# Neither mode ever signs you in. `gcloud auth login` and `wrangler login` open
-# a browser and want a human; this reports which of them still need one, which
-# is the half people actually forget.
+# Neither mode ever signs you in. `wrangler login` opens a browser and wants a
+# human; this reports whether it still needs one, which is the half people
+# actually forget.
 
 set -euo pipefail
 
@@ -49,4 +48,4 @@ if [ "$ready" -ne 0 ]; then
   exit 1
 fi
 
-echo "Ready. Next:  see web/README.md, or scripts/infra.sh to stand up the cloud side."
+echo "Ready. Next:  see web/README.md for the one-time Google and Cloudflare setup."
