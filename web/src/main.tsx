@@ -11,10 +11,12 @@
 import { render } from '@solidjs/web';
 import App from './app/App';
 import { start } from './app/state';
+import { refuseZoom } from './app/zoom';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('main: #root is missing from index.html');
 
+refuseZoom(document);
 render(() => <App />, root);
 void start();
 

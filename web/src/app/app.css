@@ -63,11 +63,17 @@
   `clip` rather than `hidden`: `hidden` on the root turns the viewport into a
   scroll container, which costs momentum scrolling on iOS. `clip` refuses the
   scroll without becoming one.
+
+  `touch-action: pan-x pan-y` leaves a finger free to scroll and takes pinch
+  and double-tap zoom out of what the page accepts — one of three layers, see
+  `zoom.ts`. It intersects with a descendant's own value, so a swipe row's
+  `pan-y` still means what it says.
 */
 html {
   background: var(--bg);
   overflow-x: clip;
   overscroll-behavior: none;
+  touch-action: pan-x pan-y;
 }
 
 body {
