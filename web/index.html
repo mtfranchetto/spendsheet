@@ -16,8 +16,12 @@
 
       Owning the document means that whole class of problem is gone: the tag is
       just here, and dev, preview and production cannot disagree about it.
+
+      `maximum-scale=1, user-scalable=no` because the page is not something to
+      pinch — see `src/app/zoom.ts` for the two layers iOS needs besides this,
+      since it ignores `user-scalable` outright.
     -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 
     <!--
       Added to the Home Screen, this is what makes it open as its own app
