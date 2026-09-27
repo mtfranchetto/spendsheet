@@ -19,10 +19,12 @@ import { createEffect, createSignal, For, Match, onSettled, Show, Switch } from 
 import { api, goConnect, goSignIn, type RefusedAccount } from '../api/client';
 import { admitCommand } from '../admit';
 import { agoWords } from './format';
+import { AddCash, SetValue } from './Add';
 import { Analytics } from './Analytics';
 import { Dashboard } from './Dashboard';
 import { installPullToRefresh } from './pull';
 import { Records } from './Records';
+import { SheetHost } from './Sheet';
 import {
   go, held, noAccess, pullToRefresh, pulled, readFailed, reading, refresh, session, signOut, toastText, view
 } from './state';
@@ -113,6 +115,12 @@ function SignedIn(props: { email: string }) {
             </Match>
             <Match when={view().screen === 'analytics'}>
               <Analytics />
+            </Match>
+            <Match when={view().screen === 'add'}>
+              <AddCash />
+            </Match>
+            <Match when={view().screen === 'value'}>
+              <SetValue />
             </Match>
             <Match when={view().screen === 'dashboard'}>
               <Dashboard />
@@ -220,6 +228,10 @@ export default function App() {
             )}
           </For>
         </nav>
+      </Show>
+
+      <Show when={signedIn() && held()}>
+        <SheetHost />
       </Show>
 
       <div id="toast" role="status" hidden={!toastText()}>

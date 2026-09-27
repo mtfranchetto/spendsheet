@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatAmount, parseAmount } from './amount';
 import { agoWords, dayHeading, money, shortDate, withIcon } from './format';
 import { barGeometry, donutSlices, lineGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS } from './geometry';
 import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodOptionId, viewSearch } from './view';
@@ -133,5 +134,37 @@ describe('view', () => {
 
   it('ignores a screen it does not know', () => {
     expect(parseView('?v=settings', 2026).screen).toBe('dashboard');
+  });
+
+  it('addresses the two forms by screen alone', () => {
+    expect(parseView('?v=add', 2026).screen).toBe('add');
+    const view = defaultView();
+    view.screen = 'value';
+    expect(viewSearch(view)).toBe('?v=value');
+  });
+});
+
+describe('amount', () => {
+  const itIT = { group: '.', decimal: ',' };
+  const enUS = { group: ',', decimal: '.' };
+
+  it('reads the last separator as the point when one or two digits follow it', () => {
+    expect(parseAmount('3,50', itIT)).toBe(3.5);
+    expect(parseAmount('3.5', itIT)).toBe(3.5);
+    expect(parseAmount('1.250', itIT)).toBe(1250);
+    expect(parseAmount('1.250,75', itIT)).toBe(1250.75);
+    expect(parseAmount('1,250', enUS)).toBe(1250);
+    expect(parseAmount('-12', enUS)).toBe(-12);
+  });
+
+  it('reads nothing as NaN, never as zero', () => {
+    expect(parseAmount('', itIT)).toBeNaN();
+    expect(parseAmount('abc', itIT)).toBeNaN();
+  });
+
+  it('groups at four digits and keeps two decimals', () => {
+    expect(formatAmount(8920.4, itIT)).toBe('8.920,40');
+    expect(formatAmount(3.5, enUS)).toBe('3.50');
+    expect(formatAmount(null, enUS)).toBe('');
   });
 });

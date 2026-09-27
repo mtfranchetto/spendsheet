@@ -16,7 +16,7 @@ import { For, Show } from 'solid-js';
 import { money, shortDate } from './format';
 import { LineChart } from './Charts';
 import { CategoryBars, PendingRow, RecordRow } from './Rows';
-import { currency, go, open, overview, setRecordsFilters } from './state';
+import { currency, go, open, openForm, overview, setRecordsFilters } from './state';
 
 type Account = NonNullable<ReturnType<typeof open>>['accounts'][number];
 
@@ -45,8 +45,17 @@ function AccountTile(props: { account: Account }) {
     setRecordsFilters({ account: props.account.name, unconfirmedOnly: false });
     go('records');
   };
+  const cash = () => (lists()?.cashAccounts || []).indexOf(props.account.name) !== -1;
+  const asset = () => (lists()?.assetAccounts || []).some((entry) => entry.name === props.account.name);
   return (
-    <div class={['tile', props.account.severity ? 'sev' + props.account.severity : '']} onClick={show}>
+    <div
+      class={['tile', props.account.severity ? 'sev' + props.account.severity : '']}
+      onClick={(event) => {
+        // The tile's own buttons do their own thing.
+        if ((event.target as HTMLElement).closest('button.link')) return;
+        show();
+      }}
+    >
       <button
         type="button"
         class="face"
@@ -65,6 +74,16 @@ function AccountTile(props: { account: Account }) {
           <div class="muted note">{props.account.sync}</div>
         </Show>
       </button>
+      <Show when={cash()}>
+        <button type="button" class="link" aria-label={'Add a transaction to ' + props.account.name} onClick={() => openForm('add', props.account.name)}>
+          + Add
+        </button>
+      </Show>
+      <Show when={asset()}>
+        <button type="button" class="link" aria-label={'Update the balance of ' + props.account.name} onClick={() => openForm('value', props.account.name)}>
+          ↕ Update
+        </button>
+      </Show>
     </div>
   );
 }

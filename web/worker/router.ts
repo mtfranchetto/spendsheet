@@ -436,8 +436,11 @@ const ACTIONS: { [name: string]: (google: Google, body: never, now: Date) => Pro
 
 /** Anything Google answered that was not a success, carried out of an action as the Worker's own answer. */
 class Answered extends Error {
-  constructor(readonly response: Response) {
+  // Assigned, not a parameter property: `tests/batch.mjs` loads this file under Node's type stripping.
+  readonly response: Response;
+  constructor(response: Response) {
     super('answered');
+    this.response = response;
   }
 }
 

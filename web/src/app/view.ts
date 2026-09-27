@@ -13,7 +13,7 @@
 
 import type { Filters, Period } from '../domain/query';
 
-export const SCREENS = ['dashboard', 'records', 'analytics'] as const;
+export const SCREENS = ['dashboard', 'records', 'analytics', 'add', 'value'] as const;
 export type Screen = (typeof SCREENS)[number];
 
 export const PARAMS = { view: 'v', period: 'p', from: 'from', to: 'to', account: 'a', label: 'l', search: 'q', unconfirmed: 'u' } as const;
@@ -130,6 +130,8 @@ export function viewSearch(view: View): string {
   const params = new URLSearchParams();
   if (view.screen === 'dashboard') return '';
   params.set(PARAMS.view, view.screen);
+  // The two forms have no filters: the screen is the whole address.
+  if (view.screen === 'add' || view.screen === 'value') return '?' + params.toString();
 
   const defaults = defaultView()[view.screen];
   const filters: Filters = view[view.screen];

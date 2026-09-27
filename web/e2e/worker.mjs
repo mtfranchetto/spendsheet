@@ -8,6 +8,10 @@
  * Every path not answered is a 500, like a Worker that is down. A path can be
  * held: `hold('/api/read')` returns a function that releases it, which is how
  * a test puts a read in the air and does something before it lands.
+ *
+ * An answer may be a function of the request's JSON body, for the writes —
+ * and every request's body and headers are kept, so a test can say what the
+ * page sent.
  */
 
 import { previewBook } from '../../tests/book.mjs';
@@ -40,16 +44,23 @@ export function signedIn() {
 export async function worker(page, answers = {}) {
   const counts = {};
   const held = {};
+  const sent = {};
   await page.route((url) => /^\/(api|auth)\//.test(url.pathname), async (route) => {
     const path = new URL(route.request().url()).pathname;
     counts[path] = (counts[path] || 0) + 1;
+    const request = route.request();
+    const payload = request.postData() ? JSON.parse(request.postData()) : null;
+    (sent[path] ||= []).push({ body: payload, headers: request.headers() });
+    // Answered as of when the request arrived, then held: a held read carries the book from before anything the test does next.
+    const answer = answers[path];
+    const [status, body] = typeof answer === 'function' ? answer(payload) : answer ?? [500, { error: 'down' }];
     if (held[path]) await held[path];
-    const [status, body] = answers[path] ?? [500, { error: 'down' }];
     return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
   return {
     answers,
     counts,
+    sent,
     hold(path) {
       let release;
       held[path] = new Promise((resolve) => (release = resolve));
@@ -83,4 +94,27 @@ export function storedOwner(page) {
         };
       })
   );
+}
+
+/**
+ * `transactions` rows as the Worker would read them back after a write: the
+ * book's row, with `change` applied by column name. The header row is the
+ * schema, so a name is looked up rather than counted.
+ */
+export function freshRows(changes) {
+  const range = batch().valueRanges.find((entry) => /transactions/.test(entry.range));
+  const header = range.values[0];
+  const rows = {};
+  for (const [row, change] of Object.entries(changes)) {
+    const cells = header.map((_, i) => range.values[Number(row) - 1][i] ?? '');
+    for (const [name, value] of Object.entries(change)) cells[header.indexOf(name)] = value;
+    rows[row] = cells;
+  }
+  return rows;
+}
+
+/** The row a uid sits at in the book. */
+export function rowOfUid(uid) {
+  const range = batch().valueRanges.find((entry) => /transactions/.test(entry.range));
+  return range.values.findIndex((cells) => cells[0] === uid) + 1;
 }

@@ -1,10 +1,11 @@
 /**
  * Rows.tsx — a transaction, a hold, and a category's bar.
  *
- * From `page.records.html` and `page.charts.html`. Read-only for now: a row
- * is drawn exactly as it was, and what tapping or swiping it does arrives with
- * the writes. Until then it is not a button — a control that does nothing is
- * a promise the row cannot keep, the rule `pendingRow` was already following.
+ * From `page.records.html` and `page.charts.html`. A transaction is a
+ * button: tap it for its details, swipe it right to confirm it, hold it to
+ * make a rule from it. A hold is not a button at all — there is nothing to do
+ * to a transaction the bank has not settled, and a control that does nothing
+ * is a promise the row cannot keep.
  */
 
 import { For, Show } from 'solid-js';
@@ -12,7 +13,9 @@ import type { PageRecord } from '../domain/query';
 import { TX_TYPE } from '../domain/schema';
 import { money, withIcon } from './format';
 import { categoryColor } from './geometry';
-import { currency, drillToRecords, expanded, overview, toggleExpanded } from './state';
+import { currency, drillToRecords, expanded, openSheet, overview, toast, toggleExpanded } from './state';
+import { rowGestures } from './swipe';
+import { sendDecision } from './writes';
 
 /**
  * The seed's "no real subcategory" child, `Other › Uncategorised`. As a row's
@@ -61,11 +64,26 @@ export function RecordRow(props: { record: PageRecord }) {
   const moved = () => props.record.type === TX_TYPE.TRANSFER;
   const tone = () => (moved() || props.record.inReports === false ? 'moved' : moneyIn(props.record) ? 'in' : 'out');
   const amount = () => (props.record.amount === null ? '—' : money(props.record.amount, currency()));
+  let gesture = () => false;
+  const wire = (button: HTMLButtonElement) => {
+    gesture = rowGestures(button, {
+      confirm: () => (props.record.confirmed ? toast('Already confirmed.') : sendDecision(props.record, { confirmed: true })),
+      hold: () => openSheet('rule', props.record.uid)
+    });
+  };
 
   return (
-    <div
+    <div class="swipe">
+      <div class="swipe-action" aria-hidden="true">
+        ✓
+      </div>
+    <button
+      type="button"
       class="tap"
-      role="group"
+      ref={wire}
+      onClick={() => {
+        if (!gesture()) openSheet('detail', props.record.uid);
+      }}
       aria-label={
         (props.record.confirmed ? 'Confirmed. ' : 'Needs review. ') + (moved() ? 'Transfer. ' : '') + what() + ', ' +
         props.record.date + (props.record.time ? ' ' + props.record.time : '') + ', ' + whereLine(props.record) + ', ' + amount() +
@@ -92,6 +110,7 @@ export function RecordRow(props: { record: PageRecord }) {
         </Show>
       </div>
       <span class={['num', tone()]}>{(moved() ? '⇄ ' : '') + amount()}</span>
+    </button>
     </div>
   );
 }

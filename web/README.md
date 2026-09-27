@@ -32,6 +32,11 @@ arrive with the writes.
 | `src/app/*.tsx` | the screens, charts, rows and filter bar, ported from `src/page.*.html`. Text only through bindings. |
 | `src/app/format.ts`, `geometry.ts` | money and dates as printed, and the arithmetic under the charts. Pure, and tested. |
 | `src/app/pull.ts` | pull to refresh. |
+| `worker/actions.ts` | the five writes — confirm, transfer, rule, cash, delete — each with `22_actions.gs`'s checks, re-asked of the row as Google holds it. RAW at explicit addresses; the rows touched read back. |
+| `src/api/contract.ts` | the write shapes, shared by page and Worker, and the version a stale page is reloaded over. |
+| `src/domain/transfer.ts` | which row on another bank is the other half of a move; the page finds it, the Worker checks it. |
+| `src/app/writes.ts` | the writes from the page: one lane, rows named when a write leaves, swipes batched, the guess laid over the book until the answer lands. |
+| `src/app/Sheet.tsx`, `Add.tsx`, `swipe.ts`, `amount.ts` | a row's details, a rule, the cash and revalue forms, the swipe and hold, and amounts in the phone's separators. |
 | `scripts/tools.sh` | is this machine ready. |
 
 ## Routes
@@ -47,6 +52,7 @@ arrive with the writes.
 | `GET /api/me` | signed in | email and account ID. Never a token. |
 | `GET /api/book` | signed in | the book's title and timezone — the proof the grant took. |
 | `GET /api/read?tab=…` | signed in | one `values.batchGet` over a fixed list of tabs, handed back unread, with Google's time in `Server-Timing`. |
+| `POST /api/act/<decide\|transfer\|rule\|cash\|delete>` | signed in, this origin, this contract | one named write. Another contract version is a 409 and the page reloads; a refusal about the request is a 422 with its sentence. |
 
 Every request other than GET must carry this origin in `Origin`, checked before
 routing. A 401 means sign in; a 403 `no-access` means signed in but the grant
@@ -148,6 +154,20 @@ the vantage point that misled the last storage conclusion.
 | Pull down at the top | *Refreshing*, then the strip goes |
 | A custom period on Records | both date fields fit side by side (the native date input is the one WebKit here cannot measure) |
 | Sign out, reopen | nothing of the book draws before signing in again |
+
+**The writes**, each checked in the sheet afterwards:
+
+| | expected |
+|---|---|
+| Swipe a row in *Needs review* right | it leaves the queue at once; in the sheet, `confirmed` is ticked on that row and no other |
+| Tap a row, pick a category, Confirm | `category_override` (and `subcategory_override`) on that row; the derived `category` follows |
+| A description starting with `=` on a cash row | stored as text, not a formula |
+| Mark a bank row as a transfer to cash | a `transfer-leg` row after the last uid — not after row 1000 — with the same `transfer_group` on both; tap again and nothing new is written |
+| Mark a bank row as a transfer to another bank that has the other half | both rows carry `tr:<debit uid>` |
+| Hold a row, save a rule | a row on `rules` after the last, priority ten above the highest |
+| "+ Add" on a cash tile, Add | the row lands in `transactions` with the override columns filled; in airplane mode, Add, then back online and Add again — one row, not two |
+| "Update" on an asset tile | one `Transfer › Valuation change` row for the difference |
+| Delete a cash row (two taps) | gone from `transactions`, present on `_removed`; the next health check reports no lost rows |
 
 **Signing in**, from the thin slice:
 

@@ -26,15 +26,32 @@
  *
  * A dropped connection is not a refusal. `ApiRefused` forgets; anything else
  * keeps what is on screen and says the copy is old.
+ *
+ * ## Writes patch the book; a read older than a write is not believed
+ *
+ * A write answers with the rows it touched, read back from Google, and those
+ * rows are patched into the book the page holds — so the screen is the book
+ * as Google now has it without reading all of it again. While a write is out,
+ * its guess at the answer sits in `overlay`, on top of the book, keyed by uid.
+ *
+ * The trap is the one the Apps Script page hit as a row you swipe twice: a
+ * read that left **before** a write landed comes back holding the book as it
+ * was, and replacing the book with it undoes the write on screen. So every
+ * read is stamped with the number of writes issued when it left, and a read
+ * that comes back to a different number — or while any write is out — is
+ * dropped, and read again once the writes have settled. Being a read late
+ * costs nothing; being a write wrong costs the row.
  */
 
 import { createMemo, createRoot, createSignal } from 'solid-js';
-import { api, ApiNoAccess, ApiRefused, type Me } from '../api/client';
-import { bookFromBatch, type BatchGet } from '../domain/book';
+import { api, ApiNoAccess, ApiRefused, ApiStale, type Me } from '../api/client';
+import type { FreshRows } from '../api/contract';
+import { bookFromBatch, tabOf, type BatchGet, type Book, type Row } from '../domain/book';
 import { clockAt } from '../domain/days';
 import { appAnalyticsData, appOpenData, appOverviewData, appRecordsData } from '../domain/payloads';
 import { ledgerOf } from '../domain/query';
-import { QUERY_PAGE_SIZE } from '../domain/schema';
+import { QUERY_PAGE_SIZE, TABS } from '../domain/schema';
+import type { Cell } from '../sheets/records';
 import { forgetCopy, readAnyCopy, writeCopy, type StoredCopy } from '../store/copy';
 import { parseView, type AnalyticsFilters, type RecordsFilters, type Screen, type View } from './view';
 
@@ -54,7 +71,34 @@ const [view, setView] = createSignal<View>(parseView(window.location.search, new
 const [recordsShown, setRecordsShown] = createSignal(QUERY_PAGE_SIZE);
 const [expanded, setExpanded] = createSignal<Record<string, boolean>>({});
 
-export { session, held, reading, pulled, noAccess, readFailed, toastText, view, recordsShown, expanded };
+/** A write's guess at a row, until its answer lands: the columns it will change, or `null` for a row it removes. */
+type Layer = { id: number; fields: { [column: string]: Cell } | null };
+const [overlay, setOverlay] = createSignal<{ [uid: string]: Layer[] }>({});
+
+/** The dialog over the screen: a row's details, or a rule made from one. */
+export type SheetState = { kind: 'detail' | 'rule'; uid: string } | null;
+const [sheet, setSheet] = createSignal<SheetState>(null);
+/** The account "+ Add" or "Update" was pressed on, for the form it opens. */
+const [formAccount, setFormAccount] = createSignal('');
+
+export { session, held, reading, pulled, noAccess, readFailed, toastText, view, recordsShown, expanded, sheet, formAccount };
+
+/** The book with every write still out laid over it. */
+function withOverlay(book: Book, layers: { [uid: string]: Layer[] }): Book {
+  const uids = Object.keys(layers);
+  if (!uids.length) return book;
+  const transactions: Row[] = [];
+  for (const row of book.transactions) {
+    const stack = layers[String(row.uid)];
+    if (!stack) {
+      transactions.push(row);
+      continue;
+    }
+    if (stack.some((layer) => layer.fields === null)) continue;
+    transactions.push(Object.assign({ ...row }, ...stack.map((layer) => layer.fields)));
+  }
+  return { ...book, transactions };
+}
 
 /*
   Derived in a root of their own: memos need an owner, and these outlive every
@@ -62,9 +106,19 @@ export { session, held, reading, pulled, noAccess, readFailed, toastText, view, 
   costs nothing until you open it.
 */
 const derived = createRoot(() => {
-  const book = createMemo(() => {
+  const read = createMemo(() => {
     const h = held();
     return h ? bookFromBatch(h.batch, h.timeZone) : null;
+  });
+  const book = createMemo(() => {
+    const b = read();
+    return b ? withOverlay(b, overlay()) : null;
+  });
+  // Where each uid sits in the sheet, as last read — what a write names a row by.
+  const rowsByUid = createMemo(() => {
+    const map = new Map<string, Row>();
+    for (const row of read()?.transactions ?? []) if (row.uid !== '') map.set(String(row.uid), row);
+    return map;
   });
   // "Today" is the book's, taken when the book arrived — a Clock in its zone,
   // never the phone's, so the day boundaries match the `.gs`.
@@ -113,10 +167,13 @@ const derived = createRoot(() => {
     { lazy: true }
   );
 
-  return { book, clock, open, overview, analytics, records };
+  return { book, rowsByUid, clock, open, overview, analytics, records };
 });
 
-export const { clock, open, overview, analytics, records } = derived;
+export const { book, clock, open, overview, analytics, records } = derived;
+
+/** The row a uid names, as the book last read it — its sheet row is `_row`. */
+export const rowOf = (uid: string): Row | undefined => derived.rowsByUid().get(uid);
 
 /** The book's currency, for every figure on screen. */
 export const currency = () => open()?.currency || 'EUR';
@@ -126,6 +183,10 @@ export const currency = () => open()?.currency || 'EUR';
 // ---------------------------------------------------------------------------
 
 let generation = 0;
+/** Writes issued so far, and writes not yet answered. A read is believed only if neither moved while it was out. */
+let writesIssued = 0;
+let writesOut = 0;
+let rereadAfterWrites = false;
 /** Who the last `/api/me` said is signed in; null until one has answered. */
 let owner: Me | null = null;
 let reads = 0;
@@ -181,10 +242,20 @@ export async function refresh(): Promise<void> {
   if (!reader) return;
   const gen = generation;
   const mine = ++reads;
+  const stamp = writesIssued;
   setReading(true);
   try {
     const [batch, book] = await Promise.all([api.read(), api.book()]);
     if (gen !== generation || mine !== reads) return;
+    if (stamp !== writesIssued || writesOut > 0) {
+      // Older than a write: it would put the row back as it was. Read again when the writes settle.
+      rereadAfterWrites = true;
+      if (writesOut === 0) {
+        rereadAfterWrites = false;
+        void refresh();
+      }
+      return;
+    }
     const copy = { owner: reader.sub, email: reader.email, timeZone: book.timeZone, batch, savedAt: Date.now() };
     setNoAccess(false);
     setReadFailed(false);
@@ -226,12 +297,115 @@ export function pullToRefresh(): void {
 function forgetEverything(): Promise<void> {
   generation++;
   owner = null;
+  setOverlay({});
+  setSheet(null);
   const forgot = forgetCopy();
   setHeld(null);
   setReading(false);
   setPulled(false);
   setSession({ kind: 'out' });
   return forgot.then(() => undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+let layerIds = 0;
+
+/**
+ * A write is going out. Returns its generation, which `wrote` and `unlayer`
+ * check: a write that lands after a sign-out must not put anything back.
+ */
+export function writeStarted(): number {
+  writesIssued++;
+  writesOut++;
+  return generation;
+}
+
+export function writeSettled(): void {
+  writesOut = Math.max(0, writesOut - 1);
+  if (writesOut === 0 && rereadAfterWrites) {
+    rereadAfterWrites = false;
+    void refresh();
+  }
+}
+
+/** Lay a guess over a row until its write lands. Returns the layer's id. */
+export function layer(uid: string, fields: { [column: string]: Cell } | null): number {
+  const id = ++layerIds;
+  setOverlay((current) => ({ ...current, [uid]: [...(current[uid] ?? []), { id, fields }] }));
+  return id;
+}
+
+export function unlayer(ids: number[]): void {
+  if (!ids.length) return;
+  setOverlay((current) => {
+    const next: { [uid: string]: Layer[] } = {};
+    for (const [uid, stack] of Object.entries(current)) {
+      const kept = stack.filter((entry) => ids.indexOf(entry.id) === -1);
+      if (kept.length) next[uid] = kept;
+    }
+    return next;
+  });
+}
+
+/**
+ * Google's answer to a write, into the book the page holds and the copy on
+ * disk: the rows it read back, and the sheet row it deleted, whose gap closes
+ * just as the sheet's did.
+ */
+export function wrote(gen: number, rows: FreshRows, removed?: number): void {
+  const h = held();
+  if (!h || gen !== generation) return;
+  if (!Object.keys(rows).length && !removed) return;
+  const valueRanges = (h.batch.valueRanges ?? []).map((range) => {
+    if (tabOf(range.range) !== TABS.TRANSACTIONS) return range;
+    const values = (range.values ?? []).slice();
+    for (const [row, cells] of Object.entries(rows)) {
+      const at = Number(row) - 1;
+      while (values.length < at) values.push([]);
+      values[at] = cells;
+    }
+    if (removed) values.splice(removed - 1, 1);
+    return { ...range, values };
+  });
+  const batch = { ...h.batch, valueRanges };
+  setHeld({ ...h, batch });
+  if (owner) void writeCopy({ owner: owner.sub, email: owner.email, timeZone: h.timeZone, batch, savedAt: h.savedAt });
+}
+
+/**
+ * What a failed write means. A refusal of the session ends it, as a read's
+ * would; a page older than the Worker reloads; anything else is said, and the
+ * book is read again — a write refused for a row that moved is a page whose
+ * idea of the book is out of date.
+ */
+export function writeFailed(error: unknown): void {
+  if (error instanceof ApiRefused) {
+    void forgetEverything();
+    return;
+  }
+  if (error instanceof ApiStale) {
+    toast(error.message);
+    window.location.reload();
+    return;
+  }
+  toast(error instanceof Error ? error.message : String(error));
+}
+
+export function openSheet(kind: 'detail' | 'rule', uid: string): void {
+  setSheet({ kind, uid });
+}
+
+export function closeSheet(): void {
+  setSheet(null);
+}
+
+/** "+ Add" and "Update": the form, open on the account the button was on. */
+export function openForm(screen: 'add' | 'value', account: string): void {
+  setFormAccount(account);
+  go(screen);
 }
 
 export async function signOut(): Promise<void> {
