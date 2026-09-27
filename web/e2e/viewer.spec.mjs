@@ -45,6 +45,23 @@ test('a crafted refusal link draws no command', async ({ page }) => {
   await expect(page.locator('pre')).toHaveCount(0);
 });
 
+test('a button looks like one to a mouse: a pointer, and a change on hover', async ({ browser }) => {
+  // A laptop, not the phone: hover is gated on `(hover: hover)`, which a
+  // touch device descriptor does not match.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: false, isMobile: false });
+  const page = await context.newPage();
+  await worker(page, { '/api/me': [401, { error: 'Not available.' }], '/api/health': [200, { ok: true, build: 't', configured: {} }] });
+  await page.goto('/');
+  const button = page.getByRole('button', { name: 'Sign in with Google' });
+  await expect(button).toHaveCSS('cursor', 'pointer');
+
+  await page.mouse.move(0, 0);
+  const resting = await button.evaluate((el) => getComputedStyle(el).filter);
+  await button.hover();
+  await expect.poll(() => button.evaluate((el) => getComputedStyle(el).filter)).not.toBe(resting);
+  await context.close();
+});
+
 test('a session that ends mid-page stops saying who is signed in', async ({ page }) => {
   let meCalls = 0;
   await page.route((url) => /^\/(api|auth)\//.test(url.pathname), (route) => {

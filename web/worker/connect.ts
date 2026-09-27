@@ -82,7 +82,11 @@ export function connectPage(env: ConnectEnv, token: string, cookies: string[]): 
 <style>
   body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; margin: 0; padding: 24px 16px; }
   main { max-width: 32rem; margin: 0 auto; }
-  button { font: inherit; padding: 10px 16px; border-radius: 8px; border: 0; background: #0c6b5b; color: #fff; }
+  button { font: inherit; font-weight: 600; min-height: 44px; padding: 10px 16px; border-radius: 8px; border: 0; background: #0c6b5b; color: #fff; cursor: pointer; transition: filter 120ms ease; }
+  @media (hover: hover) { button:hover:not(:disabled) { filter: brightness(1.15); } }
+  button:active:not(:disabled) { filter: brightness(0.9); }
+  button:focus-visible { outline: 2px solid #0c6b5b; outline-offset: 2px; }
+  button:disabled { cursor: progress; opacity: 0.5; }
   @media (prefers-color-scheme: dark) { body { background: #111417; color: #e3eae6; } }
 </style>
 </head>

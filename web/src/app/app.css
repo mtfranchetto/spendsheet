@@ -82,6 +82,36 @@ button {
   /* 44px is Apple's own minimum touch target, and a sign-in button that is
      hard to hit is the first thing anyone touches. */
   min-height: 44px;
+
+  /* `appearance: none` takes the platform's feedback with it, so every state
+     is drawn here: a pointer and a lift on hover, a press, a focus ring for
+     the keyboard, and a disabled look that does not invite a click. */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: filter 120ms ease, transform 80ms ease;
+}
+
+/* Only where a pointer can hover: on the phone a tap would leave the hover
+   look stuck on the button until something else is touched. */
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    filter: brightness(1.12);
+  }
+}
+
+button:active:not(:disabled) {
+  filter: brightness(0.92);
+  transform: scale(0.98);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 input,
