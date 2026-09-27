@@ -63,7 +63,7 @@ import { clockAt, serialOf, SERIAL_EPOCH } from '../src/domain/days';
 import { amountIsEditable, descriptionIsEditable, recordIsDeletable, splitLabels } from '../src/domain/query';
 import {
   ACCOUNT_COLUMNS, ACCOUNT_KIND, CATEGORY_COLUMNS, CONFIG_COLUMNS, DEFAULT_CONFIG, TABS,
-  TX_COLUMNS, TX_SOURCE_CASH, TX_TYPE
+  TX_COLUMNS, TX_COLUMNS_CODE, TX_SOURCE_CASH, TX_TYPE
 } from '../src/domain/schema';
 import { counterLegProblem } from '../src/domain/transfer';
 import { ANY_COLUMN, records, type Cell } from '../src/sheets/records';
@@ -106,6 +106,17 @@ export const RULE_MATCH_TYPES = ['contains', 'equals', 'starts_with', 'regex'];
 // ---------------------------------------------------------------------------
 
 const TX_WIDTH = TX_COLUMNS.length;
+
+/**
+ * The columns a new row may be written in: A–O, and the few past O that hold
+ * a value rather than a formula's spill. `transactions` is shaped so, with
+ * `amount_base`, `category`, `type`, `in_reports` and the rest filled by
+ * `ARRAYFORMULA`s anchored in row 2.
+ */
+const STORED_COLUMNS: ReadonlySet<string> = new Set([
+  ...TX_COLUMNS_CODE,
+  'category_override', 'transfer_group', 'notes', 'excluded', 'labels', 'confirmed', 'subcategory_override'
+]);
 
 export function columnLetter(index: number): string {
   let n = index;
@@ -335,24 +346,50 @@ function cellData(value: Cell): object {
  * and the write. What remains is Apps Script's own window between reading its
  * last row and writing after it: milliseconds inside one execution, against
  * the Worker's hundreds.
+ *
+ * **Only the stored cells it was given are written**, one `updateCells` per
+ * run of adjacent columns. The rest of the row belongs to the `ARRAYFORMULA`s
+ * anchored in row 2, and a cell written there — even written blank, which is a
+ * clear — is a cell the spill no longer owns. And **row 2 is never inserted
+ * above**: on a tab with no records the next row *is* row 2, where every
+ * anchor lives, and an insert there would push them all down to row 3. That
+ * one row is written in place instead; it is also the one row no other writer
+ * can be racing for, since a sync appending to an empty tab is appending to a
+ * book nobody has used.
  */
 async function insertRow(google: Google, sheets: Sheets, at: number, fields: { [name: string]: Cell }): Promise<void> {
   const tab = sheets.tabs[TABS.TRANSACTIONS];
   if (!tab) throw new Refusal(`This book has no "${TABS.TRANSACTIONS}" tab. Run Spendsheet → Setup sheet first.`);
+  const spilled = Object.keys(fields).filter((name) => !STORED_COLUMNS.has(name));
+  if (spilled.length) throw new Error(`insertRow: ${spilled.join(', ')} ${spilled.length > 1 ? 'are' : 'is'} a formula's to fill`);
+
   const requests: object[] = [];
-  // An insert must land inside the grid, so a full grid grows by one first.
+  // Row `at` must already be inside the grid, to insert at it or to write it.
   if (at > tab.rows) requests.push({ appendDimension: { sheetId: tab.sheetId, dimension: 'ROWS', length: at - tab.rows } });
-  requests.push(
-    { insertDimension: { range: { sheetId: tab.sheetId, dimension: 'ROWS', startIndex: at - 1, endIndex: at }, inheritFromBefore: at > 2 } },
-    {
+  if (at > 2) {
+    requests.push({ insertDimension: { range: { sheetId: tab.sheetId, dimension: 'ROWS', startIndex: at - 1, endIndex: at }, inheritFromBefore: true } });
+  }
+  for (const run of adjacentRuns(TX_COLUMNS.map((name, i) => (name in fields ? i : -1)).filter((i) => i >= 0))) {
+    requests.push({
       updateCells: {
-        start: { sheetId: tab.sheetId, rowIndex: at - 1, columnIndex: 0 },
-        rows: [{ values: TX_COLUMNS.map((name) => cellData(name in fields ? fields[name] : '')) }],
+        start: { sheetId: tab.sheetId, rowIndex: at - 1, columnIndex: run[0] },
+        rows: [{ values: run.map((i) => cellData(fields[TX_COLUMNS[i]])) }],
         fields: 'userEnteredValue'
       }
-    }
-  );
+    });
+  }
   await google.update(requests);
+}
+
+/** `[0,1,2,19,26,27]` → `[[0,1,2],[19],[26,27]]`. */
+function adjacentRuns(indices: number[]): number[][] {
+  const runs: number[][] = [];
+  for (const i of indices) {
+    const last = runs[runs.length - 1];
+    if (last && last[last.length - 1] === i - 1) last.push(i);
+    else runs.push([i]);
+  }
+  return runs;
 }
 
 const moved = 'That row has moved since this page read the book. Pull to refresh and try again.';
