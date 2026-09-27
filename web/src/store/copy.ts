@@ -23,7 +23,7 @@
  * one. Two people sharing a laptop browser sign in as themselves, and the
  * second must never be drawn the first one's balances while their own read is
  * in flight. `forgetCopy` is for the moments that must leave nothing behind:
- * signing out, and any refusal (phase 4 wires both, with a test that can go
+ * signing out, and any refusal (`app/state.ts` wires both, with tests that go
  * red).
  *
  * ## Every access can fail, and none of them may break the page

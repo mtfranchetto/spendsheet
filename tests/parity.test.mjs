@@ -27,6 +27,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { previewBook } from './book.mjs';
 import { READ_RANGES } from '../web/worker/router.ts';
+import { asBatchGet, width } from './batch.mjs';
 import { bookFromBatch } from '../web/src/domain/book.ts';
 import { clockAt } from '../web/src/domain/days.ts';
 import { normalizeMerchant } from '../web/src/domain/merchant.ts';
@@ -48,41 +49,6 @@ afterAll(() => {
   process.env.TZ = zone;
   vi.useRealTimers();
 });
-
-/** The column letters to a width: `AD` → 30. */
-function width(range) {
-  const letters = /:([A-Z]+)$/.exec(range)[1];
-  return [...letters].reduce((n, letter) => n * 26 + letter.charCodeAt(0) - 64, 0);
-}
-
-/** A local `Date` as a Sheets serial: the wall clock, fraction and all. */
-function serial(date) {
-  const wall = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(),
-    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
-  return wall / DAY + 25569;
-}
-
-/**
- * The harness's book as `values.batchGet` with `UNFORMATTED_VALUE` and
- * `SERIAL_NUMBER` would return it: header row included, every date a serial,
- * each row cut after its last non-empty cell, trailing empty rows gone.
- */
-function asBatchGet(c) {
-  const valueRanges = Object.entries(READ_RANGES).map(([tab, range]) => {
-    const sheet = c.__spreadsheet.getSheetByName(tab);
-    if (!sheet || sheet.getLastRow() < 1) return { range };
-
-    const rows = sheet.getRange(1, 1, sheet.getLastRow(), width(range)).getValues()
-      .map((row) => {
-        const cells = row.map((v) => (v instanceof Date ? serial(v) : v === null || v === undefined ? '' : v));
-        while (cells.length && cells[cells.length - 1] === '') cells.pop();
-        return cells;
-      });
-    while (rows.length && !rows[rows.length - 1].length) rows.pop();
-    return rows.length ? { range, values: rows } : { range };
-  });
-  return { valueRanges };
-}
 
 /** What a page receives: the answer after `JSON.stringify`, as both transports do. */
 const wire = (value) => JSON.parse(JSON.stringify(value));

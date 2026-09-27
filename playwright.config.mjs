@@ -39,16 +39,18 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = Number(process.env.PREVIEW_PORT || 4322);
 
-// The viewer (`web/`) is a second page with a second server: Vite's own, on a
-// port clear of both the preview's and `vite.config.ts`'s default. Its tests
-// answer every Worker path themselves with `page.route`, so nothing behind the
-// dev server's proxy — running or not — can change what they see.
+// The viewer (`web/`) is a second page with a second server: **the built
+// page** under `vite preview`, because that is what ships — a production
+// build compiles the JSX differently from the dev server, and registers the
+// service worker, which only a built page does. Built once, served on a port
+// clear of both the preview's and `vite.config.ts`'s default. Its tests answer
+// every Worker path themselves with `page.route`, so nothing behind the proxy
+// — running or not — can change what they see.
+//
+// `web/e2e/shell/` runs against the same `dist/`, through a preview it starts
+// and stops itself: taking the server away is the only offline a WebKit
+// service worker believes.
 const VIEWER_PORT = Number(process.env.VIEWER_PORT || 4323);
-
-// The viewer again, **built**, because its service worker registers only in a
-// production page — the dev server's shell changes on every save. `web/e2e/
-// shell/` is the one directory that runs against it.
-const SHELL_PORT = Number(process.env.SHELL_PORT || 4324);
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -73,12 +75,14 @@ export default defineConfig({
       name: 'viewer-webkit',
       testDir: 'web/e2e',
       testIgnore: 'shell/**',
-      use: { ...devices['iPhone 13'], baseURL: `http://localhost:${VIEWER_PORT}` }
+      // The built page registers its service worker, and `page.route` cannot
+      // see a request a worker answers. The shell's own test allows it.
+      use: { ...devices['iPhone 13'], baseURL: `http://localhost:${VIEWER_PORT}`, serviceWorkers: 'block' }
     },
     {
       name: 'viewer-shell',
       testDir: 'web/e2e/shell',
-      use: { ...devices['iPhone 13'], baseURL: `http://localhost:${SHELL_PORT}` }
+      use: { ...devices['iPhone 13'] }
     }
   ],
 
@@ -91,15 +95,8 @@ export default defineConfig({
       stderr: 'pipe'
     },
     {
-      command: `npm --prefix web run dev -- --port=${VIEWER_PORT} --strictPort`,
+      command: `npm --prefix web run build && npm --prefix web run preview -- --port=${VIEWER_PORT} --strictPort`,
       url: `http://localhost:${VIEWER_PORT}/`,
-      reuseExistingServer: !process.env.CI,
-      stdout: 'ignore',
-      stderr: 'pipe'
-    },
-    {
-      command: `npm --prefix web run build && npm --prefix web run preview -- --port=${SHELL_PORT} --strictPort`,
-      url: `http://localhost:${SHELL_PORT}/`,
       reuseExistingServer: !process.env.CI,
       stdout: 'ignore',
       stderr: 'pipe'

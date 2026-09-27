@@ -1,0 +1,169 @@
+/**
+ * The three screens, drawn from a real book, in WebKit, on the built page.
+ *
+ * What these can prove: the screens draw what the book holds, the address is
+ * the view in both directions, the stored copy is drawn before the read lands,
+ * and **nothing of an account stays on the device after it signs out or is
+ * refused** — including when a read was still in the air, which is the one
+ * the Apps Script viewer got wrong twice. What they cannot: that iOS keeps the
+ * copy for a Home Screen icon, or how the phone sizes a native control. Those
+ * are checks on the device.
+ */
+
+import { test, expect } from '@playwright/test';
+import { OWNER, signedIn, storedOwner, worker } from './worker.mjs';
+
+test('the dashboard draws the book, and the tabs and the address agree', async ({ page }) => {
+  await worker(page, signedIn());
+  await page.goto('/');
+  await expect(page.locator('.big')).toHaveText('€42,232.89');
+  await expect(page.locator('.tile')).toHaveCount(4);
+  await expect(page.getByText('Fineco: bank consent expires in 6 days')).toBeVisible();
+
+  await page.locator('#tabs button', { hasText: 'Records' }).click();
+  await expect(page.locator('h1')).toHaveText('Records');
+  await expect(page).toHaveURL(/\?v=records$/);
+
+  await page.locator('#tabs button', { hasText: 'Home' }).click();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test('an account tile opens its records, and the filter is in the address', async ({ page }) => {
+  await worker(page, signedIn());
+  await page.goto('/');
+  await page.locator('.tile', { hasText: 'Fineco' }).click();
+  await expect(page).toHaveURL(/v=records&a=Fineco/);
+  await expect(page.locator('.chip', { hasText: 'Fineco' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.rec-sub', { hasText: 'Wallet' })).toHaveCount(0);
+});
+
+test('a deep link opens the screen and filters it names', async ({ page }) => {
+  await worker(page, signedIn());
+  await page.goto('/?v=records&u=1&p=last_12');
+  await expect(page.getByRole('button', { name: 'Showing: needs review' })).toBeVisible();
+  await expect(page.getByLabel('Period')).toHaveValue('last_12');
+  // Every row drawn is one that needs review.
+  await expect(page.locator('.tap .check')).toHaveCount(0);
+});
+
+test('a category opens onto its children, and a child drills into Records with a chip to undo it', async ({ page }) => {
+  await worker(page, signedIn());
+  await page.goto('/?v=analytics');
+  await page.locator('.catrow', { hasText: 'Food & Drink' }).last().click();
+  await page.locator('.catkid', { hasText: 'Groceries' }).last().click();
+  await expect(page.locator('h1')).toHaveText('Records');
+  await expect(page.locator('.drills .chip.on')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Clear all' }).click();
+  await expect(page.locator('.drills')).toHaveCount(0);
+});
+
+test('the stored copy is drawn before the read lands, and says how old it is', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect.poll(() => storedOwner(page)).toBe(OWNER);
+
+  const release = fake.hold('/api/read');
+  await page.reload();
+  await expect(page.locator('.big')).toHaveText('€42,232.89');
+  await expect(page.locator('#refresh')).toHaveText(/Last updated/);
+  release();
+  await expect(page.locator('#refresh')).toBeHidden();
+});
+
+test('signing out forgets the copy, and a read already in the air cannot put it back', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect.poll(() => storedOwner(page)).toBe(OWNER);
+
+  const release = fake.hold('/api/read');
+  await page.reload();
+  await expect(page.locator('.big')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByText('Not signed in.')).toBeVisible();
+
+  release();
+  await expect.poll(() => fake.counts['/api/read']).toBe(2);
+  await page.waitForTimeout(300);
+  expect(await storedOwner(page)).toBeNull();
+  await expect(page.locator('.big')).toHaveCount(0);
+});
+
+test('a refusal on opening forgets the copy', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect.poll(() => storedOwner(page)).toBe(OWNER);
+
+  fake.answers['/api/me'] = [401, { error: 'Not available.' }];
+  await page.reload();
+  await expect(page.getByText('Not signed in.')).toBeVisible();
+  await expect.poll(() => storedOwner(page)).toBeNull();
+});
+
+test('a refusal from the read forgets the copy, and a dropped read keeps it', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect.poll(() => storedOwner(page)).toBe(OWNER);
+
+  // A dropped connection is not a refusal: the copy is drawn and kept.
+  fake.answers['/api/read'] = [502, { error: 'down' }];
+  await page.reload();
+  await expect(page.locator('.big')).toBeVisible();
+  await expect(page.locator('#toast')).toHaveText(/last copy/);
+  expect(await storedOwner(page)).toBe(OWNER);
+
+  fake.answers['/api/read'] = [401, { error: 'Not available.' }];
+  await page.reload();
+  await expect(page.getByText('Not signed in.')).toBeVisible();
+  await expect.poll(() => storedOwner(page)).toBeNull();
+});
+
+/**
+ * A one-finger vertical drag. WebKit refuses `new Touch` and a `TouchEvent`
+ * built from a plain array, so the points go through the older
+ * `createTouch`/`createTouchList`, which is the only shape it accepts.
+ */
+async function drag(page, fromY, toY) {
+  await page.evaluate(
+    ({ fromY, toY }) => {
+      const target = document.querySelector('#screens h1');
+      const point = (y) => document.createTouch(window, target, 1, 200, y, 200, y);
+      const touch = (type, y) => {
+        const one = point(y);
+        const none = document.createTouchList();
+        const some = document.createTouchList(one);
+        target.dispatchEvent(
+          new TouchEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            touches: type === 'touchend' ? none : some,
+            targetTouches: type === 'touchend' ? none : some,
+            changedTouches: some
+          })
+        );
+      };
+      touch('touchstart', fromY);
+      for (let y = fromY + 10; y <= toY; y += 10) touch('touchmove', y);
+      touch('touchend', toY);
+    },
+    { fromY, toY }
+  );
+}
+
+test('pulling down at the top reads the book again', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/');
+  await expect(page.locator('.big')).toBeVisible();
+  await expect.poll(() => fake.counts['/api/read']).toBe(1);
+
+  const release = fake.hold('/api/read');
+  await drag(page, 100, 260);
+  await expect(page.locator('#refresh')).toHaveText('Refreshing');
+  release();
+  await expect.poll(() => fake.counts['/api/read']).toBe(2);
+  await expect(page.locator('#refresh')).toBeHidden();
+
+  // A short pull is not a refresh.
+  await drag(page, 100, 140);
+  await page.waitForTimeout(300);
+  expect(fake.counts['/api/read']).toBe(2);
+});

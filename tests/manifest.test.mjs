@@ -204,8 +204,18 @@ describe('.claspignore', () => {
  */
 describe('the repository', () => {
   const CONTROL = new RegExp('[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]', 'g');
-  const SKIP = new Set(['node_modules', '.git', '.claude', 'coverage']);
-  const TEXT = /\.(gs|mjs|js|json|md|ya?ml|txt|html|css)$/;
+  const SKIP = new Set(['node_modules', '.git', '.claude', 'coverage', 'dist', 'test-results', 'playwright-report']);
+  const TEXT = /\.(gs|mjs|js|jsonc?|md|ya?ml|txt|html|css|tsx?)$/;
+
+  // Every page anything here draws: the Apps Script one's partials, and the
+  // viewer — its components, its stylesheet and its document. The viewer is
+  // compiled rather than pasted, which changes nothing about what a string
+  // assigned as markup would do on an origin holding the session cookie.
+  const pages = () => [
+    ...textFiles(SRC).filter((path) => path.endsWith('.html')),
+    ...textFiles(join(ROOT, 'web', 'src')).filter((path) => /\.(tsx?|css|html)$/.test(path)),
+    join(ROOT, 'web', 'index.html')
+  ];
 
   function textFiles(dir, found = []) {
     readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
@@ -239,7 +249,7 @@ describe('the repository', () => {
     const MARKUP_SINKS = ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write'];
 
     const offenders = [];
-    textFiles(SRC).filter((path) => path.endsWith('.html')).forEach((path) => {
+    pages().forEach((path) => {
       const text = readFileSync(path, 'utf8');
       MARKUP_SINKS.forEach((sink) => {
         if (text.includes(sink)) offenders.push(`${relative(ROOT, path)} uses ${sink}`);
@@ -270,7 +280,7 @@ describe('the repository', () => {
     const LITERAL = /(?:color|background|border-color)\s*:[^;{}]*(#fff\b|#ffffff\b|#000\b|#000000\b|\bwhite\b|\bblack\b)/gi;
 
     const offenders = [];
-    textFiles(SRC).filter((path) => path.endsWith('.html')).forEach((path) => {
+    pages().forEach((path) => {
       readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
         // A token being defined is the one place a literal belongs.
         if (/^\s*--/.test(line)) return;

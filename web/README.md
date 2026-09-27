@@ -5,9 +5,10 @@ Sheet stays the datastore; the Worker reads it with **your own** Google grant,
 limited by `drive.file` to the one book. **Door 2 is untouched and is still the
 app in daily use** until the cutover.
 
-This is phase 2 of the plan: the thin slice that settles the unknowns only the
-phone can answer. It signs in, connects the book, and measures a full read. It
-draws no dashboard yet.
+It signs in, connects the book, reads the whole of it in one call, and draws
+the Apps Script viewer's three screens — Home, Records and Charts — from that
+read, on the phone. Read-only so far: confirming, categorising and adding cash
+arrive with the writes.
 
 ## Layout
 
@@ -25,9 +26,12 @@ draws no dashboard yet.
 | `src/domain/` | the book, asked a question, on the phone: `21_query.gs`, `23_api.gs`'s own logic, `runChecks_` and `normalizeMerchant` in TypeScript, over day numbers and the book's clock. Framework-free. `payloads.ts` answers what the Apps Script viewer's five calls answered, in the same shapes. |
 | `src/store/copy.ts` | the last `batchGet`, in IndexedDB, for the account that read it. |
 | `public/sw.js` | the shell from this device's cache, before the network is asked anything. Never `/api`, `/auth` or `/connect`. |
-| `src/probe.ts` | the read-timing numbers the thin slice exists to take. |
 | `src/api/client.ts` | asking the Worker something, and telling a refusal from a dropped connection from a book out of reach. |
-| `src/app/` | the one screen. |
+| `src/app/state.ts` | who is signed in, the book on screen, and every screen as a memo over it. Draws the stored copy, reads anyway, and forgets on sign-out or refusal — with a latch so a read in flight cannot undo the forget. |
+| `src/app/view.ts` | the screen and its filters as a URL and back, with the Apps Script viewer's parameter names. |
+| `src/app/*.tsx` | the screens, charts, rows and filter bar, ported from `src/page.*.html`. Text only through bindings. |
+| `src/app/format.ts`, `geometry.ts` | money and dates as printed, and the arithmetic under the charts. Pure, and tested. |
+| `src/app/pull.ts` | pull to refresh. |
 | `scripts/tools.sh` | is this machine ready. |
 
 ## Routes
@@ -132,8 +136,19 @@ someone ends their session on their next request.
 ## The device checks
 
 Only the phone can answer these, from the Home Screen icon. Desktop WebKit was
-the vantage point that misled the last storage conclusion. **If any fails, the
-plan changes here**, before any screen is built.
+the vantage point that misled the last storage conclusion.
+
+**The screens**, side by side with the Apps Script viewer on the phone:
+
+| | expected |
+|---|---|
+| Home, Records, Charts | the same numbers as the old viewer, drawn the same way |
+| Force-quit the icon and reopen it | the last copy draws at once under *Last updated …*, then the strip goes |
+| Pull down at the top | *Refreshing*, then the strip goes |
+| A custom period on Records | both date fields fit side by side (the native date input is the one WebKit here cannot measure) |
+| Sign out, reopen | nothing of the book draws before signing in again |
+
+**Signing in**, from the thin slice:
 
 | | expected |
 |---|---|
@@ -141,7 +156,6 @@ plan changes here**, before any screen is built.
 | 1b. Sign out inside the icon, sign in from it | either works in place or needs the icon re-added. Both are acceptable (once a year); record which. |
 | 2. Force-quit the icon from the app switcher, reopen | still signed in |
 | 3. On the phone, without picking on the phone | *Connected to Spendsheet ✓* — the laptop's grant carries over. If not, the phone shows *Choose the book* once. |
-| 4. *Measure reads* | five samples. *Copy results* and paste them into the PR. |
 
 Also worth a look while there: CPU time per request on the Cloudflare dashboard
 (Workers → spendsheet → Metrics), which should sit far below 10ms because reads
@@ -179,18 +193,19 @@ the TypeScript, and deep-compares every payload at four pinned instants, with
 harness. Changing one side's behaviour without the other is a red test, and it
 was broken three ways on purpose to see that it is.
 
-`npm run test:e2e` at the root drives this page in WebKit too (`web/e2e/`),
-with every Worker path answered by `page.route`: an unreachable server, a
-refusal, a crafted refusal link, a session ending mid-page, and the stored
-copy's round trip through WebKit's real IndexedDB. `web/e2e/shell/` runs
-against the **built** page, because the service worker registers only there,
-and takes the server away for real — `setOffline` and a routed abort both stop
-a WebKit navigation before the worker is asked.
+`npm run test:e2e` at the root drives the **built** page in WebKit too
+(`web/e2e/`), under `vite preview`, with every Worker path answered by
+`page.route` and the preview's book behind `/api/read` — read through
+`tests/batch.mjs`, so what is on screen is what the parity test proved. They
+cover the three screens, the address in both directions, the stored copy drawn
+before the read lands, pull to refresh, and the forget on sign-out and on
+refusal — including a read still in the air when you sign out. Each of those
+was broken on purpose and went red. `web/e2e/shell/` takes the server away for
+real — `setOffline` and a routed abort both stop a WebKit navigation before
+the service worker is asked.
 
 ## The 10ms cap
 
 A free-plan Worker gets 10ms of CPU per request. Waiting on `fetch` does not
 count, only our own code. So `/api/read` hands Google's body back without
-reading it, and the aggregation runs in the browser, where there is no cap. The
-row counts and byte counts on the screen are measured by the page for the same
-reason. Writes, in phase 5, will read one or two rows each for the same reason.
+reading it, and the aggregation runs in the browser, where there is no cap. Writes, in phase 5, will read one or two rows each for the same reason.

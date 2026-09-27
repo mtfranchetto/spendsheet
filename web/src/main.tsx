@@ -8,13 +8,15 @@
  * wearing its entry-point clothes.
  */
 
-import { render } from 'solid-js/web';
+import { render } from '@solidjs/web';
 import App from './app/App';
+import { start } from './app/state';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('main: #root is missing from index.html');
 
 render(() => <App />, root);
+void start();
 
 // Built pages only: under `vite` the shell changes on every save, and a worker
 // serving yesterday's copy of it is a debugging session nobody asked for.
