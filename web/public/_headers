@@ -1,0 +1,11 @@
+# Headers for every static file. The Worker never sees these requests, so a
+# policy set in code could not reach them.
+#
+# The page shows balances and renders bank descriptions, which are text chosen
+# by whoever sends the money. So: scripts and requests to this origin only, no
+# inline script, nothing may frame it. `/connect` is served by the Worker with
+# its own, looser policy, and shows no data.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer

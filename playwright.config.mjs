@@ -39,6 +39,12 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = Number(process.env.PREVIEW_PORT || 4322);
 
+// The viewer (`web/`) is a second page with a second server: Vite's own, on a
+// port clear of both the preview's and `vite.config.ts`'s default. Its tests
+// answer every Worker path themselves with `page.route`, so nothing behind the
+// dev server's proxy — running or not — can change what they see.
+const VIEWER_PORT = Number(process.env.VIEWER_PORT || 4323);
+
 export default defineConfig({
   testDir: 'tests/e2e',
   fullyParallel: true,
@@ -57,14 +63,28 @@ export default defineConfig({
   },
 
   projects: [
-    { name: 'iphone-webkit', use: { ...devices['iPhone 13'] } }
+    { name: 'iphone-webkit', use: { ...devices['iPhone 13'] } },
+    {
+      name: 'viewer-webkit',
+      testDir: 'web/e2e',
+      use: { ...devices['iPhone 13'], baseURL: `http://localhost:${VIEWER_PORT}` }
+    }
   ],
 
-  webServer: {
-    command: `npm run preview -- --port=${PORT}`,
-    url: `http://localhost:${PORT}/`,
-    reuseExistingServer: !process.env.CI,
-    stdout: 'ignore',
-    stderr: 'pipe'
-  }
+  webServer: [
+    {
+      command: `npm run preview -- --port=${PORT}`,
+      url: `http://localhost:${PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'ignore',
+      stderr: 'pipe'
+    },
+    {
+      command: `npm --prefix web run dev -- --port=${VIEWER_PORT} --strictPort`,
+      url: `http://localhost:${VIEWER_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'ignore',
+      stderr: 'pipe'
+    }
+  ]
 });

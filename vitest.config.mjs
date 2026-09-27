@@ -23,6 +23,6 @@ export default defineConfig({
     // all, so a run from the root collects every suite in every worktree — a
     // green total that counts a copy of the code nobody is working on, and one
     // that goes red for a branch that was abandoned mid-edit.
-    exclude: [...configDefaults.exclude, 'tests/e2e/**', '.claude/**']
+    exclude: [...configDefaults.exclude, 'tests/e2e/**', 'web/e2e/**', '.claude/**']
   }
 });

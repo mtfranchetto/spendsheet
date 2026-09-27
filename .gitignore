@@ -35,3 +35,14 @@ coverage/
 # numbers on the screen, which is the same reason `*.csv` is above.
 test-results/
 playwright-report/
+
+# The web viewer's build output and local secrets. `.dev.vars` is what
+# `wrangler dev` reads, so it holds the OAuth client secret and the key that
+# seals every session in the clear — the same reason `*.pem` is at the top of
+# this file, arriving by a new door.
+web/dist/
+web/.wrangler/
+web/.dev.vars
+# Who the viewer admits: Google account IDs and the addresses beside them.
+# People, not configuration, and the repository is public.
+web/.accounts.json
