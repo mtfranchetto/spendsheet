@@ -154,6 +154,24 @@ const INSTANTS = [
   ['the 31st, after a 30-day month', '2026-10-31T12:00:00+01:00', 'thirty-first']
 ];
 
+/**
+ * The recording's text: one payload to a line, under its name.
+ *
+ * Compact because a recording is read by the comparison and not by people —
+ * pretty-printed, four of them were fifty thousand lines of diff for one file
+ * of evidence each. One *line* per payload rather than one line per file, so a
+ * disagreement still names which payload moved when the file changes.
+ */
+function recording(answers) {
+  const line = (value) => JSON.stringify(value);
+  const group = (named) => '{\n' + Object.entries(named)
+    .map(([name, value]) => '  ' + line(name) + ': ' + line(value)).join(',\n') + '\n }';
+  return '{\n' + Object.entries(answers)
+    .map(([name, value]) => ' ' + line(name) + ': ' +
+      (name === 'appRecords' || name === 'appAnalytics' ? group(value) : line(value)))
+    .join(',\n') + '\n}\n';
+}
+
 /** Every payload the old viewer answered for the sick book at one instant, keyed as the recording is. */
 function everyPayload(ts) {
   const out = {
@@ -177,7 +195,7 @@ describe.each(INSTANTS)('the old viewer\'s answers %s', (_label, instant, file) 
 
   it('every payload, field for field', async () => {
     const answers = everyPayload(port(sickBook()));
-    await expect(JSON.stringify(answers, null, 1) + '\n')
+    await expect(recording(answers))
       .toMatchFileSnapshot(fileURLToPath(new URL(`./parity/${file}.json`, import.meta.url)));
   });
 
