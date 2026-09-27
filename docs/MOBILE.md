@@ -32,7 +32,7 @@ Amount fields group digits as you type, the way your phone writes numbers, so `1
 
 On **Update balance** the field arrives holding the current value and tapping it selects the whole number, so what you type replaces it.
 
-**Add transaction** takes labels too, as the same chips the edit sheet draws — and they stay ticked after you add, like the account and the category, because three coffees on one trip are three entries under one label. Pick a Transfer category and the chips go away: a transfer is counted in neither direction, so a label on one filters nothing. The server refuses that write as well.
+**Add transaction** takes labels too, as the same chips the edit sheet draws. Adding takes you back to Home, where the tile shows the new balance as soon as the book has been read again — a cash account's balance is the sheet's own formula, so it is read rather than guessed; the next entry is one tap on **+ Add**. Pick a Transfer category and the chips go away: a transfer is counted in neither direction, so a label on one filters nothing. The server refuses that write as well.
 
 **Add transaction** won't take a future date. It's for money you've already spent. The picker stops at today, and the server refuses anything later even if a picker lets it through. It does accept tomorrow, because a phone in a timezone east of your book can already be on the next day.
 
@@ -89,7 +89,7 @@ Net worth falls on an *outside* transfer, correctly: it is the sum of what you t
 
 An asset — a brokerage account, a car, a property — is a wallet you top up by stating the total rather than the change. You read 14,500 off a broker's app; you did not compute the €1,500 it moved by.
 
-**Update balance** on an asset tile asks for the new total, pre-filled with the current one, and records the **difference** as one `Transfer › Valuation change` transaction dated today. That is what gives an asset a history: net worth over time is reconstructed by walking transactions backwards, so a value that only ever changed by being overwritten was invisible to it — the curve was flat, and then on the day you retyped the number the whole line moved.
+**Update balance** on an asset tile asks for the new total, pre-filled with the current one, and records the **difference** as one `Transfer › Valuation change` transaction dated today. That is what gives an asset a history: net worth over time is reconstructed by walking transactions backwards, so a value that only ever changed by being overwritten was invisible to it — the curve was flat, and then on the day you retyped the number the whole line moved. Recording it takes you back to Home, where the tile shows the new value once the book has been read again.
 
 `kind: transfer` on that category is what keeps a €1,500 market gain out of *income this month* while still moving net worth. A gain is not income.
 
