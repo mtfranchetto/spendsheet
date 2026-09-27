@@ -74,8 +74,17 @@ html {
   touch-action: pan-x pan-y;
 }
 
+/*
+  `padding-top` is room under the status bar at rest. iOS draws its Liquid
+  Glass there, and the first thing on screen — the refresh strip on every
+  open, the heading after it — sat close enough to be caught in it. On the
+  body rather than on the strip, so it is space at scroll 0 only: the strip is
+  sticky at `top: 0` and still pins to the very top once the page moves, which
+  is where scrolled content is meant to pass under the glass.
+*/
 body {
   margin: 0;
+  padding-top: 8px;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

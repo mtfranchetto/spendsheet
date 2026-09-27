@@ -79,6 +79,16 @@ async function swipe(locator, distance = 160) {
 const review = (page) => page.locator('h2:has-text("Needs review") + .card');
 const esselunga = (page) => review(page).locator('.tap').filter({ hasText: 'ESSELUNGA' });
 
+/** The book as `keeper` holds it, with one account's balance as the sheet's formula would now say. */
+function withBalance(book, name, balance) {
+  const [, current] = book.read();
+  const accounts = current.valueRanges.find((range) => /accounts/.test(range.range));
+  const header = accounts.values[0];
+  const row = accounts.values.find((cells) => cells[header.indexOf('name')] === name);
+  row[header.indexOf('balance')] = balance;
+  return [200, current];
+}
+
 async function open(page, extra = {}) {
   const book = keeper();
   const fake = await worker(page, {
@@ -234,12 +244,20 @@ test('a read that left while a write was out is not believed either', async ({ p
   await expect(esselunga(page)).toHaveCount(0);
 });
 
-test('"+ Add" opens the form on that account, and a retry sends the same entry', async ({ page }) => {
+test('"+ Add" opens the form on that account, a retry sends the same entry, and it lands back on Home with the new balance', async ({ page }) => {
   const answers = [[503, { error: 'down' }], [200, { message: '1 added', rows: {} }]];
-  const { fake } = await open(page, { '/api/act/cash': () => answers.shift() });
+  let account = '';
+  const { book, fake } = await open(page, {
+    '/api/act/cash': () => {
+      const answer = answers.shift();
+      // From here on the sheet's formula says the new balance, as Google would.
+      if (answer[0] === 200) fake.answers['/api/read'] = () => withBalance(book, account, 777.77);
+      return answer;
+    }
+  });
   await page.goto('/');
   const add = page.getByRole('button', { name: /^Add a transaction to / }).first();
-  const account = (await add.getAttribute('aria-label')).replace('Add a transaction to ', '');
+  account = (await add.getAttribute('aria-label')).replace('Add a transaction to ', '');
   await add.click();
   await expect(page.getByRole('heading', { name: 'Add transaction' })).toBeVisible();
   await expect(page).toHaveURL(/v=add/);
@@ -254,4 +272,32 @@ test('"+ Add" opens the form on that account, and a retry sends the same entry',
   expect(first).toMatchObject({ amount: 3.5, direction: 'expense', account });
   expect(first.id).toMatch(/^[0-9a-f]{24}$/);
   expect(second.id).toBe(first.id);
+
+  // Back where it was added from, and the tile reads the book again: a cash
+  // account's balance is the sheet's formula, which no answer carries.
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('.tile', { hasText: account })).toContainText('777.77');
+});
+
+test('"Update" sets the value of an asset, lands back on Home, and the tile shows it', async ({ page }) => {
+  let account = '';
+  const { book, fake } = await open(page, {
+    '/api/act/cash': () => {
+      fake.answers['/api/read'] = () => withBalance(book, account, 98765.43);
+      return [200, { message: '1 added', rows: {} }];
+    }
+  });
+  await page.goto('/');
+  const update = page.getByRole('button', { name: /^Update the balance of / }).first();
+  account = (await update.getAttribute('aria-label')).replace('Update the balance of ', '');
+  await update.click();
+  await expect(page).toHaveURL(/v=value/);
+
+  const field = page.locator('input[inputmode="decimal"]');
+  await field.fill('98765.43');
+  await page.locator('button.primary').click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('.tile', { hasText: account })).toContainText('98,765.43');
+  expect(fake.sent['/api/act/cash']).toHaveLength(1);
 });
