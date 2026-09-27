@@ -582,6 +582,9 @@ describe('/connect', () => {
     expect(html).toContain('ya29.cached');
     expect(policy).toContain("frame-ancestors 'none'");
     expect(policy).not.toContain("script-src 'unsafe-inline'");
+    // A website-restricted API key is checked against the Referer: with none,
+    // Google calls the key invalid. The origin and nothing more.
+    expect(response.headers.get('referrer-policy')).toBe('strict-origin');
     // Every script tag carries this response's nonce, and there is no inline handler.
     const scripts = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
     expect(scripts.length).toBeGreaterThan(0);
