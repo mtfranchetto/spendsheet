@@ -228,4 +228,4 @@ the service worker is asked.
 
 A free-plan Worker gets 10ms of CPU per request. Waiting on `fetch` does not
 count, only our own code. So `/api/read` hands Google's body back without
-reading it, and the aggregation runs in the browser, where there is no cap. Writes, in phase 5, will read one or two rows each for the same reason.
+reading it, and the aggregation runs in the browser, where there is no cap. The writes read only the rows they name, for the same reason — and column A whole when they append, to find the next row and to know a new uid is absent.
