@@ -4,32 +4,46 @@
  * `web/src/domain/` is `21_query.gs`, `23_api.gs`'s own logic, `runChecks_`
  * and `normalizeMerchant`, rewritten in TypeScript to run on the phone. A
  * rewrite that is *nearly* the same is the dangerous kind — a total a cent off
- * the old viewer's is a total nobody believes again — so this does not test
- * the port against expectations written by hand. It asks both.
+ * is a total nobody believes again — so this does not test the port against
+ * expectations written by hand. It holds it to the original's own answers.
  *
- * The same book (`tests/book.mjs`, the one the preview draws) is answered by
- * the `.gs` in the harness, and then read back **the way the Sheets API sends
- * it** — through the Worker's own `READ_RANGES`, dates as serials, trailing
- * empty cells and rows dropped — and answered by the TypeScript. Every payload
- * is compared whole, after the JSON round trip both sides' answers make on the
- * way to a page.
+ * Two kinds of original, because only some of it is still here:
  *
- * Two fences, both from the plan:
+ *   - **The payloads are recorded.** `21_query.gs` and `23_api.gs` served the
+ *     Apps Script viewer and went with it. While both implementations existed,
+ *     this test asked each of them over the same book at the same instants and
+ *     required them to agree to the last field; what the `.gs` answered then is
+ *     `tests/parity/*.json`. The recording *is* the old viewer's answer, so
+ *     updating one to match a change in the port is a decision that the old
+ *     viewer was wrong, never a chore — say which field and why in the commit.
+ *   - **The rest is asked live.** `runChecks_`, `normalizeMerchant` and the
+ *     schema in `00_config.gs` are still what the book runs on, so the port is
+ *     compared against them every run, and a change to either side shows here.
+ *
+ * The book is `tests/book.mjs` — the one the viewer's browser tests draw —
+ * read back **the way the Sheets API sends it**: through the Worker's own
+ * `READ_RANGES`, dates as serials, trailing empty cells and rows dropped.
+ *
+ * Three fences:
  *
  *   - **`TZ` is pinned to the book's zone.** The harness uses the host's zone,
  *     and the port uses the book's; in CI's UTC they would disagree on every
  *     row booked before 01:00 or 02:00 Rome time, and on which days exist.
- *   - **The clock is pinned too**, at instants chosen to be awkward: just after
- *     the spring clock change, half an hour into a new year, late on a
- *     Saturday, and on the 31st of a month that follows a 30-day one.
+ *   - **The clock is pinned**, at instants chosen to be awkward: just after the
+ *     spring clock change, half an hour into a new year, late on a Saturday,
+ *     and on the 31st of a month that follows a 30-day one.
+ *   - **`book.mjs` is imported under a pinned clock too.** It dates its
+ *     accounts and consents when it is loaded, so a recording made against a
+ *     book imported today would disagree with the same book imported tomorrow.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { previewBook } from './book.mjs';
+import { fileURLToPath } from 'node:url';
 import { READ_RANGES } from '../web/worker/router.ts';
 import { asBatchGet, width } from './batch.mjs';
 import { bookFromBatch } from '../web/src/domain/book.ts';
 import { clockAt } from '../web/src/domain/days.ts';
+import { appHealth } from '../web/src/domain/health.ts';
 import { normalizeMerchant } from '../web/src/domain/merchant.ts';
 import {
   appAnalyticsData, appDashboardData, appDefaultFilters, appOpenData, appOverviewData, appRecordsData
@@ -40,17 +54,20 @@ import * as schema from '../web/src/domain/schema.ts';
 const ZONE = 'Europe/Rome';
 const DAY = 24 * 60 * 60 * 1000;
 
-let zone;
-beforeAll(() => {
-  zone = process.env.TZ;
-  process.env.TZ = ZONE;
-});
+let zone = process.env.TZ;
+process.env.TZ = ZONE;
+
+vi.useFakeTimers({ toFake: ['Date'] });
+vi.setSystemTime(new Date('2026-09-26T12:00:00+02:00'));
+const { previewBook } = await import('./book.mjs');
+vi.useRealTimers();
+
 afterAll(() => {
   process.env.TZ = zone;
   vi.useRealTimers();
 });
 
-/** What a page receives: the answer after `JSON.stringify`, as both transports do. */
+/** What a page receives: the answer after `JSON.stringify`. */
 const wire = (value) => JSON.parse(JSON.stringify(value));
 
 function addRun(c, over) {
@@ -74,29 +91,35 @@ function sickBook() {
   addRun(c, { started_at: at(3) });
   addRun(c, { started_at: at(1), result: 'FAIL', message: 'boom' });
 
-  // `book.mjs` dates its consents when it is imported, before the clock is
-  // pinned, so the one about to lapse is re-dated against the pinned one.
+  // The consent about to lapse is re-dated against the instant under test.
   const status = c.__spreadsheet.getSheetByName('_status');
   c.writeCell_(status, 3, c.STATUS_COLUMNS, 'valid_until', at(-6));
   c.writeCell_(status, 3, c.STATUS_COLUMNS, 'last_error', 'HTTP 500 from the bank');
   return c;
 }
 
-/** Both sides' answers for one book, at the pinned clock. */
-function answers(c) {
+/** The port's answers for one harness book, at the pinned clock. */
+function port(c) {
   const book = bookFromBatch(asBatchGet(c), ZONE);
   const ledger = ledgerOf(book);
   const clock = clockAt(new Date(), ZONE);
   return {
-    gs: c,
-    ts: {
-      appOpen: () => appOpenData(book, clock),
-      appOverview: () => appOverviewData(book, ledger, clock),
-      appDashboard: () => appDashboardData(book, ledger, clock),
-      appRecords: (filters, offset) => appRecordsData(book, ledger, filters, offset, clock),
-      appAnalytics: (filters) => appAnalyticsData(book, ledger, filters, clock)
-    }
+    book, ledger, clock,
+    appOpen: () => appOpenData(book, clock),
+    appOverview: () => appOverviewData(book, ledger, clock),
+    appDashboard: () => appDashboardData(book, ledger, clock),
+    appRecords: (filters, offset) => appRecordsData(book, ledger, filters, offset, clock),
+    appAnalytics: (filters) => appAnalyticsData(book, ledger, filters, clock)
   };
+}
+
+/** `runChecks_` as the payload carries it — what `appHealth` is the port of. */
+function gsHealth(c, rowCount) {
+  return c.runChecks_(new Date(), rowCount).map((alert) => ({
+    kind: String(alert.kind || ''),
+    subject: String(alert.subject || ''),
+    detail: String(alert.detail || '')
+  }));
 }
 
 const RECORD_FILTERS = [
@@ -125,39 +148,47 @@ const ANALYTICS_FILTERS = [
 ];
 
 const INSTANTS = [
-  ['just after the spring clock change', '2026-03-31T10:00:00+02:00'],
-  ['half an hour into a new year', '2026-01-01T00:30:00+01:00'],
-  ['late on a Saturday', '2026-09-26T23:30:00+02:00'],
-  ['the 31st, after a 30-day month', '2026-10-31T12:00:00+01:00']
+  ['just after the spring clock change', '2026-03-31T10:00:00+02:00', 'spring'],
+  ['half an hour into a new year', '2026-01-01T00:30:00+01:00', 'new-year'],
+  ['late on a Saturday', '2026-09-26T23:30:00+02:00', 'saturday'],
+  ['the 31st, after a 30-day month', '2026-10-31T12:00:00+01:00', 'thirty-first']
 ];
 
-describe.each(INSTANTS)('the same answers %s', (_label, instant) => {
+/** Every payload the old viewer answered for the sick book at one instant, keyed as the recording is. */
+function everyPayload(ts) {
+  const out = {
+    appOpen: ts.appOpen(),
+    appOverview: ts.appOverview(),
+    appDashboard: ts.appDashboard(),
+    appRecords: {},
+    appAnalytics: {}
+  };
+  for (const [name, filters] of RECORD_FILTERS) out.appRecords[name] = [0, 3].map((offset) => ts.appRecords(filters, offset));
+  for (const [name, filters] of ANALYTICS_FILTERS) out.appAnalytics[name] = ts.appAnalytics(filters);
+  return wire(out);
+}
+
+describe.each(INSTANTS)('the old viewer\'s answers %s', (_label, instant, file) => {
   beforeAll(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(instant));
   });
   afterAll(() => vi.useRealTimers());
 
-  it.each(['appOpen', 'appOverview', 'appDashboard'])('%s', (name) => {
-    const { gs, ts } = answers(sickBook());
-    expect(wire(ts[name]())).toEqual(wire(gs[name]()));
+  it('every payload, field for field', async () => {
+    const answers = everyPayload(port(sickBook()));
+    await expect(JSON.stringify(answers, null, 1) + '\n')
+      .toMatchFileSnapshot(fileURLToPath(new URL(`./parity/${file}.json`, import.meta.url)));
   });
 
-  it.each(RECORD_FILTERS)('appRecords for %s', (_name, filters) => {
-    const { gs, ts } = answers(sickBook());
-    for (const offset of [0, 3]) {
-      expect(wire(ts.appRecords(filters, offset))).toEqual(wire(gs.appRecords(filters, offset)));
-    }
-  });
-
-  it.each(ANALYTICS_FILTERS)('appAnalytics for %s', (_name, filters) => {
-    const { gs, ts } = answers(sickBook());
-    expect(wire(ts.appAnalytics(filters))).toEqual(wire(gs.appAnalytics(filters)));
+  it('the health strip, against the checks the book still runs', () => {
+    const c = sickBook();
+    const ts = port(c);
+    expect(wire(appHealth(ts.book, ts.clock, ts.ledger.length))).toEqual(wire(gsHealth(c, ts.ledger.length)));
   });
 
   it('actually exercised every detector, so the health comparison means something', () => {
-    const { ts } = answers(sickBook());
-    const kinds = ts.appOverview().health.map((alert) => alert.kind);
+    const kinds = port(sickBook()).appOverview().health.map((alert) => alert.kind);
     expect(kinds).toEqual(expect.arrayContaining(['never_ran', 'empty_runs', 'consent', 'account_failing']));
   });
 });
@@ -186,8 +217,8 @@ describe('the row-loss check, from _monitor rather than script properties', () =
   }
 
   const health = (c) => {
-    const { gs, ts } = answers(c);
-    return { gs: wire(gs.appOverview().health), ts: wire(ts.appOverview().health) };
+    const ts = port(c);
+    return { gs: wire(gsHealth(c, ts.ledger.length)), ts: wire(appHealth(ts.book, ts.clock, ts.ledger.length)) };
   };
 
   it('agrees a delete that left its copy is excused', () => {
@@ -218,8 +249,7 @@ describe('the schema, copied into schema.ts', () => {
     'CONFIG_COLUMNS', 'MEMORY_COLUMNS', 'MONITOR_COLUMNS', 'DEFAULT_CONFIG',
     'TX_SOURCE_API', 'TX_SOURCE_CASH', 'CATEGORY_SOURCE', 'TX_TYPE', 'ACCOUNT_KIND',
     'ACCOUNT_KINDS', 'RUN_RESULT', 'ALERT_KIND', 'MERCHANT_NOISE_WORDS',
-    'MERCHANT_LETTER_FOLDS', 'MERCHANT_KEY_MAX_TOKENS', 'QUERY_PAGE_SIZE',
-    'QUERY_GROUP_LIMIT', 'QUERY_DAILY_MAX_DAYS', 'DASHBOARD_TREND_DAYS'
+    'MERCHANT_LETTER_FOLDS', 'MERCHANT_KEY_MAX_TOKENS'
   ])('%s', (name) => {
     expect(wire(schema[name])).toEqual(wire(copied(name)));
   });
