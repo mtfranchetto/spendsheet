@@ -378,7 +378,6 @@ function rememberRowCount_() {
   record.transactions_rows = rows;
   record.removed_rows = removed;
   sheet.getRange(2, 1, 1, MONITOR_COLUMNS.length).setValues([toRow_(MONITOR_COLUMNS, record)]);
-  forgetReadCache_();
 }
 
 /**

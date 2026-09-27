@@ -1,7 +1,7 @@
 /**
  * Sheet.tsx — a row's details, and a rule made from one.
  *
- * From `page.sheet.html`. One `<dialog>` for both, opened by `openSheet` in
+ * One `<dialog>` for both, opened by `openSheet` in
  * `state.ts` and keyed on which row and which sheet — so a write landing
  * while it is open redraws the row underneath without resetting what you
  * have typed into it.

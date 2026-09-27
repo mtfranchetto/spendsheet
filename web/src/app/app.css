@@ -1,11 +1,9 @@
 /*
   app.css — the viewer's stylesheet.
 
-  The Apps Script viewer's `page.css.html`, carried over whole: the screens
-  are the same screens, and each rule below still carries the reason it was
-  written. The thin slice's own rules follow at the end — the sign-in
-  notices, and every state of a button drawn by hand, since
-  `appearance: none` takes the platform's feedback with it.
+  Each rule carries the reason it was written. The sign-in notices and every
+  state of a button drawn by hand come last, since `appearance: none` takes
+  the platform's feedback with it.
 */
 
 /*

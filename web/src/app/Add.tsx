@@ -1,7 +1,7 @@
 /**
  * Add.tsx — cash you spent, and what an asset is worth now.
  *
- * From `page.add.html`. Both are the `cash` write: a revaluation is a
+ * Both are the `cash` write: a revaluation is a
  * transfer into or out of the asset, dated today, under `Transfer ›
  * Valuation change`, for the difference between what the book says and what
  * you typed — so the balance moves and no total calls it spending.

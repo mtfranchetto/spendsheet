@@ -310,24 +310,21 @@ describe('doGet', () => {
     expect(c.__properties.get('EB_AUTH_STATE')).toBeUndefined();
   });
 
-  it('hands a bare request to the app rather than to the consent flow', () => {
-    // This URL is anonymous by necessity and now serves two things. A request
-    // carrying neither `code` nor `state` is nobody's callback, so it goes to
-    // the app — where an owner gate refuses it. See webapp.test.mjs; what
-    // matters here is that it does not fall through into the consent branch
-    // and report a failed connection to someone who never started one.
+  it('treats a bare request as nobody\'s callback, and leaves a flow in progress alone', () => {
+    // This URL is anonymous by necessity, so anyone can open it with nothing on
+    // it. That must not report a connection, and must not end the one you are
+    // part-way through on your bank's SCA screen.
     const c = startedFlow(sessionResponse);
-    c.Session.getActiveUser = () => ({ getEmail: () => '' });
 
-    expect(c.doGet({}).getContent()).toContain('Not available');
-    expect(c.doGet({ parameter: {} }).getContent()).toContain('Not available');
+    expect(c.doGet({}).getContent()).not.toContain('Connected');
+    expect(c.doGet({ parameter: {} }).getContent()).not.toContain('Connected');
     expect(c.__properties.get('EB_AUTH_STATE')).toBeTruthy();
   });
 
   it('reports a bank-side refusal without inventing a connection', () => {
     // A refusal echoes the `state` it was given — OAuth requires it — which is
     // also what marks the request as a callback rather than someone opening
-    // the app URL with an `error` on it.
+    // this URL with an `error` on it.
     const c = startedFlow(sessionResponse);
     const html = c.doGet({ parameter: { state: 'good-nonce', error: 'access_denied' } })
       .getContent();

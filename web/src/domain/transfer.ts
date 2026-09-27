@@ -1,8 +1,7 @@
 /**
  * transfer.ts — which row on another bank is the other half of a move.
  *
- * `findCounterLeg_` in `22_actions.gs`, split in two so both sides can ask it.
- * The page holds the whole ledger, so it is the page that *finds* the counter
+ * Split in two so both sides can ask it. The page holds the whole ledger, so it is the page that *finds* the counter
  * leg; the Worker reads only the two rows it was named and asks
  * `counterLegProblem` of them again, because a page can send anything and the
  * ledger may have moved since it looked. One predicate, so the page can never

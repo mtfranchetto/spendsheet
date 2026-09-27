@@ -1,7 +1,7 @@
 /**
  * amount.ts — an amount as a person types it, in the phone's own separators.
  *
- * From `page.core.html`, whose reasoning carries over whole. The field is
+ * The field is
  * `inputmode="decimal"`, and iOS shows the locale's decimal key: a comma in
  * Italy. So `3,50` is three euros fifty and `1.250` is twelve hundred and
  * fifty — the last `.` or `,` is the decimal point when it is the locale's

@@ -117,17 +117,11 @@ function cashEntryMoment_(date, now) {
  * being asked. `partitionByUid` answers a richer one — which duplicates
  * conflict on their facts — and this has never read that half of its answer.
  *
- * **`categories` is optional and is an already-paid-for read.** The immediate
- * path reads that tab to refuse a category this book does not have, moments
- * before this runs; reading it again here is the same three round trips for the
- * same rows within one request. Nothing on this path writes to `categories`,
- * so there is no version of it that could have gone stale in between.
- *
  * Returns `stamped` — every row on the tab now carrying a `processed` mark,
  * including any left behind by an earlier drain whose clear did not land. It is
  * what `clearDrainedCashRows_` would otherwise go back and re-read the tab for.
  */
-function drainCashEntries_(known, now, categories) {
+function drainCashEntries_(known, now) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CASH_ENTRY);
   if (!sheet) return { inserted: 0, incomplete: 0, stamped: [] };
 
@@ -142,7 +136,7 @@ function drainCashEntries_(known, now, categories) {
   if (!entries.length) return { inserted: 0, incomplete: 0, stamped: stamped };
 
   var names = cashAccountNames_();
-  var kinds = (categories || categoryIndex_()).kinds;
+  var kinds = categoryKinds_();
   var currency = readConfig_().base_currency || 'EUR';
   var incomplete = 0;
   var records = [];
@@ -282,40 +276,16 @@ function resolveCashAccount_(value, accounts) {
   return { id: typed, name: typed };
 }
 
-/**
- * `categories`, in the three shapes the cash path asks it about, from one read.
- *
- * `kinds` decides the direction of an entry; the two name sets decide whether
- * this book has the category you picked at all. Both questions get asked inside
- * one `appAddCash`, a few lines apart, and `readRecords_` is three round trips
- * every time it is called — so asking them separately was the same tab fetched
- * twice in a request somebody is waiting on.
- *
- * `present` is not the same as "has any rows", and the difference is the reason
- * it is here: a book with no `categories` tab can say nothing about whether a
- * name is known, and a caller that read absence as "unknown" would refuse every
- * category in the book. A tab that exists and is empty genuinely knows none.
- */
-function categoryIndex_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
-  var index = { present: false, kinds: {}, categories: {}, subcategories: {} };
-  if (!sheet) return index;
-
-  index.present = true;
-  readRecords_(sheet, CATEGORY_COLUMNS).forEach(function (row) {
-    if (row.category && !index.kinds[row.category]) index.kinds[row.category] = row.kind;
-
-    var category = String(row.category || '').trim();
-    var subcategory = String(row.subcategory || '').trim();
-    if (category) index.categories[category] = true;
-    if (subcategory) index.subcategories[subcategory] = true;
-  });
-  return index;
-}
-
 /** category → kind, which is what decides the direction of a cash entry. */
 function categoryKinds_() {
-  return categoryIndex_().kinds;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.CATEGORIES);
+  var kinds = {};
+  if (!sheet) return kinds;
+
+  readRecords_(sheet, CATEGORY_COLUMNS).forEach(function (row) {
+    if (row.category && !kinds[row.category]) kinds[row.category] = row.kind;
+  });
+  return kinds;
 }
 
 // ---------------------------------------------------------------------------

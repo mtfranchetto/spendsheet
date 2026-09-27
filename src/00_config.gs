@@ -492,10 +492,11 @@ var DEFAULT_CONFIG = [
   // zero default and a cleared cell would be the same reading and no test could
   // tell the guard in `configNumber_` from its absence.
   ['memory_priority', 5, 'Where learned memory sits among the rules. Lower matches first; seed rules start at 10.'],
-  // `cashflow_horizon_days`, `trend_days` and `confirm_rule_matches` went from
-  // here with the code that read them — the cashflow projection in
-  // `15_recurring.gs`, the net worth chart on the old `dashboard` tab, and the
-  // rules-tab auto-confirm in `14_categorize.gs`. A dead constant is invisible;
+  // `cashflow_horizon_days`, `trend_days`, `confirm_rule_matches` and
+  // `favicon_url` went from here with the code that read them — the cashflow
+  // projection in `15_recurring.gs`, the net worth chart on the old `dashboard`
+  // tab, the rules-tab auto-confirm in `14_categorize.gs`, and the Apps Script
+  // app page. A dead constant is invisible;
   // a dead *config row* is not, because it sits on a tab the owner reads with a
   // description promising an effect it has not had since that code went.
   //
@@ -503,35 +504,21 @@ var DEFAULT_CONFIG = [
   // rather than an oversight: `setup()` cannot tell a row you deleted from one
   // you never had, and `reportSeedDivergence_` walks the seed rather than the
   // sheet, so a row the seed no longer names is simply not looked at. They are
-  // inert, they are three, and removing them by hand is a sheet edit — not
+  // inert, they are four, and removing them by hand is a sheet edit — not
   // worth a migration, unlike the category renames `RETIRED_CATEGORIES` exists
   // for.
   ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.'],
   // Blank here and filled by setup() from the account running it, because this
-  // file touches no services. It is the lock on the mobile web app: one
-  // deployment of this project is anonymous by necessity (the bank's redirect
-  // carries no Google session) and both deployments run the same doGet, so the
-  // app branch checks the caller against this. Blank means refuse everyone —
-  // see webAppAccessDecision_ in 04_gates.gs for why it fails closed.
-  ['owner_email', '', 'Who may open the mobile web app. Comma-separate to share it — see docs/SHARING.md. Filled by Setup sheet. Blank refuses everyone.'],
-  // Stored rather than detected. `ScriptApp.getService().getUrl()` answers for
-  // the context it is called from, so from the menu it returns the HEAD
-  // deployment — neither of the two real doors. Paste the Viewer's /exec URL
-  // here once and "Open the app" knows where to send you.
-  ['viewer_url', '', 'The mobile app deployment URL (Deploy → Manage deployments → Viewer).'],
-  // This project's own icon, served by GitHub off this repo — which is why it
-  // is a default rather than the question it started as. Google fetches this
-  // URL server-side and anonymously, so **it only works once the repo is
-  // public**: a private repo answers a raw URL with 404, and a favicon that
-  // fails to load reports nothing anywhere. That is the whole failure mode, and
-  // it looks identical to the setting having no effect.
-  //
-  // Point it at your own fork, or anywhere else, by editing the cell. `main` is
-  // in the path deliberately — a tag would freeze the icon, and this is
-  // decoration, so following the branch is the cheaper mistake.
-  ['favicon_url',
-    'https://raw.githubusercontent.com/mtfranchetto/spendsheet/main/docs/assets/spendsheet-icon.png',
-    'Public HTTPS image for the app’s browser tab. Must be reachable without signing in.']
+  // file touches no services. A dialog's callback has no UI context, so
+  // `requireInteractive_` admits it by identity against this instead — and the
+  // consent redirect is anonymous by necessity, so a stranger's call fails the
+  // same check. Blank means refuse everyone — see webAppAccessDecision_ in
+  // 04_gates.gs for why it fails closed.
+  ['owner_email', '', 'Who may use the dialogs the Spendsheet menu opens. Filled by Setup sheet. Blank refuses everyone.'],
+  // Where the viewer is served — a Cloudflare Worker, not this project, so
+  // nothing here can detect it. Paste its origin once and "Open the app" knows
+  // where to send you.
+  ['viewer_url', '', 'The viewer’s address, e.g. https://spendsheet.example.workers.dev (see web/README.md).']
 ];
 
 /**

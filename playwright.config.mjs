@@ -1,14 +1,11 @@
 /**
  * playwright.config.mjs — the browser half of the suite.
  *
- * Everything under `tests/*.test.mjs` runs in `node:vm` against faked Google
- * services, which is what makes it fast and what makes it blind to the page:
- * the harness loads the `.gs` files and nothing inside an HTML file reaches it.
- * `tests/page.test.mjs` closes part of that by compiling the assembled document
- * with `new Function` — it proves the page *parses* and runs none of it. A page
- * that parses and throws on the first line of its boot is a blank screen, and
- * is indistinguishable from a healthy one by every test that existed before
- * this file.
+ * Vitest runs the viewer's domain and Worker in Node, which is what makes it
+ * fast and what makes it blind to the page: nothing there lays anything out,
+ * registers a service worker, or receives a touch. A page that compiles and
+ * throws on the first line of its boot is a blank screen, and is
+ * indistinguishable from a healthy one by every unit test.
  *
  * So this is a second runner, deliberately. Vitest cannot host a browser and
  * `npm test` should not grow a fifteen-second browser start; `npm run test:e2e`
@@ -17,43 +14,33 @@
  * **WebKit, and only WebKit.** This app is opened on one device by one person
  * and that device runs Safari, so a Chromium run would be testing an engine
  * nobody points at it. WebKit is not iOS Safari — it will not reproduce how the
- * phone sizes a native `input[type="date"]`, which is the exact bug that shipped
- * once here — but it is the same engine family, and choosing Chromium for a
- * phone-only app would bake the wrong default into every future test. What this
- * suite can prove is in the header of `tests/e2e/app.spec.mjs`, along with what
- * it cannot.
+ * phone sizes a native `input[type="date"]`, which is the exact bug that
+ * shipped once here — but it is the same engine family.
  *
- * The device descriptor is doing more than setting a width. `isMobile` and
- * `hasTouch` are what make the touch listeners in `page.gestures.html` and
- * `page.records.html` reachable at all: without them the page loads and the
- * swipe-to-confirm gesture is dead code no test can enter.
+ * The device descriptor is doing more than setting a width: `hasTouch` is what
+ * makes the page's touch listeners reachable at all.
  *
- * `webServer` runs the same `npm run preview` a person would, on a port of its
- * own so a preview left open in another terminal is neither reused by accident
- * nor in the way. Locally an already-running server on that port is reused,
- * which keeps the edit-and-rerun loop quick; in CI it never is, because a
- * server that was already up is a server nobody knows the age of.
+ * **The built page** under `vite preview`, because that is what ships — a
+ * production build compiles the JSX differently from the dev server, and
+ * registers the service worker, which only a built page does. Built once,
+ * served on a port clear of `vite.config.ts`'s default. The tests answer every
+ * Worker path themselves with `page.route`, so nothing behind the proxy —
+ * running or not — can change what they see. Locally an already-running server
+ * on that port is reused, which keeps the edit-and-rerun loop quick; in CI it
+ * never is, because a server that was already up is a server nobody knows the
+ * age of.
+ *
+ * `web/e2e/shell/` runs against the same `dist/`, through a preview it starts
+ * and stops itself: taking the server away is the only offline a WebKit
+ * service worker believes.
  */
 
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = Number(process.env.PREVIEW_PORT || 4322);
-
-// The viewer (`web/`) is a second page with a second server: **the built
-// page** under `vite preview`, because that is what ships — a production
-// build compiles the JSX differently from the dev server, and registers the
-// service worker, which only a built page does. Built once, served on a port
-// clear of both the preview's and `vite.config.ts`'s default. Its tests answer
-// every Worker path themselves with `page.route`, so nothing behind the proxy
-// — running or not — can change what they see.
-//
-// `web/e2e/shell/` runs against the same `dist/`, through a preview it starts
-// and stops itself: taking the server away is the only offline a WebKit
-// service worker believes.
 const VIEWER_PORT = Number(process.env.VIEWER_PORT || 4323);
 
 export default defineConfig({
-  testDir: 'tests/e2e',
+  testDir: 'web/e2e',
   fullyParallel: true,
 
   // No retries, here or in CI. Nothing in this suite touches a network or a
@@ -65,15 +52,12 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : [['list']],
 
   use: {
-    baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure'
   },
 
   projects: [
-    { name: 'iphone-webkit', use: { ...devices['iPhone 13'] } },
     {
       name: 'viewer-webkit',
-      testDir: 'web/e2e',
       testIgnore: 'shell/**',
       // The built page registers its service worker, and `page.route` cannot
       // see a request a worker answers. The shell's own test allows it.
@@ -86,20 +70,11 @@ export default defineConfig({
     }
   ],
 
-  webServer: [
-    {
-      command: `npm run preview -- --port=${PORT}`,
-      url: `http://localhost:${PORT}/`,
-      reuseExistingServer: !process.env.CI,
-      stdout: 'ignore',
-      stderr: 'pipe'
-    },
-    {
-      command: `npm --prefix web run build && npm --prefix web run preview -- --port=${VIEWER_PORT} --strictPort`,
-      url: `http://localhost:${VIEWER_PORT}/`,
-      reuseExistingServer: !process.env.CI,
-      stdout: 'ignore',
-      stderr: 'pipe'
-    }
-  ]
+  webServer: {
+    command: `npm --prefix web run build && npm --prefix web run preview -- --port=${VIEWER_PORT} --strictPort`,
+    url: `http://localhost:${VIEWER_PORT}/`,
+    reuseExistingServer: !process.env.CI,
+    stdout: 'ignore',
+    stderr: 'pipe'
+  }
 });

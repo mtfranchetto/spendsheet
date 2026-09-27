@@ -1,11 +1,10 @@
 /**
  * records.ts — the Sheets API values array, as `readRecords_` hands rows back.
  *
- * This is the whole adapter. `21_query.gs` is pure aggregation over an array
- * of objects keyed by column name; the only thing tying it to Apps Script is
- * that those objects come from `readRecords_(sheet, HEADERS, keyColumn)`. Give
- * the port the same objects from a different source and the aggregation moves
- * across untouched — which is why this file exists and why it is small.
+ * This is the whole adapter. `domain/query.ts` is pure aggregation over an
+ * array of objects keyed by column name, the shape `readRecords_` gives the
+ * `.gs`; produce the same objects from a `values.batchGet` and the aggregation
+ * needs nothing else — which is why this file exists and why it is small.
  *
  * It reproduces `03_sheets.gs`'s semantics deliberately, including the ones
  * that look like quirks:

@@ -88,10 +88,11 @@ describe('the menu paths the docs tell you to click', () => {
 /**
  * A file header is documentation, and this one had drifted the same way.
  *
- * `22_actions.gs` opened with "the three things the app writes" while holding
- * four, and CLAUDE.md's table said two — so an agent asked to add a fifth read
- * two numbers, found neither, and had to reconcile both against the code before
- * it could start. That is precisely the cost those documents exist to remove.
+ * The app's writers once opened with "the three things the app writes" while
+ * holding four, and CLAUDE.md's table said two — so an agent asked to add a
+ * fifth read two numbers, found neither, and had to reconcile both against the
+ * code before it could start. That is precisely the cost those documents exist
+ * to remove.
  *
  * Pinned to a count rather than to a list of names, because the point is that
  * a writer was *added* and the prose was not touched — which is what a count
@@ -100,27 +101,24 @@ describe('the menu paths the docs tell you to click', () => {
 describe('the file headers that say how many of something there is', () => {
   const NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
 
-  it('counts the writers in 22_actions.gs the way its own header does', () => {
-    const source = readFileSync(join(ROOT, 'src', '22_actions.gs'), 'utf8');
+  // A writer is an action the Worker exports: it takes Google first.
+  const writers = () => [...readFileSync(join(ROOT, 'web', 'worker', 'actions.ts'), 'utf8')
+    .matchAll(/^export async function \w+\(google: Google\b/gm)];
 
-    // A writer is an entry point the app can reach that changes the book. Both
-    // shapes are here already: the review batch, and the three `webApp*_`.
-    const writers = [...source.matchAll(/^function (webApp[A-Za-z]+_|applyReviewDecisions_)\(/gm)];
-    const claimed = source.match(/^ \* 22_actions\.gs — the (\w+) things the app writes/m);
+  it('counts the writers in actions.ts the way its own header does', () => {
+    const source = readFileSync(join(ROOT, 'web', 'worker', 'actions.ts'), 'utf8');
+    const claimed = source.match(/^ \* actions\.ts — the (\w+) things the page may write/m);
 
-    expect(claimed, '22_actions.gs no longer opens with a count').not.toBeNull();
-    expect(NUMBER[claimed[1]], `the header says "${claimed[1]}"`).toBe(writers.length);
+    expect(claimed, 'actions.ts no longer opens with a count').not.toBeNull();
+    expect(NUMBER[claimed[1]], `the header says "${claimed[1]}"`).toBe(writers().length);
   });
 
-  it('says the same number in the CLAUDE.md file table', () => {
-    const claude = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
-    const row = claude.match(/22_actions\.gs.*?the (\w+) things the app writes/);
+  it('says the same number in the web/README.md file table', () => {
+    const readme = readFileSync(join(ROOT, 'web', 'README.md'), 'utf8');
+    const row = readme.match(/worker\/actions\.ts.*?the (\w+) writes/);
 
-    expect(row, 'CLAUDE.md no longer describes 22_actions.gs with a count').not.toBeNull();
-
-    const source = readFileSync(join(ROOT, 'src', '22_actions.gs'), 'utf8');
-    const writers = [...source.matchAll(/^function (webApp[A-Za-z]+_|applyReviewDecisions_)\(/gm)];
-    expect(NUMBER[row[1]], `CLAUDE.md says "${row[1]}"`).toBe(writers.length);
+    expect(row, 'web/README.md no longer describes actions.ts with a count').not.toBeNull();
+    expect(NUMBER[row[1]], `web/README.md says "${row[1]}"`).toBe(writers().length);
   });
 });
 

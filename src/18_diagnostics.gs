@@ -96,21 +96,22 @@ function runSmokeTests() {
     return book;
   }));
 
-  // A book whose `owner_email` is blank refuses everyone, including you, and
-  // the symptom is a page that says "not available" with nothing to read. That
-  // is a live-runtime fact — `setup()` fills the row from `getEffectiveUser()`,
-  // which the harness can only fake — so it belongs here rather than in a test.
-  results.push(smokeTest_('web app', 'the phone app has an owner', function () {
+  // A book whose `owner_email` is blank refuses every dialog's buttons,
+  // including yours: a dialog's callback has no UI context, so
+  // `requireInteractive_` admits it by identity. That is a live-runtime fact —
+  // `setup()` fills the row from `getEffectiveUser()`, which the harness can
+  // only fake — so it belongs here rather than in a test.
+  results.push(smokeTest_('gates', 'the dialogs have an owner', function () {
     var owner = webAppOwner_();
     if (!owner) {
-      throw new Error('owner_email is blank in _config, so the web app refuses everyone. ' +
+      throw new Error('owner_email is blank in _config, so every dialog refuses its buttons. ' +
         'Re-run Setup sheet, or type your address into that row.');
     }
     if (!webAppAccessDecision_(owner, activeUserEmail_()).ok) {
-      throw new Error('owner_email is ' + owner + ', which is not the account running this. ' +
-        'The web app will refuse you. Diagnostics → Check web app access has the detail.');
+      throw new Error('owner_email is ' + owner + ', which is not the account running this, ' +
+        'so a dialog will refuse your buttons.');
     }
-    return owner + ' can open the web app';
+    return owner + ' may use the dialogs';
   }));
 
   // The one check here that writes something outside the book, and the only
@@ -120,14 +121,6 @@ function runSmokeTests() {
   // as every other alert, and nothing in the sheet disagreed with it.
   results.push(smokeTest_('backup', 'Drive accepts a file from this script', function () {
     return checkSnapshotPermitted_();
-  }));
-
-  // The page is assembled by Google, from files this project only ever hands
-  // over — so whether a partial arrives as JavaScript or as HTML *about*
-  // JavaScript is not a fact the harness holds. It read the same files off
-  // disk and passed on a page whose every screen was a syntax error.
-  results.push(smokeTest_('web app', 'the page arrives as JavaScript', function () {
-    return checkPageAssembly_();
   }));
 
   results.push(smokeTest_('sheet', 'every chart points at data', function () {
@@ -457,134 +450,12 @@ function checkTextSafeRoundTrip_() {
   }
 }
 
-/**
- * The partials reach the page as JavaScript, and not as markup about it.
- *
- * `page.html` is a shell of `include_` scriptlets over a dozen files of bare
- * JavaScript, and the first `<` in one of those is a less-than rather than a
- * tag. Read a partial through an `HtmlOutput` — which is what
- * `createHtmlOutputFromFile(name).getContent()` does, the include idiom out of
- * Google's own documentation — and it comes back as HTML, so that `<` returns
- * escaped. `page.core`'s first loop arrived as `i &lt; arguments.length`,
- * which is a syntax error, and one syntax error discards the entire block: the
- * app kept the `Loading…` its shell ships with and no screen ever drew.
- *
- * **Nothing in the harness can settle this**, and that is the point of the
- * check. Its `HtmlService` reads the same files off disk and has no HTML
- * parser to escape anything with, so both the broken call and the working one
- * return the file — the suite passed, green, on a page that could not run.
- * Whether Google escapes a character is a fact about Google, exactly as
- * whether Drive permits a write is a fact about this book's consent.
- *
- * The partials are read out of `page.html` rather than listed here. A list
- * would be a hand-maintained copy of the shell, and a copy is wrong the first
- * time a partial is added — silently, by checking eleven of twelve.
- *
- * `&lt;` is the whole assertion because no partial contains one to begin with:
- * `tests/app.test.mjs` pins that, which is what makes its presence here proof
- * of a round trip through markup rather than something someone typed.
- */
-function checkPageAssembly_() {
-  if (typeof include_ !== 'function') {
-    throw new Error('include_ is not in this project, so no page is being served');
-  }
-
-  var shell = HtmlService.createTemplateFromFile('page').getRawContent();
-  var names = [];
-  var pattern = /include_\(\s*['"]([\w.-]+)['"]\s*\)/g;
-  var found;
-  while ((found = pattern.exec(shell)) !== null) names.push(found[1]);
-
-  if (!names.length) {
-    throw new Error('page.html includes no partials — the shell is not the shell');
-  }
-
-  var escaped = [];
-  var characters = 0;
-  names.forEach(function (name) {
-    var content = include_(name);
-    characters += content.length;
-    if (content.indexOf('&lt;') !== -1) escaped.push(name);
-  });
-
-  if (escaped.length) {
-    throw new Error(escaped.join(', ') + ' arrived HTML-escaped, so the page is a ' +
-      'syntax error and every screen is blank. include_ must read through ' +
-      'getRawContent(), not through an HtmlOutput.');
-  }
-
-  return names.length + ' partials, ' + characters + ' characters, none escaped';
-}
-
 function writeTestResults_(results) {
   var sheet = sheetOrThrow_(TABS.TESTS);
   var now = new Date();
   appendRows_(sheet, 1, results.map(function (r) {
     return [now, r.suite, r.name, r.result, r.detail];
   }));
-}
-
-// ---------------------------------------------------------------------------
-// The web app
-// ---------------------------------------------------------------------------
-
-/**
- * Who this deployment thinks you are, from the deployment itself.
- *
- * The mobile web app is served from a second deployment of this project with a
- * different access setting, and the owner gate turns entirely on what
- * `Session.getActiveUser().getEmail()` returns *there*. The documentation on
- * that is a maze of caveats — same domain, consumer account, execute-as — and
- * every one of them is a claim about a deployment rather than about code. So
- * this reports what actually happens, and you run it from both URLs.
- *
- * What each door should say:
- *
- *   Door 1 (the consent redirect, access Anyone) — `activeUser` blank when
- *   opened signed out, and `allowed` false. That is the negative test: it is
- *   the URL a stranger could find.
- *
- *   Door 2 (the app, access Only myself) — `activeUser` equal to `owner`, and
- *   `allowed` true.
- *
- * There is deliberately **no query parameter that runs this from a URL**. Such
- * a parameter would have to answer before the gate, to be worth anything from
- * Door 1, and what it answers with includes the owner address. What Door 1
- * gives you instead is the refusal page itself, which is the same finding
- * stated as a behaviour rather than as a report — and the only one an
- * anonymous visitor should ever see.
- */
-function describeWebAppContext() {
-  requireInteractive_();
-  var report = {
-    activeUser: safeEmail_(function () { return Session.getActiveUser().getEmail(); }),
-    effectiveUser: safeEmail_(function () { return Session.getEffectiveUser().getEmail(); }),
-    owner: webAppOwner_(),
-    deploymentUrl: detectedWebAppUrl_(),
-    pinnedRedirectUrl:
-      PropertiesService.getScriptProperties().getProperty(EB_PROP.REDIRECT_URL) || ''
-  };
-
-  report.allowed = webAppAccessDecision_(report.owner, report.activeUser).ok;
-
-  logAnomaly_(ANOMALY_KIND.RAW_DUMP, '', 'web app context', report);
-
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    'Owner: ' + (report.owner || '(none — the app refuses everyone)') +
-    '\nYou: ' + report.activeUser +
-    '\nThis context would ' + (report.allowed ? 'be let in' : 'be refused') +
-    '.\n\nFull detail in _anomalies.', 'Web app access', 30);
-
-  return report;
-}
-
-/** A Session call that answers rather than throws, since a throw is the finding. */
-function safeEmail_(fn) {
-  try {
-    return fn() || '(blank)';
-  } catch (e) {
-    return '(threw: ' + e.message + ')';
-  }
 }
 
 // ---------------------------------------------------------------------------

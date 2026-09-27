@@ -569,11 +569,6 @@ function mergeIntoSurvivors_(sheet, pairs) {
     range.setValues(block.map(function (cells) { return [textSafe_(cells[0])]; }));
   });
 
-  if (filled) {
-    forgetReadCache_();
-    bumpDataVersion_();
-  }
-
   return filled;
 }
 

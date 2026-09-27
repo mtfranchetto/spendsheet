@@ -940,8 +940,8 @@ function txColumnRange_(name) {
  * ## An asset behaves like a wallet, and that is what gives it a history
  *
  * `asset` used to be `balance_manual` alone: whatever number you last typed.
- * That reads correctly and records nothing. `balanceSeries_` reconstructs the
- * net-worth curve by walking transactions backwards from today, so an account
+ * That reads correctly and records nothing. The app's `balanceSeries`
+ * (`web/src/domain/query.ts`) reconstructs the net-worth curve by walking transactions backwards from today, so an account
  * whose value only ever moved by being overwritten contributed a flat line —
  * and the day you typed 14,200 over 12,700, the whole curve shifted by 1,500
  * with no date attached to the change.

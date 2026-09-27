@@ -1,22 +1,18 @@
 /**
- * query.ts — `21_query.gs`, the ledger asked a question, in the browser.
+ * query.ts — the ledger asked a question, in the browser.
  *
- * A port and not a redesign: the same functions under the same names (less the
- * `_`), the same order of tests, the same rounding at the same boundary. The
- * `.gs` carries the reasoning — why `in_reports` is the one gate, why a zero
- * amount is answered by `type`, why the balance trend ignores `in_reports` —
- * and **the parity test is what holds the two together**, deep-comparing every
- * payload over one book. A behaviour changed here without the `.gs` agreeing is
- * a red test, which is the point.
+ * **`tests/parity.test.mjs` holds it to the Apps Script viewer it replaced**,
+ * whose every answer over one book at four awkward instants is recorded in
+ * `tests/parity/`. A behaviour changed here is a red test until the recording
+ * is changed too, and changing it is a decision that the old answer was wrong
+ * — say which field and why.
  *
- * Three differences, all about time:
+ * Three things about time:
  *
- *   - Every date is a **day number** from `dayOf`, never a `Date`. The `.gs`
- *     builds Dates from cells; the API sends serials, and `days.ts` says why
- *     that is the easier case.
- *   - **"Today" is a `Clock`**, the book's calendar, passed in. The `.gs` asks
- *     `new Date()` in five places, which is the script's timezone because that
- *     is where it runs. Here it has to be said.
+ *   - Every date is a **day number** from `dayOf`, never a `Date`. The API
+ *     sends serials, and `days.ts` says why that is the easier case.
+ *   - **"Today" is a `Clock`**, the book's calendar, passed in, because the
+ *     phone's own zone is not the book's.
  *   - Rows carry their own `_day`, computed once in `ledgerOf`, because a sort
  *     over 4,600 rows that re-derives two dates per comparison is the one shape
  *     in this file that would be slow.
@@ -138,6 +134,19 @@ export function windowOut(window: Window) {
 // Filtering
 // ---------------------------------------------------------------------------
 
+/**
+ * Does this row belong in a spending answer for these filters?
+ *
+ * **`in_reports` is the single column that decides what counts as spending.**
+ * Every report asks it and nothing re-derives the answer — that is the whole
+ * reason the column exists, after six dashboard blocks each re-deciding it and
+ * one of them getting it wrong. Read with `isTruthyCell`, because a spilled
+ * formula may hand back text rather than a boolean.
+ *
+ * The label is matched against the split parts rather than as a substring, so
+ * `travel` does not match `business-travel`. `account` is matched on the name
+ * rather than the id, because the name is what the phone offers a list of.
+ */
 export function matchesFilters(row: LedgerRow, filters: Scope): boolean {
   const want = filters || {};
   if (!isTruthyCell(row.in_reports)) return false;
@@ -280,7 +289,18 @@ function filledBuckets(buckets: { [key: string]: Bucket }, window: Window | null
 // The balance trend
 // ---------------------------------------------------------------------------
 
-/** Net worth on each day of the window: today's balance minus what was booked after each day. */
+/**
+ * Net worth on each day of the window: today's balance minus what was booked
+ * after each day.
+ *
+ * **The one function here that does not filter `in_reports`**, deliberately.
+ * A transfer between your own accounts moves a balance, so it belongs in a net
+ * worth series even though it is not spending; a row you excluded from reports
+ * still left your account. Asking net worth the spending question is how the
+ * curve ends up disagreeing with the number above it. And it takes every row
+ * rather than the windowed ones, because the first day of a past window needs
+ * everything booked between that day and today — all of it outside the window.
+ */
 export function balanceSeries(rows: readonly LedgerRow[], window: Window | null, balanceNow: number, clock: Clock) {
   if (!window) return [];
 
@@ -438,6 +458,11 @@ export function matchesRecordFilters(row: LedgerRow, scope: Scope & { window: Wi
     const amount = cellNumber(row.amount_base);
     if (amount === null) return false;
 
+    // Exactly zero has no sign, so it is answered by `type`. A €0.00
+    // pre-authorisation — a card check at a fuel pump — is a real row, and
+    // `0 > 0` and `0 < 0` are both false, so a sign test puts it on neither
+    // side while the row paints and the sheet file it on one. `type` is the
+    // stored answer; a zero row adds zero to whichever side takes it.
     const moneyIn = amount === 0 ? String(row.type) === TX_TYPE.INCOME : amount > 0;
     if (request.spendOnly && moneyIn) return false;
     if (request.incomeOnly && !moneyIn) return false;

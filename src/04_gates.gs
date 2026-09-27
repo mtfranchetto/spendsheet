@@ -8,8 +8,9 @@
  *     the Sheet opened. Decided on the UI context.
  *   `requireScheduled_(e)`  — a time-driven trigger named it. Decided on the
  *     event object.
- *   `requireOwner_()`       — the owner's own page called it. Decided on
- *     identity, against `owner_email` in `_config`.
+ *   `requireOwner_()`       — a dialog's callback, which has no UI of its own,
+ *     reached through `requireInteractive_`. Decided on identity, against
+ *     `owner_email` in `_config`.
  *
  * They live low in the numbering because nearly every file calls them, and
  * everything they need is in `00_config.gs` and `03_sheets.gs`: `_config`,
@@ -127,8 +128,7 @@ function requireOwner_() {
  *
  * ## Why this is not the same gate as `requireOwner_`
  *
- * `google.script.run` reaches **every** public name, not only the ones in
- * `23_api.gs`. That is harmless for a script whose only door is the editor —
+ * `google.script.run` reaches **every** public name. That is harmless for a script whose only door is the editor —
  * a menu item already runs for someone with edit access. It is not harmless
  * here, because Door 1 (the consent redirect) is served to *anyone* by
  * necessity, and the page it serves carries the `google.script.run` bridge. So

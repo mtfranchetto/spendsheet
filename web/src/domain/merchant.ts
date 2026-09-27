@@ -84,7 +84,27 @@ export function suggestionIndex(memory: { [key: string]: MemoryEntry }): Suggest
   return { entries, spread };
 }
 
-/** A guess for a merchant memory has never seen: same first word, rarest shared words, most hits. */
+/**
+ * A guess at a merchant memory has never seen, from the merchants it has.
+ *
+ * **A suggestion, never a verdict.** The cascade still matches a key whole —
+ * `esselunga` and `esselunga torino` are two entries, and nothing here changes
+ * what a row is filed as. It only decides what the picker opens on, and nothing
+ * is written until you confirm; a wrong guess costs picking something else,
+ * which is what an unclassified row cost before.
+ *
+ * **Only a merchant that shares the first word is a candidate.** A key leads
+ * with the merchant's name and ends with its city, and the city is the trap:
+ * `farmacia firenze` and `trattoria firenze` share a word and nothing else.
+ * Weighting by rarity does not save it on a young book — a city that appears in
+ * one key is as rare as a name — so the rule is positional, and conservative: a
+ * merchant whose name does not lead its key gets no suggestion.
+ *
+ * Among the candidates, shared words are scored, each worth less the more keys
+ * it appears in, so `rema kobenhavn` prefers `rema aarhus` to another shop in
+ * Copenhagen. Ties go to the entry with more hits — the one you have confirmed
+ * most.
+ */
 export function suggestCategory(merchantKey: string, index: SuggestionIndex | null): Suggestion | null {
   const key = String(merchantKey || '').trim();
   if (!key || !index) return null;

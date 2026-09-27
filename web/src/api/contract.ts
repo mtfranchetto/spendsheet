@@ -19,7 +19,7 @@ import type { Cell } from '../sheets/records';
 export const CONTRACT = 1;
 export const CONTRACT_HEADER = 'x-spendsheet-contract';
 
-/** One call confirms at most this many rows — `MAX_APP_DECISIONS` in `22_actions.gs`. */
+/** One call confirms at most this many rows. */
 export const MAX_DECISIONS = 100;
 
 /** The destination that means "not an account in this book". */

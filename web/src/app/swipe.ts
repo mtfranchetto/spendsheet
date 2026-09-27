@@ -1,7 +1,7 @@
 /**
  * swipe.ts — swipe a row right to confirm it, press and hold for a rule.
  *
- * From `page.records.html` and `page.sheet.html`, with their numbers:
+ * The numbers, and why:
  *
  * - **The threshold is a quarter of the row, between 60 and 96 pixels** — far
  *   enough that scrolling past a row never confirms it, near enough that a

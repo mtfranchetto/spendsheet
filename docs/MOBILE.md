@@ -2,7 +2,7 @@
 
 The Google Sheets mobile app is where this book actually gets used, and it is bad at it — not because of the layout, which has already been reworked for a phone once, but because it is a general-purpose grid renderer that has to open 4,600 rows and fifty array formulas before it can show you anything.
 
-So the Sheet stays the datastore and gains a second front door: a web app served from the same Apps Script project. Same data, same tabs, same everything — it is a different way in, not a different system. Nothing is duplicated and nothing new is stored.
+So the Sheet stays the datastore and gains a second front door: a small web app on Cloudflare that signs you in with Google and reads the book with your own grant, limited by `drive.file` to that one file. Same data, same tabs — it is a different way in, not a different system. Setting it up, signing in and sharing it are in [`web/README.md`](../web/README.md).
 
 It gives you three screens and two forms:
 
@@ -14,7 +14,7 @@ It gives you three screens and two forms:
 | **Add transaction** | a cash transaction, landing straight away. Reached from a cash tile |
 | **Update balance** | an asset account's new total. Reached from an asset tile |
 
-Everything it writes goes to `transactions` and `cash_entry`, into the same columns the `review` tab and the cash form already write to and no others. There is no storage of its own anywhere in it.
+Everything it writes goes to `transactions` and `rules`, into the same columns the `review` tab and the cash form already write to and no others. The only thing it keeps is the last read of the book, on the phone, so the screen draws before the next read lands.
 
 ---
 
@@ -50,7 +50,7 @@ The sheet that opens asks **what the row is** before it asks what to file it und
 - **Not on a transfer.** The Transfer tab offers no labels, and the server refuses them there. A label is the axis a category cannot express — `travel` spanning a flight, a hotel and forty euros of coffee — and a transfer is the same money in two places, counted in neither direction. Labelling one builds a filter that can never match what you set it to find. Labels already on such a row are left alone.
 - **The amount** is editable on **cash you typed**, and nothing else. A bank's figure is the bank's; an imported row's amount is half of what pairs it with its synced twin; and a row already paired in a transfer has a partner holding the same number, so changing one side alone leaves a move that no longer nets to zero. The field holds the **size**: how much, not which way. The direction was decided when you made the entry — a bare number is spending, an Income or Transfer category flips it — and correcting a digit does not revisit that, or `-50` of cash paid into a bank would turn itself into a deposit. A row going the wrong way is deleted and added again. Typing a minus is refused rather than obeyed or quietly dropped.
 - **The description** is editable on rows you own — cash you typed, a leg this project wrote, anything imported — and read-only on rows a bank sent. The field simply is not there on the second kind, which is worth knowing so its absence reads as a rule rather than a bug. A bank's description is part of what *identifies* the transaction: when the bank sends no immutable reference, the row's id is a hash that includes it, so rewriting one could stop a later sync recognising something already in the book and quietly append a duplicate.
-- **Long-press** a row instead, and you get a rule built from it — pattern, match type, category, priority, all editable before saving. The pattern comes from the server's own merchant normaliser, not a second copy of it in the page.
+- **Long-press** a row instead, and you get a rule built from it — pattern, match type, category, priority, all editable before saving. The pattern comes from the same merchant normaliser the categoriser uses; the app's copy is held to the sheet's by a test.
 - **Delete** is at the bottom of the sheet, and only on **cash you typed**. It takes two taps — the first arms it and nothing reverts it but closing the sheet — and the row is copied to the `_removed` tab before it goes, so "gone" is recoverable by hand.
 - **Swipe right** to confirm without opening anything. Left does nothing, deliberately: almost every row is one the bank sent and cannot be deleted, and a gesture that does nothing on almost every row teaches you it is broken.
 - **Tap outside** the sheet to close it, or the ✕ in its corner.
@@ -101,13 +101,11 @@ Home draws net worth for the last thirty days, directly under the figure it ends
 
 The scale down the right-hand side is not decoration. The line is drawn between its own high and low rather than from zero, so without it a balance that drifted two per cent would draw exactly the same climb as one that doubled.
 
-It arrives with the lower half of the screen, a moment after the total and the tiles: a trend is every row in the book, and the top of the dashboard is deliberately the half that reads none.
-
 ### Filters
 
 **Period** — this week, this month, last month, **a month**, year to date, last 12 months, one entry per year that has data, or a custom range. The year list is built from your ledger, so it holds no year you have nothing in.
 
-Records opens on **year to date** and Charts on **this month**. Both are the server's answer rather than the page's — `appDefaultFilters_` — so there is one place they are decided. Records is the screen you go to *to find something*, and "this year" is a period you already have an opinion about, where a trailing twelve months is a window that moves under you.
+Records opens on **year to date** and Charts on **this month**. Both come from `appDefaultFilters` in `web/src/domain/payloads.ts`, so there is one place they are decided. Records is the screen you go to *to find something*, and "this year" is a period you already have an opinion about, where a trailing twelve months is a window that moves under you.
 
 Picking *A month* puts a row of month chips under the dropdown, and that split is deliberate: a month is a year *and* a month, so spelling out the pairs would mean scrolling a wheel past a hundred entries to reach March. Only months that have started are offered, for the same reason the year list skips a year with nothing in it — a window that is empty by construction looks exactly like a filter that is broken.
 
@@ -126,11 +124,12 @@ The list you land on is the rows the number was computed from, not merely the sa
 Records shows what was carried across as chips above the list — **Money out** or **Money in**, the category, the subcategory — and each one clears on tap. Clearing the category clears the subcategory with it, because a subcategory on its own does not name one group: `(uncategorised)` is a bucket every category has.
 
 The period, accounts and label come across from Charts as they were set. Search and *needs review* are cleared, since either would narrow the list below the number that opened it.
+
 ### The URL remembers what you were looking at
 
 The address bar is rewritten every time you change screen or change a filter, so a **refresh brings back exactly what was on screen** — the tab, the period, the accounts, the label, the search text and the review toggle.
 
-That makes it a bookmark rather than only a recovery. `…/exec?v=records&p=year:2024&a=Revolut&u=1` is "everything from Revolut in 2024 that still needs a review", and it is short enough to edit by hand:
+That makes it a bookmark rather than only a recovery. `/?v=records&p=year:2024&a=Revolut&u=1` is "everything from Revolut in 2024 that still needs a review", and it is short enough to edit by hand:
 
 | | |
 |---|---|
@@ -146,7 +145,7 @@ Only what differs from the default is written, so a fresh open stays at a bare `
 
 The two screens reached from an account tile — adding cash, updating a balance — are deliberately **not** in the URL. They carry the account you tapped, which a bookmark cannot, so a refresh from either lands back on the screen you opened it from.
 
-A **drill** is not in the URL either, for a different reason: it is three more filters, and carrying them means a matching mirror in the server's parser and a category name validated against a list. So a refresh after tapping a number comes back to Records without the drill — the chips go with it, so nothing on screen claims a narrowing that is no longer applied.
+A **drill** is not in the URL either, for a different reason: it is three more filters, and carrying them means a category name validated against a list on the way back in. So a refresh after tapping a number comes back to Records without the drill — the chips go with it, so nothing on screen claims a narrowing that is no longer applied.
 
 ### Pending
 
@@ -158,121 +157,13 @@ They ignore the date filter as long as it **reaches the present** — a hold's d
 
 ### Pull to refresh
 
-Drag down on Home. This is the one gesture that drops the ledger cache explicitly, which makes it the answer for an edit nothing else saw — typing straight into the `transactions` tab from a laptop, say.
+Drag down on Home to read the book again now. Every open reads it anyway — the copy the phone kept is drawn first, under *Last updated …*, and replaced when the read lands — so pulling is for an edit made elsewhere a moment ago: typing straight into the `transactions` tab from a laptop, say.
 
 The indicator inverts and its arrow turns over once you have pulled far enough, so "release to refresh" is a state you can see without reading it — which matters, because your thumb is over the words.
 
-**Nothing else drops the cache**, and that is the fix for the connection errors. Every write used to route through the same call, so confirming a transaction threw away the whole compacted ledger and rebuilt it from the sheet — and confirming three in a row queued three of those behind each other until the browser's bridge gave up with *"http connection failure 0"*. A write does not need it: writing bumps a version counter the cache is keyed on, which invalidates it without asking.
-
-## Two deployments, and getting them the wrong way round is the mistake that matters
-
-A Sheet has exactly one bound script, so there is one project and one `doGet`. What Apps Script does allow is **many deployments of that project**, each with its own URL and its own access setting. There are two, and they are not interchangeable:
-
-| | Door 1 — the consent redirect | Door 2 — the app |
-|---|---|---|
-| URL | the one already registered with Enable Banking | new, and private |
-| Who has access | **Anyone** | **Only myself** |
-| Execute as | Me | Me |
-| What it is for | the bank's redirect after SCA | the four screens above |
-
-**Door 1 has to stay anonymous.** PSD2 consent often completes inside the bank's own webview, which carries no Google session. A login wall there kills the callback and the authorisation code expires while you are looking at a sign-in page.
-
-**Door 2 has to be locked.** It renders your balances.
-
-Both doors run the same `doGet`, which is the only reason there is a lock in the code at all: without it, an anonymous visitor to Door 1 would be served the app. See "the owner gate" below.
-
-### Creating Door 2
-
-In the Apps Script editor:
-
-> **Deploy → New deployment → Web app**
-> Description: `app`
-> Execute as: **Me**
-> Who has access: **Only myself**
-> **Deploy**
-
-Copy the `/exec` URL it gives you. That is the app.
-
-**Do not touch the existing deployment.** *New deployment* mints a fresh URL, which is what you want here and is exactly what you must not do to Door 1 — the redirect URL registered with Enable Banking is a specific URL, and replacing it means re-registering it there.
-
-### Putting it on the home screen
-
-It is a normal URL, so:
-
-- **iOS, Safari** — Share → *Add to Home Screen*.
-- **Android, Chrome** — ⋮ → *Add to Home screen*.
-
-It then opens without browser chrome and looks like an app. There is no service worker and **no offline mode**, and the cache described below does not make one: it lets the first screen draw from the last answers instead of from a spinner, and every number on it is still confirmed by a round trip that has to succeed. Underground you get last time's figures with the refresh strip stuck at the top, and typing a cash entry will fail and say so — the Sheets `cash_entry` tab is still the thing that works offline.
-
-**The icon opens cold every time, and Safari does not.** That is the platform rather than the app. The page runs on a `googleusercontent.com` origin inside `script.google.com`, which makes its storage third-party — and WebKit keeps third-party storage in memory instead of writing it to disk. That is the part worth being precise about, because the natural guess is wrong: the icon does open the same container every time, and it makes no difference, because nothing was ever saved for the next launch to find. In-memory storage goes away with the app. Safari is an app you almost never quit, so the cache below works there; a Home Screen web clip is a separate app that iOS quits whenever it needs the memory. There is no setting for it and no way to ask: the Storage Access API grants cookies, not storage that lasts, and a service worker would have to come from an origin this project does not own. **Open it from Safari for the instant screen; open it from the icon for the app-like window.** Checked on the phone rather than reasoned about: the screen survives reloads in Safari and is cold again after Safari is force-quit from the app switcher. Safari was never saving it either — it is just an app you never quit.
-
-### The icon
-
-`_config` has a **`favicon_url`** row, and it ships pointing at this project's icon on GitHub. It should need nothing from you.
-
-Three things about it are worth knowing, because all three fail silently:
-
-- **Google fetches that URL from its own servers, anonymously.** So it has to be publicly reachable over HTTPS, with no sign-in. A private GitHub repo answers a raw URL with a 404; a Drive file left un-shared answers with an HTML sign-in page. Neither is an image, neither reports an error anywhere, and both look exactly like the setting having no effect.
-- **It is the browser tab, not necessarily the home screen.** iOS reads `apple-touch-icon` from the *top-level* document, and for an `/exec` URL that document is Google's wrapper, not ours.
-- **A `<link rel="icon">` in `page.html` would do nothing.** The page renders inside Apps Script's sandboxed iframe, so it would be setting the icon of a document nobody sees. `HtmlOutput.setFaviconUrl` is the only lever, and `20_webapp.gs` pulls it.
-
-To use your own: put it anywhere public over HTTPS and paste the URL into the cell. Anything that is not `https://` is refused rather than passed through — a `data:` URI is rejected by Google anyway, and a cell that ends up in a served document is checked by whitelist here rather than by escaping. **Clearing the cell turns the icon off**; it does not fall back to the default.
-
-A book set up before this shipped has the row but blank, because `setup()` only ever *adds* seed rows and never rewrites one you already have. **Spendsheet → Set up and maintain → Update mappings to defaults** is what fills it — it will list the row and ask before changing anything.
-
-## The owner gate
-
-Because both doors run the same code, the app branch checks who is asking:
-
-- `_config` has an **`owner_email`** row. **Spendsheet → Set up and maintain → Setup sheet** fills it in with whoever ran it, once, and never overwrites it afterwards.
-- Every request compares that against `Session.getActiveUser().getEmail()`.
-- **It fails closed.** No owner configured, no active user, a mismatch, or the runtime throwing while being asked — all four are a refusal.
-
-The refusal page says only *"This page is not available."* That is deliberate: Door 1 is public, and a message that distinguished "wrong account" from "no owner configured" would be a probing oracle for anyone who found the URL. It tells you nothing you cannot work out from being signed in as the wrong account.
-
-The same check runs again on every function the page calls. Google has already refused everyone else at Door 2, and the gate has already refused them at the door — the third check costs one cell read and means "you can only get here if you were served the page" is a property of one line rather than of the whole system.
-
-**To move the app to a different Google account**, edit `owner_email` in `_config` and re-share the Sheet. Nothing else knows about it.
-
-## Checking it works
-
-Two checks, and the second one is the one people skip.
-
-**Door 2 should let you in.** Open the URL. You should get the four screens. If you get *"This page is not available"*, you are signed in as a different Google account — switch and reload. If you get it while signed in as the right account, run **Spendsheet → Diagnostics → Check web app access** from the Sheet: it reports the owner address, who Google says you are, and whether that combination would be let in.
-
-**Door 1 should refuse.** Open the *consent redirect* URL in a private window, with no parameters on it. You should get the refusal page. If you get the app, Door 1 is not anonymous or the owner gate is not doing its job — and an anonymous URL serving your balances is the one failure in this whole document that matters.
-
-**And if a redeploy leaves the app on its `Loading…`**, run **Spendsheet → Diagnostics → Run smoke tests**: *the page arrives as JavaScript* is the check for it. The page is assembled by Google out of a dozen files this project only hands over, so a partial that arrives HTML-escaped is a syntax error in the whole script and a screen that never draws — and it is invisible to every test that runs off the files themselves.
-
-## What it costs to run
-
-Nothing, and it stays nothing. Apps Script meters *runtime*, not rows, and there is no per-read quota on `SpreadsheetApp`. Every screen is one call that reads `transactions` once and aggregates in memory, so the response is the size of the answer rather than the size of the book — a few kilobytes whether you have four thousand rows or forty.
-
-### Why it is as fast as it is
-
-Three caches, and none was written on a guess — each exists because a measurement said so, and two of the measurements are menu items you can re-run.
-
-**The ledger cache.** `transactions` is read once, serialised, and kept in `CacheService` for six hours; every screen after the first is a fetch of a few hundred milliseconds rather than a four-second read. It is keyed on a counter that every write bumps — the sync, the app, and typing into the tab yourself — so a change invalidates it immediately rather than waiting out the clock. Pull-to-refresh on the dashboard drops it explicitly, which is the answer for the rare edit no trigger sees.
-
-**Reads shared within one request.** Drawing the first screen used to make **35 spreadsheet round trips** over about **seven distinct tabs**: `_config` eight times, `accounts` four, `_status` and `_runs` twice each — every function fetching for itself what the one before it had already read. They are now shared for the length of a request. It is deliberately off outside the app, because `setup()` and the sync write a cell and read it back, and a cache that survives that is a wrong answer rather than a fast one.
-
-Between them, and with the health check no longer scanning 4,615 rows to count them, the server's work on the first screen went from ~6.2 seconds to ~2.8 with the cache warm.
-
-**The phone's own copy of the last answers.** Server time was never the larger half. Profiled from outside the sandboxed iframe, the `/exec` document alone is ~2,400ms of Apps Script spinning up a container, and every `google.script.run` call adds ~2,700ms of fixed overhead before a line of our code runs — so a ~6 second open is under a second of this project and the rest of Google. There is no round trip left to remove, so the app stopped waiting for them: it keeps the last `appOpen` and `appOverview` answers, and the last few Records and Charts slices, in `localStorage`, and draws them the moment the page parses.
-
-Both calls still go out, every time. What the cache removes is the wait in front of them, not the calls — a screen drawn from storage and left there would be a screen that is never right again. While they are out, a strip at the top says **Last updated *n* hours ago**, and it comes down when both have landed and replaced what they drew over.
-
-**Pull-to-refresh uses that same strip.** The pill that follows your finger is the affordance for the drag; the moment you let go it goes and the strip takes over, saying *Refreshing* until the answer actually lands. It still means "I do not believe this", and it is still the only thing that makes the server drop its ledger cache and go and look.
-
-**A dropped connection is not a refusal.** If a call fails on the way out — a lift, a queued execution — the screen keeps what it drew, says so, and the stored copy is left alone. Only the owner gate refusing deletes it.
-
-Three consequences worth knowing. The **first open after clearing Safari's storage is slower than it used to be** — nothing to draw, and the document no longer carries the top of the dashboard — which is the price of every open after it starting at ~2,400ms. **Signing in as a different Google account wipes the stored copy**: the owner gate refusing is what deletes it, so those balances cannot come back on a reload. And **it is Safari's copy, not the phone's** — the page's storage is third-party and therefore session-scoped, so a Home Screen web clip, which iOS gives its own short-lived session, opens cold every time. The Home Screen section above has the mechanism and the one gesture that confirms it.
-
-**Spendsheet → Diagnostics → Time the app dashboard** breaks the whole screen down part by part, and **Time a web app query** does the same for one ledger read. Both report every part *inside a single run* — a spreadsheet read on the same book has been seen to take anywhere from 2.0 to 9.4 seconds within one hour, so a number from today compared against one from yesterday proves nothing at all. Divide any part by `configMs` to get its cost in round trips, which is the unit that actually stays still.
-
 ## What it deliberately does not do
 
-**It cannot trigger a sync.** A sync takes minutes and would exceed a web request; doing it properly means firing a one-off trigger and polling for it. Worth doing later, and not worth blocking this on. The nightly sync is what keeps the app current.
+**It cannot trigger a sync.** A sync takes minutes and belongs to the Apps Script project, which runs it nightly. The app reads what the sync has written.
 
 **It cannot refill the `review` tab or rebuild charts.** Both need a run. The app does not need the `review` tab — it reads the backlog live off `transactions`, so confirming a row on the phone removes it from the list immediately rather than at the next sync.
 
@@ -280,12 +171,8 @@ Three consequences worth knowing. The **first open after clearing Safari's stora
 
 **A new rule does not recategorise what is already there.** The cascade runs on sync, and a confirmed row keeps whatever it was confirmed with. The toast says so, because otherwise the feature reads as broken: you make a rule for a merchant you have seen ten times, go back, and all ten are exactly as they were.
 
-**It cannot remove the Google banner** — *"This application was created by another user, not by Google"*. That bar is drawn by Google's own wrapper document at `script.google.com`; the page runs in a sandboxed iframe on a different origin, so no code in this project can reach it and `HtmlService` exposes no option to suppress it. Two dead ends worth naming so nobody rediscovers them: a proxy that strips it also breaks `google.script.run`, which talks to its parent by `postMessage` and needs the Google origin, and *Add to Home Screen* removes Safari's chrome, not Google's.
+## Where the numbers come from
 
-## Why the page holds so little
+Every number is computed on the phone, in `web/src/domain/`, from one read of the book. Two things keep that honest. **`tests/parity.test.mjs`** holds every screen's answer to the recorded answers of the Apps Script viewer this app replaced, over one book at four awkward instants — a clock change, a new year, a Saturday night, the 31st. And the **`reports` tab** computes the same aggregates independently, in formulas: two implementations that agree is the only evidence the numbers are right.
 
-`src/page.html` is the one file the test harness cannot load: the tests run the `.gs` files through `node:vm`, and nothing inside an HTML file reaches that.
-
-That is not a gap being worked around — it is the reason the aggregation lives on the server at all. Every number the app shows is computed in `21_query.gs`, which is covered; what is left in the page is drawing. The two things a *file* test can still prove about it are that no string is ever assigned as markup, and that every server function the page calls by name exists.
-
-The seam is enforced rather than remembered. Everything in `21_query.gs` (reads) and `22_actions.gs` (writes) ends in `_`, which Apps Script treats as private to `google.script.run`; `23_api.gs` is the entire surface a browser can reach, and every entry point in it checks the owner. A test reads that file and derives the list, so an entry point added later without the guard fails CI rather than shipping.
+Every write goes through the Worker as one of five named actions (`web/worker/actions.ts`), each re-asking its rules of the row as Google holds it rather than as the page last saw it — because a page can send anything.

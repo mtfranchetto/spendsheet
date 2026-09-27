@@ -1,13 +1,13 @@
 /**
- * actions.ts — the five things the page may write, each with the checks
- * `22_actions.gs` carries, and nothing else.
+ * actions.ts — the five things the page may write, each checked against the
+ * row as Google holds it, and nothing else.
  *
  * ## Named actions, never a pass-through
  *
  * The read route hands Google's body back unread; a write route cannot. A raw
  * `values.update` carrying the owner's token cannot tell a confirmation from
  * an overwrite of history, so every write here is one of five named actions,
- * each re-asking what `22_actions.gs` asks — whether a description is the
+ * each asking what the `.gs` writers ask — whether a description is the
  * bank's, whether an amount has a partner holding the same figure, whether a
  * row is cash you typed — against **the row as Google holds it now**, not as
  * the page says it is. The page decides what to offer; this decides what is
@@ -217,7 +217,7 @@ function activeAccount(values: Cell[][] | undefined, name: string): Row | null {
 }
 
 // ---------------------------------------------------------------------------
-// Rules carried over from 22_actions.gs and 10_cash.gs
+// Rules shared with 10_cash.gs and the review tab
 // ---------------------------------------------------------------------------
 
 /** `editedAmount_`: how much, never which way — the stored sign is kept. */

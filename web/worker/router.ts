@@ -32,7 +32,7 @@
  * so it is never an open proxy to Google carrying your token.
  *
  * Writes are `POST /api/act/<name>`, one of the five in `actions.ts`, each
- * carrying `22_actions.gs`'s checks; a raw write pass-through could not tell a
+ * re-asking its checks of the row as Google holds it; a raw write pass-through could not tell a
  * confirmation from an overwrite of history. A write must also carry the
  * contract version the page was built against (`src/api/contract.ts`), and any
  * other number is a 409 before anything is read: a page older than this

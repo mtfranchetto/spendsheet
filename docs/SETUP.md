@@ -73,9 +73,9 @@ Copy the `/exec` URL. This is what makes the whole thing serverless: your bank n
 >
 > So the move that satisfies both is **Manage deployments → edit (pencil) → Version: New version → Deploy**. Same URL, current code. Reach for *New deployment* only the first time.
 >
-> If you took the `clasp` path, `npm run deploy` is that move for both deployments at once, and checks afterwards that neither changed hands: [`docs/DEPLOY.md`](DEPLOY.md).
+> If you took the `clasp` path, `npm run deploy` is that move, and checks afterwards that the deployment is still open to anyone: [`docs/DEPLOY.md`](DEPLOY.md).
 >
-> If you're ever unsure which URL is live, open **Spendsheet → Set up and maintain → Install credentials**. It shows a **Redirect URL** field, pre-filled with what the runtime reports — and that is a starting guess rather than an answer. `ScriptApp.getService().getUrl()` answers for the context it is *called from*, so run from a menu it returns the HEAD deployment, which is neither of the two real doors. Check it against **Deploy → Manage deployments** before you paste it into Enable Banking; what you save in that field is what `startAuth()` sends, so it is also the fix if the two ever disagree.
+> If you're ever unsure which URL is live, open **Spendsheet → Set up and maintain → Install credentials**. It shows a **Redirect URL** field, pre-filled with what the runtime reports — and that is a starting guess rather than an answer. `ScriptApp.getService().getUrl()` answers for the context it is *called from*, so run from a menu it returns the HEAD deployment, which is not the one you deployed. Check it against **Deploy → Manage deployments** before you paste it into Enable Banking; what you save in that field is what `startAuth()` sends, so it is also the fix if the two ever disagree.
 
 ### 5. Register a sandbox application
 
@@ -134,7 +134,7 @@ Everything above gets transactions arriving. These are the three things worth do
 
 **Bring your history.** **File → Import** your old export into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import → Import staged rows**. Do this *before* letting the cascade loose: imported rows arrive confirmed, so **Learn from corrections** turns five years of your own categorisations into the lookup table everything else uses. PSD2 only gives you a rolling ~90 days, so this is the difference between categorisation working on day one and working in six months. ([`docs/IMPORT.md`](IMPORT.md))
 
-**Put it on your phone.** A *second* deployment, with access **Only myself** — a different URL from the one in step 4, and the one place in this whole setup where getting a dropdown wrong exposes your balances to anyone with the link. ([`docs/MOBILE.md`](MOBILE.md), which is also where the owner gate and `owner_email` are explained. To share it with someone, [`docs/SHARING.md`](SHARING.md).)
+**Put it on your phone.** A small Cloudflare Worker that signs you in with Google and reads the book with your own grant — three commands and a Google Cloud console visit, in [`web/README.md`](../web/README.md). Paste its address into `_config` → `viewer_url` and **Spendsheet → Open the app** opens it. What every screen does is in [`docs/MOBILE.md`](MOBILE.md); to share it with someone, [`docs/SHARING.md`](SHARING.md).
 
 **Turn on the schedule.** **Spendsheet → Set up and maintain → Install triggers** — a nightly rebuild of what memory has learned from your corrections, a daily sync and a daily self-check, running on Google's infrastructure whether or not the Sheet is open. It is idempotent, so re-running it is always safe. ([`docs/MONITORING.md`](MONITORING.md))
 

@@ -1,9 +1,8 @@
 /**
  * format.ts — numbers and dates as the screens print them.
  *
- * Carried over from `page.core.html` unchanged in behaviour, and pure, so the
- * rules that were argued there are held by a test here rather than by a
- * browser: the grouping separator that must not come and go with magnitude,
+ * Pure, so its rules are held by a test rather than by a browser: the
+ * grouping separator that must not come and go with magnitude,
  * the year that is almost never the question, and an age worded to be doubted.
  */
 

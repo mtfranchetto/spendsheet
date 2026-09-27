@@ -1,8 +1,8 @@
 /**
  * Charts.tsx — the hand-drawn charts, as components.
  *
- * `page.charts.html` and the thumbnails from `page.analytics.html`, drawn
- * from `geometry.ts`. No library: a third-party script in the one page that
+ * The full charts and the Charts screen's thumbnails, drawn from
+ * `geometry.ts`. No library: a third-party script in the one page that
  * renders bank balances is not worth what it saves, and the drawing is small.
  * The reasoning behind each choice — the scale in a gutter, the marks spaced
  * by priority, the zero line that moves — is argued in `geometry.ts`.

@@ -1,15 +1,13 @@
 /**
  * Dashboard.tsx — Home: net worth, the accounts, the month, and what needs you.
  *
- * `page.dashboard.html`, in the same order and for the same reasons, which
- * that file argues at length: summary then detail, holds last because they
- * are a footnote, and a month compared with the same point of last month
- * rather than with all of it.
+ * Summary then detail; holds last, because they are a footnote; and a month
+ * compared with the same point of last month rather than with all of it,
+ * because a month half over always looks cheaper than a whole one. The long
+ * form of each is in `git log -- src/page.dashboard.html`.
  *
- * What is gone is the split into two halves. The Apps Script page drew the
- * top from one call and the ledger half from another, with a spinner between
- * them; here both halves come from the same book, which is either on the
- * phone or not.
+ * Both halves come from the same book, which is either on the phone or not,
+ * so there is no moment where the top is drawn and the ledger half is not.
  */
 
 import { For, Show } from 'solid-js';

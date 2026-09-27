@@ -1,14 +1,13 @@
-# web — the Spendsheet viewer, off Apps Script
+# web — the Spendsheet viewer
 
 A static Solid app and one small Cloudflare Worker in front of three paths. The
 Sheet stays the datastore; the Worker reads it with **your own** Google grant,
-limited by `drive.file` to the one book. **Door 2 is untouched and is still the
-app in daily use** until the cutover.
+limited by `drive.file` to the one book.
 
 It signs in, connects the book, reads the whole of it in one call, and draws
-the Apps Script viewer's three screens — Home, Records and Charts — from that
-read, on the phone. Read-only so far: confirming, categorising and adding cash
-arrive with the writes.
+three screens — Home, Records and Charts — from that read, on the phone. Five
+named writes go back through the Worker: confirming and categorising, marking a
+transfer, a rule, cash and asset values, and deleting cash you typed.
 
 ## Layout
 
@@ -23,16 +22,16 @@ arrive with the writes.
 | `wrangler.jsonc` | static assets from `dist/`; only `/api/*`, `/auth/*` and `/connect` reach the Worker. |
 | `public/_headers` | the CSP for every static file, which the Worker never sees. |
 | `src/sheets/records.ts` | Sheets API values → `readRecords_`-shaped records: padded rows, counted by the key column. |
-| `src/domain/` | the book, asked a question, on the phone: `21_query.gs`, `23_api.gs`'s own logic, `runChecks_` and `normalizeMerchant` in TypeScript, over day numbers and the book's clock. Framework-free. `payloads.ts` answers what the Apps Script viewer's five calls answered, in the same shapes. |
+| `src/domain/` | the book, asked a question, on the phone: aggregation, `runChecks_` and `normalizeMerchant` in TypeScript, over day numbers and the book's clock. Framework-free. `payloads.ts` answers in the shapes of the Apps Script viewer's five calls, which `tests/parity.test.mjs` holds it to. |
 | `src/store/copy.ts` | the last `batchGet`, in IndexedDB, for the account that read it. |
 | `public/sw.js` | the shell from this device's cache, before the network is asked anything. Never `/api`, `/auth` or `/connect`. |
 | `src/api/client.ts` | asking the Worker something, and telling a refusal from a dropped connection from a book out of reach. |
 | `src/app/state.ts` | who is signed in, the book on screen, and every screen as a memo over it. Draws the stored copy, reads anyway, and forgets on sign-out or refusal — with a latch so a read in flight cannot undo the forget. |
-| `src/app/view.ts` | the screen and its filters as a URL and back, with the Apps Script viewer's parameter names. |
-| `src/app/*.tsx` | the screens, charts, rows and filter bar, ported from `src/page.*.html`. Text only through bindings. |
+| `src/app/view.ts` | the screen and its filters as a URL and back. |
+| `src/app/*.tsx` | the screens, charts, rows and filter bar. Text only through bindings. |
 | `src/app/format.ts`, `geometry.ts` | money and dates as printed, and the arithmetic under the charts. Pure, and tested. |
 | `src/app/pull.ts` | pull to refresh. |
-| `worker/actions.ts` | the five writes — confirm, transfer, rule, cash, delete — each with `22_actions.gs`'s checks, re-asked of the row as Google holds it. RAW at explicit addresses; the rows touched read back. |
+| `worker/actions.ts` | the five writes — confirm, transfer, rule, cash, delete — each with its checks re-asked of the row as Google holds it. RAW at explicit addresses; the rows touched read back. |
 | `src/api/contract.ts` | the write shapes, shared by page and Worker, and the version a stale page is reloaded over. |
 | `src/domain/transfer.ts` | which row on another bank is the other half of a move; the page finds it, the Worker checks it. |
 | `src/app/writes.ts` | the writes from the page: one lane, rows named when a write leaves, swipes batched, the guess laid over the book until the answer lands. |
@@ -144,11 +143,11 @@ someone ends their session on their next request.
 Only the phone can answer these, from the Home Screen icon. Desktop WebKit was
 the vantage point that misled the last storage conclusion.
 
-**The screens**, side by side with the Apps Script viewer on the phone:
+**The screens**:
 
 | | expected |
 |---|---|
-| Home, Records, Charts | the same numbers as the old viewer, drawn the same way |
+| Charts, a period against the `reports` tab over the same period | the same totals — two implementations that agree |
 | Force-quit the icon and reopen it | the last copy draws as soon as the account answers, under *Last updated …*, then the strip goes |
 | Airplane mode, then open the icon | the last copy draws, with *This is the last copy this phone kept* — not *Could not reach the server* |
 | Pull down at the top | *Refreshing*, then the strip goes |

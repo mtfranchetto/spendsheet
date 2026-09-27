@@ -1,8 +1,7 @@
 /**
  * geometry.ts — the arithmetic under the hand-drawn charts.
  *
- * Carried over from `page.charts.html` and split from the drawing so it can
- * be tested: every chart is a 100×40 viewBox stretched to its card with
+ * Split from the drawing so it can be tested: every chart is a 100×40 viewBox stretched to its card with
  * `preserveAspectRatio="none"`, and the scale beside it is HTML positioned
  * through the one conversion stated here, because a glyph in a stretched SVG
  * is stretched by different amounts on each axis.

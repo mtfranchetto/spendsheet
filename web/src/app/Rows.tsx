@@ -1,8 +1,7 @@
 /**
  * Rows.tsx — a transaction, a hold, and a category's bar.
  *
- * From `page.records.html` and `page.charts.html`. A transaction is a
- * button: tap it for its details, swipe it right to confirm it, hold it to
+ * A transaction is a button: tap it for its details, swipe it right to confirm it, hold it to
  * make a rule from it. A hold is not a button at all — there is nothing to do
  * to a transaction the bank has not settled, and a control that does nothing
  * is a promise the row cannot keep.

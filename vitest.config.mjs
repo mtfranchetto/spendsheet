@@ -12,7 +12,7 @@
  * Excluded by directory rather than by filename, because a name protects one
  * file and a directory protects whatever anyone puts in it later.
  *
- * `tests/e2e` runs under `npm run test:e2e`. See `playwright.config.mjs`.
+ * `web/e2e` runs under `npm run test:e2e`. See `playwright.config.mjs`.
  */
 
 import { defineConfig, configDefaults } from 'vitest/config';
@@ -23,6 +23,6 @@ export default defineConfig({
     // all, so a run from the root collects every suite in every worktree — a
     // green total that counts a copy of the code nobody is working on, and one
     // that goes red for a branch that was abandoned mid-edit.
-    exclude: [...configDefaults.exclude, 'tests/e2e/**', 'web/e2e/**', '.claude/**']
+    exclude: [...configDefaults.exclude, 'web/e2e/**', '.claude/**']
   }
 });

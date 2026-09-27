@@ -157,7 +157,7 @@ const derived = createRoot(() => {
   );
 
   // Everything "Load more" has shown, in one pass: the first `recordsShown`
-  // rows of the same sort the `.gs` paged through, so each page the parity
+  // rows of the same sort the old viewer paged through, so each page the parity
   // test holds is a slice of this list.
   const records = createMemo(
     () => {

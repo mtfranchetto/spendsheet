@@ -1,7 +1,7 @@
 /**
  * Analytics.tsx — Charts: four answers with their shapes, then the charts.
  *
- * `renderAnalytics` from `page.analytics.html`. Two of the stat cards open the
+ * Two of the stat cards open the
  * rows behind them and two do not: Spending and Income are each a total over
  * rows of one sign, so the list adds up to the figure; Balance is a position
  * and Cash flow a net, and a list behind either would sum to neither.

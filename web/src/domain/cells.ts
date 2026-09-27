@@ -1,9 +1,9 @@
 /**
  * cells.ts — what a cell means, before anything adds it up.
  *
- * The same four rules as `03_sheets.gs` and `21_query.gs`, and for the same
- * reasons, which are written there at length: an empty cell is not zero, and a
- * `yes` typed into a checkbox column is a yes.
+ * The same rules as `03_sheets.gs`, for the same reasons: an empty cell is not
+ * zero — `Number('')` is 0 and passes every finiteness check — and a `yes`
+ * typed into a checkbox column is a yes.
  */
 
 import type { Cell } from '../sheets/records';

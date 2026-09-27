@@ -9,13 +9,12 @@
  *
  *   day number = floor(serial − 25569)
  *
- * is exactly `21_query.gs`'s `dayNumber_` (whole days since 1970-01-01 in
- * local terms), and the fraction is the time of day on that clock. **Floor, not
+ * is whole days since 1970-01-01 in local terms, and the fraction is the time of day on that clock. **Floor, not
  * round**: existing booking dates carry fractions (a UTC midnight written into
  * a Rome book reads as 02:00), and rounding would move every one of those
  * that fell after noon into the next day.
  *
- * `toDate_` in the `.gs` would read `45678` as 45 seconds after the epoch, so
+ * `new Date(45678)` is 45 seconds after the epoch, not a day in 2025, so
  * nothing here goes through `Date` on the way in.
  *
  * ## Whose today
@@ -129,8 +128,8 @@ export function dayOf(value: Cell | undefined, timeZone: string): number | null 
 /**
  * `HH:mm`, or blank when the cell knows only its day.
  *
- * Midnight exactly reads as no time — the `.gs`'s `timeOfDay_` rule, since a
- * date with no time is midnight too. Seconds are rounded off the fraction
+ * Midnight exactly reads as no time, since a date with no time is midnight
+ * too. Seconds are rounded off the fraction
  * first, because `8:05` stored as a float comes back as 8:04:59.99999.
  */
 export function timeOfDay(value: Cell | undefined, timeZone: string): string {

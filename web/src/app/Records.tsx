@@ -1,10 +1,8 @@
 /**
  * Records.tsx — the ledger, filtered, newest first, under the day it happened.
  *
- * `renderRecords` and its helpers from `page.records.html`. "Load more" is a
- * longer slice of the same answer rather than another round trip, so the
- * request stamps that kept a late page from appending onto a newer filter
- * have nothing left to guard.
+ * "Load more" is a longer slice of the same answer rather than another round
+ * trip, so there is no late page that could append onto a newer filter.
  */
 
 import { For, Show } from 'solid-js';

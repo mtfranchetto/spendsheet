@@ -1,8 +1,7 @@
 /**
  * pull.ts — drag down at the top of the page to read the book again.
  *
- * `installPullToRefresh` from `page.gestures.html`, with its rules intact:
- * only from the very top (a downward drag anywhere else is how you scroll
+ * Only from the very top (a downward drag anywhere else is how you scroll
  * back up), abandoned the moment it turns sideways (the rows below will have
  * a horizontal gesture of their own), and passive throughout — at the top
  * there is nothing to scroll to, so the browser's own overscroll is what this

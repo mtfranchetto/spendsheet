@@ -421,8 +421,8 @@ function ebFetch_(method, path, options) {
  *
  * This file writes no tab, so it cannot log an anomaly itself; `runSync_`
  * reads this around each account and says what happened there. A global
- * rather than a return value for the reason `LEDGER_SOURCE` gives: every
- * caller of `ebFetch_` would otherwise unwrap a pair to reach the body. An
+ * rather than a return value because every caller of `ebFetch_` would
+ * otherwise unwrap a pair to reach the body. An
  * execution is one request, so nothing else can move it in between.
  */
 var EB_TEXT = { redecoded: 0 };

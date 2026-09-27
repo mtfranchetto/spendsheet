@@ -1,11 +1,10 @@
 /**
  * Filters.tsx — the filter bar, shared by Records and Charts.
  *
- * From `page.filters.html`, with one thing gone: every change used to be a
- * round trip, so the search box fired on `change` to keep a queue of answers
- * from arriving out of order. The book is on the phone now and a filter is a
- * recomputation — but search stays on `change` anyway, because recomputing
- * Records per keystroke over the whole ledger is work nobody is reading.
+ * A filter is a recomputation over the book on the phone, not a round trip.
+ * Search still fires on `change` rather than per keystroke, because
+ * recomputing Records over the whole ledger for every letter is work nobody is
+ * reading.
  */
 
 import { For, Show } from 'solid-js';

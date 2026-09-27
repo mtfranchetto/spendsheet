@@ -1,16 +1,11 @@
 /**
- * payloads.ts — what `23_api.gs` answers, computed from one book on the phone.
+ * payloads.ts — what each screen draws, computed from one book on the phone.
  *
- * The same five answers under the same shapes — `appOpen`, `appOverview`,
- * `appRecords`, `appAnalytics`, `appDashboard` — so the screens carried over
- * from `page.*` draw what they drew before, and the parity test can hold every
- * field of every one to the `.gs`.
- *
- * What does not carry over is the reason there were five. The Apps Script
- * viewer split the screen into two calls because each round trip cost ~2.7s
- * before any code ran, and it prefetched Records but not Charts because Charts
- * cost ~800ms of server time. Here all five are functions over data already in
- * memory, so the split is kept only as the shape the screens expect.
+ * Five answers — `appOpen`, `appOverview`, `appRecords`, `appAnalytics`,
+ * `appDashboard` — in the shapes the Apps Script viewer's five calls had, so
+ * the parity test can hold every field of every one to that viewer's recorded
+ * answers. All five are functions over data already in memory; the split into
+ * five is the shape the screens expect, not a cost being managed.
  */
 
 import type { Book, Row } from './book';
@@ -196,7 +191,7 @@ export function appDashboardData(book: Book, ledger: readonly LedgerRow[], clock
 }
 
 /**
- * `size` is the page's own addition: the `.gs` served one page per call, and
+ * `size` is the page's own addition: the old viewer served one page per call, and
  * the phone holding the ledger asks for everything "Load more" has shown in
  * one pass rather than one pass per page. The rows are the same rows — a
  * prefix of one sort — which is what the parity test holds at the default.

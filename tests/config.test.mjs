@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, sourceFiles } from './harness.mjs';
@@ -256,6 +256,34 @@ describe('seed data', () => {
     expect(keys).toContain('base_currency');
     expect(keys).toContain('stale_threshold_days');
   });
+
+  /*
+    Two seed names the viewer holds as literals rather than picking off a list
+    the book sent — a copy of the seed with no handshake between them. Rename
+    the seed row and the viewer goes on naming the old one with every test
+    green: a revaluation refused as a category the book lacks, or a row labelled
+    "Uncategorised" as though nothing had answered it. This is the handshake.
+  */
+  const viewerLiteral = (file, name) => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'web', 'src', 'app', file), 'utf8');
+    const declared = source.match(new RegExp(`const ${name} = '([^']*)';`));
+    expect(declared, `${file} no longer declares ${name}`).not.toBeNull();
+    return declared[1];
+  };
+
+  it('seeds the valuation subcategory the viewer names, as a transfer rather than income', () => {
+    // A €1,500 market gain moves net worth and is emphatically not income this
+    // month. `in_reports` excludes transfers from every total.
+    const seeded = ctx.DEFAULT_CATEGORIES.filter((row) => row[1] === viewerLiteral('Add.tsx', 'VALUATION_SUBCATEGORY'));
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0][0]).toBe(viewerLiteral('Add.tsx', 'TRANSFER_CATEGORY'));
+    expect(seeded[0][2]).toBe('transfer');
+  });
+
+  it('gives Other only the placeholder child the viewer hides', () => {
+    const other = ctx.DEFAULT_CATEGORIES.filter((row) => row[0] === 'Other');
+    expect(other.map((row) => row[1])).toEqual([viewerLiteral('Rows.tsx', 'PLACEHOLDER_SUBCATEGORY')]);
+  });
 });
 
 describe('the menu', () => {
@@ -367,11 +395,10 @@ describe('the menu', () => {
 describe('nothing public is left with no way to reach it', () => {
   const ENTRY_POINTS = ['onOpen', 'onEdit', 'doGet', 'doPost', 'setup'];
 
-  it('names every public function in the menu, in the app, or in a caller', () => {
+  it('names every public function in the menu or in a caller', () => {
     const ctx = load();
     const src = sourceFiles()
       .map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
-    const page = readFileSync(join(SRC, 'page.html'), 'utf8');
 
     const reachable = new Set(ENTRY_POINTS.concat(
       ctx.MENU_ITEMS.concat(...ctx.MENU_GROUPS.map((g) => g.items))
@@ -379,9 +406,8 @@ describe('nothing public is left with no way to reach it', () => {
 
     const orphans = [...src.matchAll(/^function ([A-Za-z0-9_]+)\(/gm)]
       .map((m) => m[1])
-      .filter((name) => !name.endsWith('_') && !name.startsWith('app'))
+      .filter((name) => !name.endsWith('_'))
       .filter((name) => !reachable.has(name))
-      .filter((name) => !page.includes(name))
       // Defined once and named nowhere else in `src/` is the definition itself
       // and nothing more.
       .filter((name) => (src.match(new RegExp('\\b' + name + '\\b', 'g')) || []).length <= 1);
@@ -446,10 +472,19 @@ describe('every seeded config row is read by something', () => {
     // only the quoted form called three live keys dead. A bare word match
     // would be worse in the other direction — every one of these keys is also
     // discussed in a comment, so prose alone would count as use.
-    const readers = (key) =>
-      (src.match(new RegExp("'" + key + "'|\\." + key + "\\b", 'g')) || []).length;
+    //
+    // The viewer reads the same `_config` off the book, so `web/src/` counts
+    // too — all but `schema.ts`, whose `DEFAULT_CONFIG` is a copy of the seed
+    // and would call every key read, and the tests.
+    const WEB = join(SRC, '..', 'web', 'src');
+    const viewer = readdirSync(WEB, { recursive: true })
+      .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) && !f.endsWith('schema.ts'))
+      .map((f) => readFileSync(join(WEB, f), 'utf8')).join('\n');
+    const reads = (text, key) =>
+      (text.match(new RegExp("'" + key + "'|\\." + key + "\\b", 'g')) || []).length;
 
-    const unread = ctx.DEFAULT_CONFIG.map((row) => row[0]).filter((key) => readers(key) <= 1);
+    const unread = ctx.DEFAULT_CONFIG.map((row) => row[0])
+      .filter((key) => reads(src, key) <= 1 && reads(viewer, key) === 0);
 
     expect(unread, 'seeded in _config and read by nothing').toEqual([]);
   });
