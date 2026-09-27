@@ -21,9 +21,15 @@ const PORT = 4325;
 const ORIGIN = `http://localhost:${PORT}`;
 const WEB = fileURLToPath(new URL('../../', import.meta.url));
 
-/** `vite preview` over the `dist/` the project's own server built, answering before this returns. */
+/**
+ * `vite preview` over the `dist/` the project's own server built, answering before this returns.
+ *
+ * Vite's own script under this Node, not `npx vite`: on Linux a signal to `npx`
+ * stops `npx` and leaves the server it started still answering, so the test
+ * could never take the server away.
+ */
 async function startPreview() {
-  const server = spawn('npx', ['vite', 'preview', `--port=${PORT}`, '--strictPort'], { cwd: WEB, stdio: 'ignore' });
+  const server = spawn(process.execPath, [WEB + 'node_modules/vite/bin/vite.js', 'preview', `--port=${PORT}`, '--strictPort'], { cwd: WEB, stdio: 'ignore' });
   for (let i = 0; i < 100; i++) {
     const up = await fetch(ORIGIN).then((r) => r.ok, () => false);
     if (up) return server;
