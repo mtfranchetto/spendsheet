@@ -66,9 +66,10 @@ jobs:
   # job for the same reason `e2e` has one: it fails for a different reason than
   # a red test, and a combined job would report both as one line saying neither.
   #
-  # This is the only place `web/`'s dependencies are installed. The unit tests
-  # under `web/` deliberately import nothing but each other and Vitest, so they
-  # run in the `test` job above with no install at all.
+  # The unit tests under `web/` deliberately import nothing but each other and
+  # Vitest, so they run in the `test` job above with no install at all. Here
+  # `web/` carries its own Vitest, because the compiler resolves the tests'
+  # `import 'vitest'` from `web/node_modules` and never finds the root's.
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -107,8 +108,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
 
       - run: npm ci
+
+      # The viewer's project serves `web/` through its own Vite, whose config
+      # imports the Solid plugin — a dependency of `web/` and not of the root.
+      - run: npm ci
+        working-directory: web
 
       # The browser is ~90MB and the download is most of this job, so it is
       # cached — keyed on the Playwright version, which is what decides the
