@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Read the code and nothing else. No job here needs a secret or writes back.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

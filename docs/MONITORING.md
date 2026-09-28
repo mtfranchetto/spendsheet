@@ -143,4 +143,4 @@ CSV rather than a copy of the spreadsheet, because the point of this project is 
 
 **Drive is still Google.** If the account is lost, the snapshots go with it. An occasional File → Download → .xlsx kept somewhere else is the off-Google backup, and it stays a manual step.
 
-**Test the restore.** An untested backup isn't a backup: import a snapshot CSV into a blank sheet and confirm it reads correctly. It takes two minutes and it's the only way to know.
+**Test the restore.** An untested backup isn't a backup: import a snapshot CSV into a blank sheet — with *Convert text to numbers, dates and formulas*: **No** — and confirm it reads correctly. It takes two minutes and it's the only way to know. The setting is not cosmetic: a description is whatever the sender of a payment typed, the book stores one beginning with `=` as text, and the CSV carries it out verbatim — so an import that converts formulas would run it.
