@@ -132,6 +132,9 @@ async function flushDecisions(): Promise<void> {
     if (refused.length) {
       toast((refused.length === 1 ? 'Not saved: ' : refused.length + ' not saved: ') + refused[0].reason);
       void refresh();
+    } else if (decisions.some((decision) => decision.amount !== undefined)) {
+      // A new amount moves a cash account's balance, which only a read brings back — see `addCash`.
+      void refresh();
     }
   } catch (error) {
     writeFailed(error);
@@ -212,7 +215,10 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
     },
     [[record.uid, { category: 'Transfer', subcategory: fields.subcategory, type: TX_TYPE.TRANSFER, in_reports: false, confirmed: true }]]
   );
-  if (answer) toast(answer.message);
+  if (!answer) return;
+  toast(answer.message);
+  // A new amount moves a cash account's balance, which only a read brings back — see `addCash`.
+  if (fields.amount !== undefined) void refresh();
 }
 
 export async function addRule(rule: RuleRequest): Promise<boolean> {
@@ -245,6 +251,12 @@ export async function addCash(entry: CashRequest): Promise<boolean> {
   return true;
 }
 
+/**
+ * Delete a cash row, or an asset's valuation change. Read again once it
+ * lands, for the reason `addCash` is: the balance it moves is the `accounts`
+ * tab's formula, which the answer does not carry. It stays where it is — a
+ * delete is made from the list it was in.
+ */
 export async function deleteRecord(record: PageRecord): Promise<void> {
   const answer = await one<ActAnswer>(
     'delete',
@@ -254,5 +266,7 @@ export async function deleteRecord(record: PageRecord): Promise<void> {
     },
     [[record.uid, null]]
   );
-  if (answer) toast(answer.message);
+  if (!answer) return;
+  toast(answer.message);
+  void refresh();
 }
