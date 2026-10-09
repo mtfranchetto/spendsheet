@@ -349,7 +349,7 @@ input[type="date"] { -webkit-appearance: none; appearance: none;
 /*
   Swipe right to confirm.
 
-  The row sits in a clipping wrapper with the green behind it, so dragging the
+  The row sits in a clipping wrapper with the action behind it, so dragging the
   row uncovers the action rather than animating a separate thing into place —
   one transform, no second element to keep in sync.
 
@@ -358,6 +358,11 @@ input[type="date"] { -webkit-appearance: none; appearance: none;
   which keeps scrolling native and at 60fps instead of being reimplemented in
   JavaScript. Without it the browser waits to see whether `touchmove` calls
   `preventDefault` before scrolling anything, and the list feels stuck.
+
+  The action has two looks and the difference is the whole feedback: grey
+  while letting go would do nothing, green from the pixel where it would
+  confirm. The tick grows at the same moment, because the colour is under the
+  thumb for half the people who swipe and the tick is not.
 */
 .swipe { position: relative; overflow: hidden; }
 .swipe .tap {
@@ -365,14 +370,21 @@ input[type="date"] { -webkit-appearance: none; appearance: none;
   touch-action: pan-y;
 }
 .swipe.sliding .tap { transition: none; }
-.swipe.springing .tap { transition: transform .18s ease-out; }
+.swipe.springing .tap { transition: transform .22s cubic-bezier(.2, .8, .2, 1); }
 .swipe-action {
   position: absolute; inset: 0; display: flex; align-items: center;
-  /* Same fix, same reason — `--in` is a light green in dark mode. */
-  padding-left: 18px; font-size: 20px; color: var(--bg);
-  background: var(--in); opacity: 0;
+  padding-left: 18px; font-size: 20px; color: var(--muted);
+  background: var(--line); opacity: 0;
+  transition: background-color .12s ease-out, color .12s ease-out;
 }
-.swipe.armed .swipe-action { opacity: 1; }
+.swipe-action span { transition: transform .16s cubic-bezier(.3, 1.6, .5, 1); }
+.swipe.sliding .swipe-action { opacity: 1; }
+/* `--bg` on `--in`, not a literal: `--in` is a light green in dark mode. */
+.swipe.armed .swipe-action { color: var(--bg); background: var(--in); }
+.swipe.armed .swipe-action span { transform: scale(1.3); }
+@media (prefers-reduced-motion: reduce) {
+  .swipe.springing .tap, .swipe-action, .swipe-action span { transition: none; }
+}
 
 /* A hold the bank has placed but not settled. Not a button and not styled as
    one: there is nothing to confirm and no category to set, because the

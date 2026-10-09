@@ -50,14 +50,17 @@ function keeper() {
   };
 }
 
-/** A finger dragged right across `locator`, in the old touch API WebKit speaks. */
-async function swipe(locator, distance = 160) {
-  await locator.evaluate((target, distance) => {
+/**
+ * A finger dragged right across `locator`, in the old touch API WebKit speaks.
+ * `rise` is how far it travels down the page per pixel across — a thumb's arc.
+ */
+async function swipe(locator, distance = 160, rise = 0) {
+  await locator.evaluate((target, [distance, rise]) => {
     const box = target.getBoundingClientRect();
-    const y = box.top + box.height / 2;
-    const point = (x) => document.createTouch(window, target, 1, x, y, x, y);
-    const send = (type, x) => {
-      const some = document.createTouchList(point(x));
+    const top = box.top + box.height / 2;
+    const point = (x, y) => document.createTouch(window, target, 1, x, y, x, y);
+    const send = (type, dx) => {
+      const some = document.createTouchList(point(box.left + 40 + dx, top + dx * rise));
       const none = document.createTouchList();
       target.dispatchEvent(
         new TouchEvent(type, {
@@ -69,11 +72,10 @@ async function swipe(locator, distance = 160) {
         })
       );
     };
-    const start = box.left + 40;
-    send('touchstart', start);
-    for (let dx = 10; dx <= distance; dx += 10) send('touchmove', start + dx);
-    send('touchend', start + distance);
-  }, distance);
+    send('touchstart', 0);
+    for (let dx = 10; dx <= distance; dx += 10) send('touchmove', dx);
+    send('touchend', distance);
+  }, [distance, rise]);
 }
 
 const review = (page) => page.locator('h2:has-text("Needs review") + .card');
@@ -117,6 +119,39 @@ test('a swipe confirms the row at once, and sends its uid, its row and the contr
   expect(sent.body).toEqual({ decisions: [{ confirmed: true, uid: 'r-6', row: book.rowOf('r-6') }] });
   expect(sent.headers['x-spendsheet-contract']).toBe('1');
   await expect(esselunga(page)).toHaveCount(0);
+});
+
+test('a drag that stops short of the threshold confirms nothing', async ({ page }) => {
+  const { fake } = await open(page);
+  await page.goto('/');
+  await expect(esselunga(page)).toHaveCount(1);
+
+  await swipe(esselunga(page), 100);
+  await page.waitForTimeout(300);
+  expect(fake.sent['/api/act/decide']).toBeUndefined();
+  await expect(esselunga(page)).toHaveCount(1);
+});
+
+test('a diagonal drag is a scroll, however far across it goes', async ({ page }) => {
+  const { fake } = await open(page);
+  await page.goto('/');
+  await expect(esselunga(page)).toHaveCount(1);
+
+  // More across than down the whole way, which is what a thumb's arc looks like.
+  await swipe(esselunga(page), 200, 0.8);
+  await page.waitForTimeout(300);
+  expect(fake.sent['/api/act/decide']).toBeUndefined();
+  await expect(esselunga(page)).toHaveCount(1);
+});
+
+test('a row still opens on a tap after a swipe that fell short', async ({ page }) => {
+  await open(page);
+  await page.goto('/');
+  await swipe(esselunga(page), 60);
+  // Long enough that the tap is its own, not the click a touch leaves behind.
+  await page.waitForTimeout(600);
+  await esselunga(page).click();
+  await expect(page.locator('dialog#sheet')).toBeVisible();
 });
 
 test('a read that left before a write landed does not put the row back', async ({ page }) => {

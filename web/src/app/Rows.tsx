@@ -74,7 +74,7 @@ export function RecordRow(props: { record: PageRecord }) {
   return (
     <div class="swipe">
       <div class="swipe-action" aria-hidden="true">
-        ✓
+        <span>✓</span>
       </div>
     <button
       type="button"
