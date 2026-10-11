@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { formatAmount, parseAmount } from './amount';
-import { agoWords, dayHeading, money, shortDate, withIcon } from './format';
-import { barGeometry, donutSlices, lineGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS } from './geometry';
+import { agoWords, dayHeading, fullDate, money, percent, shortDate, withIcon } from './format';
+import {
+  barGeometry, columnGeometry, donutSlices, lineGeometry, linesGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS
+} from './geometry';
 import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodOptionId, viewSearch } from './view';
 
 describe('format', () => {
@@ -23,6 +25,25 @@ describe('format', () => {
     expect(shortDate('2026-08-06')).toBe('6 Aug');
     expect(shortDate('2026-08')).toBe('Aug 2026');
     expect(shortDate('')).toBe('');
+  });
+
+  it('keeps the year on a date that may be years back', () => {
+    expect(fullDate('2024-08-06')).toBe('6 Aug 2024');
+    expect(fullDate('')).toBe('');
+  });
+
+  it('signs a change, and leaves no change unsigned', () => {
+    expect(money(700, 'EUR', { signed: true })).toMatch(/^\+/);
+    expect(money(-700, 'EUR', { signed: true })).toMatch(/^[-−]/);
+    expect(money(0, 'EUR', { signed: true })).not.toMatch(/^[+\-−]/);
+    expect(money(700, 'EUR')).not.toMatch(/^\+/);
+  });
+
+  it('prints a share as a percentage, and nothing as a dash rather than 0%', () => {
+    expect(percent(0.3086)).toMatch(/^31\s?%$/);
+    expect(percent(-0.0833, { digits: 1, signed: true })).toMatch(/^[-−]8[.,]3\s?%$/);
+    expect(percent(0.03, { digits: 1, signed: true })).toMatch(/^\+3[.,]0\s?%$/);
+    expect(percent(null)).toBe('—');
   });
 
   it('rounds an age outward', () => {
@@ -74,6 +95,40 @@ describe('geometry', () => {
     expect(spend.y).toBeCloseTo(bars.zero);
     // No income at all: no mark reading nothing above zero.
     expect(barGeometry([{ key: 'a', income: 0, expenses: 50 }], label).marks.map((m) => m.label)).toEqual(['0', '-50']);
+  });
+
+  it('puts several lines on one scale, so the gap between them is an amount', () => {
+    const drawn = linesGeometry([
+      [{ key: 'a', value: 100 }, { key: 'b', value: 200 }],
+      [{ key: 'a', value: 0 }, { key: 'b', value: 100 }]
+    ], label);
+    // 100 is the top line's start and the bottom line's end: the same height on both.
+    expect(drawn.lines).toEqual(['0.00,20.00 100.00,2.00', '0.00,38.00 100.00,20.00']);
+    expect(drawn.marks.map((m) => m.label)).toEqual(['200', '0', '100']);
+  });
+
+  it('centres lines that never move and gives them one mark', () => {
+    const flat = linesGeometry([[{ key: 'a', value: 7 }, { key: 'b', value: 7 }]], label);
+    expect(flat.lines).toEqual(['0.00,20.00 100.00,20.00']);
+    expect(flat.marks).toEqual([{ y: 20, label: '7' }]);
+  });
+
+  it('draws single-sign bars from zero, the tallest to the top', () => {
+    const columns = columnGeometry([50, 100], label);
+    expect(columns.marks.map((m) => m.label)).toEqual(['0', '100', '50']);
+    const [half, full] = columns.bars;
+    expect(full.y).toBeCloseTo(1);
+    expect(full.y + full.height).toBeCloseTo(39);
+    expect(half.height).toBeCloseTo(full.height / 2);
+  });
+
+  it('keeps the slot of a value that is missing, and draws nothing in it', () => {
+    const columns = columnGeometry([10, null, 10], label);
+    expect(columns.bars.map((bar) => bar.index)).toEqual([0, 2]);
+    expect(columns.bars[1].x).toBeCloseTo((2 * 100) / 3 + (100 / 3) * 0.15);
+    // Nothing at all: a zero mark, and no peak that would read as a scale.
+    expect(columnGeometry([null, null], label)).toEqual({ bars: [], marks: [{ y: 39, label: '0' }] });
+    expect(columnGeometry([], label).bars).toEqual([]);
   });
 
   it('slices a ring of at most five whose dashes sum to the circumference', () => {
@@ -130,6 +185,26 @@ describe('view', () => {
     expect(chosenAccounts('All')).toEqual([]);
     expect(chosenAccounts('Revolut')).toEqual(['Revolut']);
     expect(chosenAccounts(['A', 'B'])).toEqual(['A', 'B']);
+  });
+
+  it('writes the long view as its mode alone, and reads it back', () => {
+    const view = defaultView();
+    view.screen = 'analytics';
+    expect(viewSearch(view)).toBe('?v=analytics');
+    view.charts = 'long';
+    // No period: the long view reads none, so its address claims none.
+    view.analytics = { ...view.analytics, period: { kind: 'last_month' } };
+    expect(viewSearch(view)).toBe('?v=analytics&m=long');
+    expect(parseView('?v=analytics&m=long', 2026).charts).toBe('long');
+    expect(parseView('?v=analytics', 2026).charts).toBe('period');
+  });
+
+  it('reads a mode only on Charts, and only the one it knows', () => {
+    expect(parseView('?v=records&m=long', 2026).charts).toBe('period');
+    expect(parseView('?m=long', 2026).charts).toBe('period');
+    expect(parseView('?v=analytics&m=forever', 2026).charts).toBe('period');
+    const records = parseView('?v=records&m=long', 2026);
+    expect(viewSearch(records)).toBe('?v=records');
   });
 
   it('ignores a screen it does not know', () => {

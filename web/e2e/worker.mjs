@@ -27,6 +27,50 @@ export function batch() {
   return cached;
 }
 
+/** Today in the book's zone, which is whose calendar the page's windows are cut on. */
+export function bookToday() {
+  const [year, month, date] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' })
+    .format(new Date()).split('-').map(Number);
+  return { year, month, date };
+}
+
+/**
+ * The preview's book with three years behind it, for the long view: the
+ * preview's own rows all fall inside forty days, which is no history at all.
+ *
+ * On the 1st of each of the 36 months before this one, Fineco is paid €1,500
+ * and pays €1,000 of rent, and three months ago Degiro was revalued by €700.
+ * The 1st, because it makes every figure asserted a count that does not depend
+ * on the day the suite runs: eleven of those 1sts fall in the last 12 months
+ * and twelve in the 12 before, whatever today's date is.
+ */
+export function longBatch() {
+  const base = batch();
+  const today = bookToday();
+  const first = (monthsBack) => Date.UTC(today.year, today.month - 1 - monthsBack, 1) / 86400000 + 25569;
+
+  const valueRanges = base.valueRanges.map((entry) => {
+    if (!/transactions/.test(entry.range)) return entry;
+    const header = entry.values[0];
+    const row = (values) => header.map((name) => values[name] ?? '');
+    const booked = (uid, monthsBack, account, amount, category, subcategory, type) => row({
+      uid, account_id: account === 'Fineco' ? 'acc-2' : 'a-1', account_name: account,
+      booking_date: first(monthsBack), amount: Math.abs(amount), amount_base: amount, currency: 'EUR',
+      description: subcategory, source: 'enablebanking', category, subcategory, type,
+      in_reports: type !== 'transfer', confirmed: true, category_source: 'override'
+    });
+
+    const history = [];
+    for (let back = 36; back >= 1; back--) {
+      history.push(booked('h-in-' + back, back, 'Fineco', 1500, 'Income', 'Salary', 'income'));
+      history.push(booked('h-out-' + back, back, 'Fineco', -1000, 'Housing', 'Rent', 'expense'));
+    }
+    history.push(booked('h-value', 3, 'Degiro', 700, 'Transfer', 'Valuation change', 'transfer'));
+    return { ...entry, values: [...entry.values, ...history] };
+  });
+  return { valueRanges };
+}
+
 export function signedIn() {
   return {
     '/api/me': [200, ME],

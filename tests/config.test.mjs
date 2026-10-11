@@ -261,11 +261,12 @@ describe('seed data', () => {
     Two seed names the viewer holds as literals rather than picking off a list
     the book sent — a copy of the seed with no handshake between them. Rename
     the seed row and the viewer goes on naming the old one with every test
-    green: a revaluation refused as a category the book lacks, or a row labelled
+    green: a revaluation refused as a category the book lacks, a year's change in
+    net worth with its revalued part counted as zero, or a row labelled
     "Uncategorised" as though nothing had answered it. This is the handshake.
   */
   const viewerLiteral = (file, name) => {
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'web', 'src', 'app', file), 'utf8');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'web', 'src', file), 'utf8');
     const declared = source.match(new RegExp(`const ${name} = '([^']*)';`));
     expect(declared, `${file} no longer declares ${name}`).not.toBeNull();
     return declared[1];
@@ -274,15 +275,15 @@ describe('seed data', () => {
   it('seeds the valuation subcategory the viewer names, as a transfer rather than income', () => {
     // A €1,500 market gain moves net worth and is emphatically not income this
     // month. `in_reports` excludes transfers from every total.
-    const seeded = ctx.DEFAULT_CATEGORIES.filter((row) => row[1] === viewerLiteral('Add.tsx', 'VALUATION_SUBCATEGORY'));
+    const seeded = ctx.DEFAULT_CATEGORIES.filter((row) => row[1] === viewerLiteral('domain/schema.ts', 'VALUATION_SUBCATEGORY'));
     expect(seeded).toHaveLength(1);
-    expect(seeded[0][0]).toBe(viewerLiteral('Add.tsx', 'TRANSFER_CATEGORY'));
+    expect(seeded[0][0]).toBe(viewerLiteral('domain/schema.ts', 'TRANSFER_CATEGORY'));
     expect(seeded[0][2]).toBe('transfer');
   });
 
   it('gives Other only the placeholder child the viewer hides', () => {
     const other = ctx.DEFAULT_CATEGORIES.filter((row) => row[0] === 'Other');
-    expect(other.map((row) => row[1])).toEqual([viewerLiteral('Rows.tsx', 'PLACEHOLDER_SUBCATEGORY')]);
+    expect(other.map((row) => row[1])).toEqual([viewerLiteral('app/Rows.tsx', 'PLACEHOLDER_SUBCATEGORY')]);
   });
 });
 

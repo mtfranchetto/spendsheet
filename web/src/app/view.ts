@@ -9,6 +9,10 @@
  *
  * Only what differs from a screen's defaults is written, so the ordinary open
  * is a bare `/` — and a URL that is right every time is one you can bookmark.
+ *
+ * Charts has two modes, and `m=long` is the one that is not the default. The
+ * long view has no filters, so its address is the mode alone: a period beside
+ * it would be a claim about a screen that reads none.
  */
 
 import type { Filters, Period } from '../domain/query';
@@ -16,16 +20,19 @@ import type { Filters, Period } from '../domain/query';
 export const SCREENS = ['dashboard', 'records', 'analytics', 'add', 'value'] as const;
 export type Screen = (typeof SCREENS)[number];
 
-export const PARAMS = { view: 'v', period: 'p', from: 'from', to: 'to', account: 'a', label: 'l', search: 'q', unconfirmed: 'u' } as const;
+export const PARAMS = { view: 'v', mode: 'm', period: 'p', from: 'from', to: 'to', account: 'a', label: 'l', search: 'q', unconfirmed: 'u' } as const;
 
 export type AnalyticsFilters = Required<Pick<Filters, 'period' | 'account' | 'label'>>;
 export type RecordsFilters = Required<Omit<Filters, 'account'>> & { account: string | string[] };
-export type View = { screen: Screen; analytics: AnalyticsFilters; records: RecordsFilters };
+/** Charts over a period somebody picks, or over the fixed long windows of `longview.ts`. */
+export type ChartsMode = 'period' | 'long';
+export type View = { screen: Screen; charts: ChartsMode; analytics: AnalyticsFilters; records: RecordsFilters };
 
 /** The server's defaults, which were `appDefaultFilters_`'s and are `payloads.ts`'s now. */
 export function defaultView(): View {
   return {
     screen: 'dashboard',
+    charts: 'period',
     analytics: { period: { kind: 'mtd' }, account: 'All', label: 'All' },
     records: {
       period: { kind: 'ytd' }, account: 'All', label: 'All', search: '', unconfirmedOnly: false,
@@ -95,6 +102,7 @@ export function parseView(search: string, thisYear: number): View {
   const screen = params.get(PARAMS.view);
   if (screen && (SCREENS as readonly string[]).indexOf(screen) !== -1) view.screen = screen as Screen;
   if (view.screen === 'dashboard') return view;
+  if (view.screen === 'analytics' && params.get(PARAMS.mode) === 'long') view.charts = 'long';
 
   const filters: AnalyticsFilters | RecordsFilters = view.screen === 'records' ? view.records : view.analytics;
   const period = params.get(PARAMS.period);
@@ -132,6 +140,10 @@ export function viewSearch(view: View): string {
   params.set(PARAMS.view, view.screen);
   // The two forms have no filters: the screen is the whole address.
   if (view.screen === 'add' || view.screen === 'value') return '?' + params.toString();
+  if (view.screen === 'analytics' && view.charts === 'long') {
+    params.set(PARAMS.mode, 'long');
+    return '?' + params.toString();
+  }
 
   const defaults = defaultView()[view.screen];
   const filters: Filters = view[view.screen];
