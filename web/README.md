@@ -36,7 +36,7 @@ transfer, a rule, cash and asset values, and deleting cash you typed.
 | `src/domain/transfer.ts` | which row on another bank is the other half of a move; the page finds it, the Worker checks it. |
 | `src/app/writes.ts` | the writes from the page: one lane, rows named when a write leaves, swipes batched, the guess laid over the book until the answer lands. |
 | `src/app/Sheet.tsx`, `Add.tsx`, `swipe.ts`, `amount.ts` | a row's details, a rule, the cash and revalue forms, the swipe and hold, and amounts in the phone's separators. |
-| `scripts/tools.sh` | is this machine ready. |
+| `../scripts/tools.sh` | is this machine ready, for the book as well as for this. `npm run tools` runs it from either directory. |
 
 ## Routes
 
@@ -59,12 +59,14 @@ cannot see the book, and the page offers `/connect`.
 
 ## One-time setup
 
-Three commands and a console visit. `scripts/setup.mjs` argues why the
-secrets are scripted despite the repo's rule for one-time operations.
+Four commands and a console visit. `scripts/setup.mjs` says where each
+secret comes from.
 
 **1. Create the Worker** (to learn its address)
 
 ```sh
+npm run bootstrap --prefix ..   # both installs: the deploy runs the root's
+                                # tests before it builds anything
 npx wrangler login     # protect the Cloudflare account with 2FA or a passkey:
                        # anyone who can deploy here can capture your token
 npm run deploy         # prints https://spendsheet.<you>.workers.dev
@@ -185,7 +187,7 @@ are never parsed.
 ## Running it locally
 
 ```sh
-npm install
+npm run bootstrap --prefix ..
 cp .dev.vars.example .dev.vars        # then fill it in
 npm run build && npm run serve        # page and Worker together on :8787
 ```
@@ -207,7 +209,8 @@ that reason. They come off exact pins when 2.0 is `latest` on npm.
 `npm run deploy` here runs the compiler and then the root's `npm test` before it
 builds anything, as the root's deploy does — the writes in `worker/actions.ts`
 reach the ledger, and a deploy is the last place a red test can stop one. So
-both installs have to be present: `npm ci` at the root and here.
+both installs have to be present, which is what `npm run bootstrap` at the
+root does.
 
 `npm test` **at the repository root** runs these alongside the `.gs` suites:
 Vitest's default include is the whole repo. Check the file list rather than the

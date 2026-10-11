@@ -20,7 +20,7 @@ Not a work account — and not for quota reasons, since the free consumer limits
 
 ### 2. Add the code
 
-[`clasp`](https://github.com/google/clasp), Google's command-line tool for Apps Script, pushes the whole of [`src/`](../src/) in one command. It needs Node (20.19+ or 22.12+) and nothing installed globally — it comes with `npm install`.
+[`clasp`](https://github.com/google/clasp), Google's command-line tool for Apps Script, pushes the whole of [`src/`](../src/) in one command. It needs Node 22.12 or later ([`.nvmrc`](../.nvmrc) names the line CI runs) and nothing installed globally — it comes with `npm install`.
 
 ```bash
 git clone https://github.com/mtfranchetto/spendsheet.git
@@ -122,6 +122,14 @@ A dialog rather than a simple prompt because a PEM is multi-line and a prompt bo
 
 **The other eight are about the book** and check things no unit test can, because the harness has no spreadsheet behind it and hands a formula to nothing: that every `ARRAYFORMULA` anchor evaluates rather than sitting there as `#ERROR!`, that `in_reports` is a real boolean column and not text, that a description beginning with `=` is stored as text rather than run as a formula, that no subcategory name appears under two parents, that the book's time zone is the script's (the phone app counts days in the book's), that `owner_email` names the account running it, that Drive accepts a file from this script, and that every chart is pointed at a range with data in it. **Re-run this after pulling new code and running Setup**, not only during first setup — a formula that a decimal-comma locale rejects passes every test in `tests/` and fails here.
 
+### 8. Connect the simulated bank
+
+**Spendsheet → Connect a bank.** In sandbox the list holds test banks only — pick **Mock ASPSP** and complete its simulated login. The browser comes back through the `/exec` URL from step 4 to a plain page that says **Connected** and how many accounts were linked.
+
+Then **Spendsheet → Sync now**, and the simulated transactions land in `transactions`. That round trip — menu, bank, redirect, session, sync — is every moving part Part 2 uses, which is the point of doing it here first.
+
+If the bank's page answers `400 — Redirect URI not allowed` instead, the URL registered in step 5 and the one saved in step 6 disagree.
+
 ---
 
 ## Part 2 — production
@@ -155,7 +163,7 @@ Everything above gets transactions arriving. These are the three things worth do
 
 **Bring your history.** **File → Import** your old export into `_import_raw`, check the mapping in `_import_staged`, then **Spendsheet → Import → Import staged rows**. Do this *before* letting the cascade loose: imported rows arrive confirmed, so **Learn from corrections** turns five years of your own categorisations into the lookup table everything else uses. PSD2 only gives you a rolling ~90 days, so this is the difference between categorisation working on day one and working in six months. ([`docs/IMPORT.md`](IMPORT.md))
 
-**Put it on your phone.** A small Cloudflare Worker that signs you in with Google and reads the book with your own grant — three commands and a Google Cloud console visit, in [`web/README.md`](../web/README.md). Paste its address into `_config` → `viewer_url` and **Spendsheet → Open the app** opens it. What every screen does is in [`docs/MOBILE.md`](MOBILE.md); to share it with someone, [`docs/SHARING.md`](SHARING.md).
+**Put it on your phone.** A small Cloudflare Worker that signs you in with Google and reads the book with your own grant — four commands and a Google Cloud console visit, in [`web/README.md`](../web/README.md). Paste its address into `_config` → `viewer_url` and **Spendsheet → Open the app** opens it. What every screen does is in [`docs/MOBILE.md`](MOBILE.md); to share it with someone, [`docs/SHARING.md`](SHARING.md).
 
 **Turn on the schedule.** **Spendsheet → Set up and maintain → Install triggers** — a nightly rebuild of what memory has learned from your corrections, a daily sync and a daily self-check, running on Google's infrastructure whether or not the Sheet is open. It is idempotent, so re-running it is always safe. ([`docs/MONITORING.md`](MONITORING.md))
 

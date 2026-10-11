@@ -5,8 +5,8 @@
   "type": "module",
   "description": "The Spendsheet viewer: a static Solid app and one Worker in front of /api, /auth and /connect.",
   "scripts": {
-    "tools": "./scripts/tools.sh",
-    "tools:install": "./scripts/tools.sh install",
+    "tools": "../scripts/tools.sh",
+    "tools:install": "../scripts/tools.sh install",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -28,5 +28,8 @@
   "dependencies": {
     "@solidjs/web": "2.0.0-rc.14",
     "solid-js": "2.0.0-rc.14"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

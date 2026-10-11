@@ -11,21 +11,23 @@
 #
 # The table of what "ready" means lives in `lib/tools.sh`.
 #
-# Neither mode ever signs you in. `wrangler login` opens a browser and wants a
-# human; this reports whether it still needs one, which is the half people
-# actually forget.
+# Neither mode ever signs you in. `clasp login` and `wrangler login` open a
+# browser and want a human; this reports whether each still needs one, which is
+# the half people actually forget.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export TOOLS_WEB_DIR="$(cd "$HERE/.." && pwd)"
+export TOOLS_ROOT_DIR="$(cd "$HERE/.." && pwd)"
 
 # shellcheck source=lib/tools.sh
 . "$HERE/lib/tools.sh"
 
 case "${1:-check}" in
   install)
-    tools_install
+    # `||` so that one failed install neither stops the rows after it nor
+    # skips the report, which is what says what is still missing.
+    tools_install || echo "Not everything installed. The report below says what is still missing."
     echo
     ;;
   check) ;;
@@ -44,8 +46,12 @@ tools_auth
 
 echo
 if [ "$ready" -ne 0 ]; then
-  echo "Something required is missing. Run:  $(basename "$0") install"
+  if node_too_old; then
+    echo "Node is older than this project runs on. Upgrade it first; install cannot."
+  else
+    echo "Something required is missing. Run:  $(basename "$0") install"
+  fi
   exit 1
 fi
 
-echo "Ready. Next:  see web/README.md for the one-time Google and Cloudflare setup."
+echo "Ready. Next:  docs/SETUP.md for the book, web/README.md for the phone app."
