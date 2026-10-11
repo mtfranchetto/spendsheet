@@ -1,6 +1,6 @@
 # Working notes for Claude
 
-Conventions that are load-bearing here and not obvious from reading the code. Each rule below is the short form; the argument for it is in the header or docstring of the file it names.
+Conventions that are load-bearing here and not obvious from reading the code. Each rule below is the short form. Where it names a file or a test, the argument is in that file's header or docstring; where it names none, the rule is the whole of it.
 
 **The reasoning behind a decision lives in the comment above it.** File headers and function docstrings in `src/*.gs` carry the *why*, deliberately and at length — including what was tried and rejected. Read the header of the file you're changing before changing it, and **don't re-litigate a decision it already argues.** If you disagree with one, say so; don't quietly reverse it.
 
@@ -132,7 +132,7 @@ Tests go in the **same phase as the code they cover**, never batched at the end.
 
 `setup()` must stay idempotent, and must not discard user customisations — see `tests/customization.test.mjs` for the boundary.
 
-**`tests/` is for `src/`. Everything in `scripts/` keeps its test beside it.** Vitest's default `include` is the whole repository, so a new `scripts/*.test.mjs` is collected with no config change — and **a suite that stops being collected reports green**. Check the file list, not the total, after moving one. A stale `node_modules` does the same thing: run `npm ci` at the root and in `web/` before trusting a local total.
+**`tests/` is for `src/`. Everything in `scripts/` keeps its test beside it.** Vitest's default `include` is the whole repository, so a new `scripts/*.test.mjs` is collected with no config change — and **a suite that stops being collected reports green**. Check the file list, not the total, after moving one. A stale `node_modules` does the same thing — an older Vitest at the root collected two files fewer and said nothing. `npm ci` at the root before trusting a local total, and in `web/` for the compiler.
 
 **`web/` is TypeScript with its own tests beside each file**, collected by the same root Vitest run and typechecked by `npm run typecheck` in `web/` — Vitest transpiles and never asks the compiler a question. `tests/` holds what crosses the boundary: `tests/parity.test.mjs`, and the handshakes in `tests/config.test.mjs` that hold seed names the page spells as literals to the seed that defines them.
 

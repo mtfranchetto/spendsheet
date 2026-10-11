@@ -163,7 +163,9 @@ Everything above gets transactions arriving. These are the three things worth do
 
 ## Keeping it up to date
 
-`git pull`, then `npm run deploy` — it pushes, and moves the redirect onto the new code ([`docs/DEPLOY.md`](DEPLOY.md)). Then re-run `setup()`, which is idempotent: it adds tabs and columns that did not exist before, rewrites the formulas, and leaves your data and your customisations alone. It only ever *adds* seed rows, so a category or a config key added upstream after your book was built arrives this way and no other.
+`git pull`, then `npm run push`. That updates everything run from the Sheet. The `/exec` redirect serves a frozen version, so move it onto the new code as the note in step 4 describes — or set up `.deploy.json` once and let `npm run deploy` do the push and the move together ([`docs/DEPLOY.md`](DEPLOY.md)). If you pasted the files instead, paste each changed one again and create any file `src/` has gained: a menu item whose file is missing is simply not offered.
+
+Then re-run `setup()`, which is idempotent: it adds tabs and columns that did not exist before, rewrites the formulas, and leaves your data and your customisations alone. It only ever *adds* seed rows, so a category or a config key added upstream after your book was built arrives this way and no other.
 
 The one thing it does not do is change an answer you have already given. If a default moved, **Spendsheet → Set up and maintain → Update mappings to defaults** lists every row where your book and the seed disagree and asks before touching any of them. A row you deliberately filled in — `alert_email`, `owner_email` — is not a disagreement and is never listed.
 

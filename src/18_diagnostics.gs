@@ -155,8 +155,8 @@ function smokeTest_(suite, name, fn) {
  * exactly as broken as one that failed to parse, and scanning for whatever
  * happens to be there cannot tell the difference.
  *
- * The dashboard and reports entries are the ones that matter most: almost
- * everything on those two tabs is a generated string, and the harness cannot
+ * The reports entries are the ones that matter most: almost everything on
+ * that tab is a generated string, and the harness cannot
  * hand one to a spreadsheet. This is the only check in the project that can.
  */
 function formulaAnchors_() {

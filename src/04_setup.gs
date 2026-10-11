@@ -378,7 +378,7 @@ function recordNewColumns_(sheet, name, headers, report, isNew) {
  * cannot expand through a column that already has data and gives `#REF!`
  * instead. The two symptoms do not point at each other — you get one broken
  * formula on one tab and a header that quietly changed name — which is how
- * `in_reports` shipped looking green and landed as an empty dashboard.
+ * `in_reports` shipped looking green and landed as empty reports.
  *
  * So: if the slot is occupied, insert a column and let your data shift right.
  * Inserting is safe here in a way it is never safe mid-schema — the position
@@ -707,8 +707,7 @@ function discardProbe_(ss, name, previous) {
  * In v1 this is just `amount` when the currency already matches, and blank
  * otherwise. Blank rather than unconverted: a non-EUR figure summed as if it
  * were EUR is silently wrong, and wrong-and-quiet is the one outcome worth
- * engineering against. Non-EUR rows are logged to _anomalies and counted on
- * the dashboard instead.
+ * engineering against. Non-EUR rows are logged to _anomalies instead.
  *
  * Turning on real FX later is purely additive — add an `fx` tab and change
  * this one formula. Nothing downstream moves, which is the entire point of
@@ -816,7 +815,7 @@ function typeFormula() {
  * record. On a book with thirty transactions in a thousand-row sheet, a column
  * of thirty booleans and nine hundred and seventy empty strings is a text
  * column — and `= true` matches nothing, on the newest books, which are
- * exactly the ones where a blank dashboard reads as "not set up yet". FALSE on
+ * exactly the ones where a blank report reads as "not set up yet". FALSE on
  * the empty rows is also true: a row that does not exist is not spending.
  *
  * **`excluded` is compared to TRUE rather than tested for emptiness.** `LEN`

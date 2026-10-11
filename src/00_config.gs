@@ -125,17 +125,14 @@ var TX_COLUMNS_DERIVED = [
   // Whether this row counts as spending. One place decides it; every report
   // reads the answer.
   //
-  // `excluded` was a documented column that nothing you look at honoured —
-  // only recurring detection did. Every dashboard block filtered
-  // `type <> 'transfer'` and nothing else, so a row you had deliberately
-  // excluded still counted in this month's spending, in the six-month trend
-  // and in every label total. Six blocks each re-deciding what spending is,
-  // and one of them wrong.
+  // Without it every block re-decides what spending is — `type <> 'transfer'`
+  // here, `excluded` there — and a row you deliberately excluded counts in
+  // whichever total forgot to ask.
   //
   // A derived column rather than one more condition per query, because
   // `excluded` is blank on nearly every row and QUERY types a mostly-blank
   // column by majority and treats blanks as null: `where Z = false` would
-  // drop nearly every row and blank the dashboard. A formula emitting a real
+  // drop nearly every row and blank the report. A formula emitting a real
   // boolean on *every* row — including the ones with no transaction in them —
   // removes the null case, and the majority case, entirely. See
   // `inReportsFormula()` in 04_setup.gs for why the blank rows say FALSE
@@ -488,21 +485,17 @@ var DEFAULT_CONFIG = [
   // zero default and a cleared cell would be the same reading and no test could
   // tell the guard in `configNumber_` from its absence.
   ['memory_priority', 5, 'Where learned memory sits among the rules. Lower matches first; seed rules start at 10.'],
-  // `cashflow_horizon_days`, `trend_days`, `confirm_rule_matches` and
-  // `favicon_url` went from here with the code that read them — the cashflow
-  // projection in `15_recurring.gs`, the net worth chart on the old `dashboard`
-  // tab, the rules-tab auto-confirm in `14_categorize.gs`, and the Apps Script
-  // app page. A dead constant is invisible;
-  // a dead *config row* is not, because it sits on a tab the owner reads with a
-  // description promising an effect it has not had since that code went.
+  // A key belongs here only while something reads it: a dead constant is
+  // invisible, a dead *config row* is not, because it sits on a tab the owner
+  // reads with a description promising an effect it does not have.
   //
-  // Books set up before this keep those rows, and that is the right outcome
-  // rather than an oversight: `setup()` cannot tell a row you deleted from one
-  // you never had, and `reportSeedDivergence_` walks the seed rather than the
-  // sheet, so a row the seed no longer names is simply not looked at. They are
-  // inert, they are four, and removing them by hand is a sheet edit — not
-  // worth a migration, unlike the category renames `RETIRED_CATEGORIES` exists
-  // for.
+  // A book may hold keys this list does not name — `cashflow_horizon_days`,
+  // `trend_days`, `confirm_rule_matches`, `favicon_url` — and that is the right
+  // outcome rather than an oversight: `setup()` cannot tell a row you deleted
+  // from one you never had, and `reportSeedDivergence_` walks the seed rather
+  // than the sheet, so a row the seed does not name is simply not looked at.
+  // They are inert, and removing them by hand is a sheet edit — not worth a
+  // migration, unlike the category renames `RETIRED_CATEGORIES` exists for.
   ['review_queue_size', 50, 'Most rows the review tab holds at once. Oldest first.'],
   // Blank here and filled by setup() from the account running it, because this
   // file touches no services. A dialog's callback has no UI context, so
@@ -544,7 +537,7 @@ var DEFAULT_LABELS = [
  * category/subcategory pair because that is what makes each one unambiguous:
  * `Family` alone cannot be resolved — its children went to two different
  * parents — while `Family / Kids` maps exactly. `tidyCategories()` in
- * 04_setup.gs is what applies this, and it repoints references before removing
+ * 16_migrations.gs is what applies this, and it repoints references before removing
  * anything.
  *
  * **Renaming a seed subcategory belongs here too**, and that is less obvious
