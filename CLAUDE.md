@@ -65,6 +65,19 @@ Two names at one number is fine when the load order between them is the dependen
 
 Flag all of this explicitly when a push needs it — don't leave it to be discovered as a Drive error on the bank's redirect.
 
+## Cutting a release
+
+A release is an annotated tag `vX.Y.Z` on `main` and a GitHub release with generated notes. **The tag goes on a commit whose `package.json` already says that version** — so the bump comes first, and the order is:
+
+1. `npm version X.Y.Z --no-git-tag-version` at the root and again in `web/`. That moves both `package.json` files and both lockfiles, and nothing else.
+2. Land it on `main` through a PR. **Stop here until it is merged** — a tag cut before the merge publishes a tree that names the previous version, and moving a published tag is a rewrite.
+3. Pull, confirm CI is green on the merge commit, then `git tag -a vX.Y.Z -m vX.Y.Z`, push the tag, and `gh release create vX.Y.Z --generate-notes --notes-start-tag <previous tag> --verify-tag`.
+4. Read it back: the tag's commit shows `X.Y.Z` in both `package.json` files.
+
+Nothing reads the version field, so no test goes red when it is stale. The tag is the only place the mismatch shows, which is why the check is a step here.
+
+**A release deploys nothing.** `npm run deploy` and the `web/` deploy are separate, and say so in the report.
+
 ## Constraints that break things quietly
 
 ### The runtime

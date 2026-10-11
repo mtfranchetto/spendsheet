@@ -1,6 +1,6 @@
 {
   "name": "spendsheet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sync bank transactions into Google Sheets via open banking (PSD2). Free, no server, no subscription.",
   "private": true,
   "type": "module",
