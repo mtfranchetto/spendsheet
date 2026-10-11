@@ -578,6 +578,26 @@ class FakeSpreadsheet {
 }
 
 /**
+ * 0x80–0x9F in Windows-1252, as Java's charset has them — which is what stands
+ * behind `getContentText` in Apps Script. The five bytes the code page leaves
+ * unassigned (0x81, 0x8D, 0x8F, 0x90, 0x9D) are U+FFFD there. The web
+ * platform's decoder passes them through as control codes instead, so a fake
+ * built on `TextDecoder` would be kinder than the runtime on exactly those.
+ */
+const WINDOWS_1252_HIGH = [
+  0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+  0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0x017D, 0xFFFD,
+  0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+  0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0x017E, 0x0178
+];
+
+/** Every other byte of the code page is the Latin-1 character with its number. */
+function decodeWindows1252(bytes) {
+  return Array.from(bytes, (byte) => String.fromCharCode(
+    byte >= 0x80 && byte <= 0x9F ? WINDOWS_1252_HIGH[byte - 0x80] : byte)).join('');
+}
+
+/**
  * An HtmlOutput, chainable, remembering what was set on it.
  *
  * Everything the real one returns is the output itself, so a caller can chain
@@ -754,9 +774,17 @@ export function createGoogleStubs(options = {}) {
           // quietly reads that label as Windows-1252, where Java reads it as
           // itself. The fake has to be no kinder than the runtime it stands
           // in for, or it hides a wrong charset name behind a right answer.
-          getContentText: (charset) => (/^(iso-?8859-1|latin-?1)$/i.test(charset || '')
-            ? bytes.toString('latin1')
-            : new TextDecoder(charset || 'utf-8').decode(bytes)),
+          //
+          // Windows-1252 by hand too, from `WINDOWS_1252_HIGH`. Which characters
+          // 0x80–0x9F are is the whole of what a test of that fallback asks,
+          // and Node's own answer has changed between releases — several read
+          // the block as Latin-1, so the suite's result depended on which
+          // Node ran it.
+          getContentText: (charset) => {
+            if (/^(iso-?8859-1|latin-?1)$/i.test(charset || '')) return bytes.toString('latin1');
+            if (/^(windows-1252|cp1252)$/i.test(charset || '')) return decodeWindows1252(bytes);
+            return new TextDecoder(charset || 'utf-8').decode(bytes);
+          },
           getHeaders: () => res.headers || {}
         };
       }
