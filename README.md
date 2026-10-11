@@ -53,13 +53,13 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 ### Part 1 — sandbox (~5 minutes, no paperwork)
 
 1. Create a blank Google Sheet. **File → Settings → set the locale to Italy** (or your own — this is what makes dates and decimal commas parse correctly).
-2. **Extensions → Apps Script**. Create one file per `.gs` file in [`src/`](src/) and paste the contents. Keep the names and the number prefixes — Apps Script has no modules and loads files in name order. Also paste [`src/appsscript.json`](src/appsscript.json), which you'll first need to reveal via **Project Settings → Show "appsscript.json" manifest file**.
+2. Push the code into the Sheet's Apps Script project with [`clasp`](docs/SETUP.md#2-add-the-code): clone this repo, `npm install`, `npx clasp login`, name your script ID in `.clasp.json`, `npx clasp push --force`. One command sends every file, and the same one updates them later.
 
-   *(There's no bulk import in the Apps Script editor. If you'd rather not paste by hand, [`clasp`](docs/CONTRIBUTING.md#optional-clasp) pushes the whole folder in one command — but it needs Node, which is why it isn't the default path.)*
+   *(No Node? **Extensions → Apps Script**, then create one file per `.gs` file in [`src/`](src/) and paste each in, names and number prefixes kept, plus [`src/appsscript.json`](src/appsscript.json). The editor has no bulk import, so it is every file by hand.)*
 3. **Deploy → New deployment → Web app**, execute as *me*, access *Anyone*. Copy the `/exec` URL. This is what your bank redirects back to after login, and it's how this works without a server.
 4. Register a **sandbox** app at [enablebanking.com](https://enablebanking.com) — it asks only for a name and that redirect URL. Download the `.pem` private key.
 5. Run `installCredentials()` from the Apps Script editor and paste what it asks for.
-6. In the Sheet: **Spendsheet → Set up and maintain → Setup sheet**. The first run asks for authorization and Google warns you twice — *"Google hasn't verified this app"* (open **Advanced → Go to Spendsheet (unsafe)**), then the permission list. Both are expected: *unverified* only means nobody paid for Google's OAuth review of a script you pasted into your own Drive. [Why it can't be removed, and what the scopes actually grant.](docs/SETUP.md#3-build-the-tabs)
+6. In the Sheet: **Spendsheet → Set up and maintain → Setup sheet**. The first run asks for authorization and Google warns you twice — *"Google hasn't verified this app"* (open **Advanced → Go to Spendsheet (unsafe)**), then the permission list. Both are expected: *unverified* only means nobody paid for Google's OAuth review of a script you put into your own Drive. [Why it can't be removed, and what the scopes actually grant.](docs/SETUP.md#3-build-the-tabs)
 7. **Spendsheet → Connect a bank** → pick **Mock ASPSP** → complete the fake login → transactions land. ✅
 
 ### Part 2 — production (once you're convinced)
@@ -127,7 +127,7 @@ The *why* behind the non-obvious decisions lives in the source comments, which a
 
 ## Contributing
 
-Users never need Node. Contributors do:
+The same checkout you pushed from runs the tests:
 
 ```bash
 npm install && npm test

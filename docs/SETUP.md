@@ -20,11 +20,32 @@ Not a work account — and not for quota reasons, since the free consumer limits
 
 ### 2. Add the code
 
-**Extensions → Apps Script.** Create one file per `.gs` file in [`src/`](../src/) and paste the contents. Keep the names and their number prefixes: Apps Script has no module system and loads files in name order, so the numbers *are* the load order.
+[`clasp`](https://github.com/google/clasp), Google's command-line tool for Apps Script, pushes the whole of [`src/`](../src/) in one command. It needs Node (20.19+ or 22.12+) and nothing installed globally — it comes with `npm install`.
 
-Also paste `src/appsscript.json`, which sets the timezone, the V8 runtime and the web-app config Part 2 needs. It's hidden until you tick **Project Settings → Show "appsscript.json" manifest file**.
+```bash
+git clone https://github.com/mtfranchetto/spendsheet.git
+cd spendsheet
+npm install
 
-There's no bulk import in the editor, and drag-and-drop does nothing. If you'd rather not paste by hand, [`clasp`](CONTRIBUTING.md#optional-clasp) pushes the whole folder in one command — it needs Node, which is why it isn't the default path.
+# 1. Enable the Apps Script API for your Google account (once, ever):
+#    https://script.google.com/home/usersettings  →  Google Apps Script API: ON
+#    Without this, push fails with a 403 that doesn't explain itself.
+
+npx clasp login          # opens a browser — sign in as the account that owns the Sheet
+
+# 2. Point at your script. In the Sheet: Extensions → Apps Script,
+#    then Project Settings → Script ID.
+cat > .clasp.json <<'JSON'
+{ "scriptId": "PASTE_YOUR_SCRIPT_ID", "rootDir": "src" }
+JSON
+
+npm run status           # lists what would be pushed — check before the first push
+npx clasp push --force   # --force the first time, to overwrite the remote manifest
+```
+
+Reload the Apps Script editor and the files are there, named `00_config`, `01_jwt` and so on, with `appsscript.json` setting the timezone, the V8 runtime and the web-app config step 4 needs. `.clasp.json` holds your script ID and is gitignored; keep it that way.
+
+**Without Node**, the editor is the other way in, and it has no bulk import — drag-and-drop does nothing. Create one file per `.gs` file in `src/` and paste the contents, keeping the names and their number prefixes: Apps Script has no module system and loads files in name order, so the numbers *are* the load order. Then paste `src/appsscript.json`, which is hidden until you tick **Project Settings → Show "appsscript.json" manifest file**. A file left out is a menu item that is not offered rather than an error, so count them.
 
 ### 3. Build the tabs
 
@@ -36,7 +57,7 @@ The first run asks you to authorize it, and **Google shows you two warning scree
 
 **Screen 1 — "Google hasn't verified this app".** The *Advanced* link is collapsed by default; open it and choose **Go to Spendsheet (unsafe)**.
 
-Nothing is wrong. *Unverified* means nobody submitted this script to Google's OAuth review — not that Google found a problem. The script is a file in your own Drive, running as you, and you pasted every line of it yourself.
+Nothing is wrong. *Unverified* means nobody submitted this script to Google's OAuth review — not that Google found a problem. The script is a file in your own Drive, running as you, and every line of it is one you put there yourself.
 
 It cannot be switched off for a personal account. Verification requires a Google Cloud project, **a domain you own and have verified**, the privacy policy hosted on that domain (a GitHub URL is not accepted), a demo video, per-scope justification, and a review that runs for weeks. For a spreadsheet only you will ever open, that is the wrong trade. The one real exception: on a Google Workspace domain you control, publishing the app as *Internal* removes the warning with no review — irrelevant on a consumer account.
 
@@ -142,7 +163,7 @@ Everything above gets transactions arriving. These are the three things worth do
 
 ## Keeping it up to date
 
-`setup()` is idempotent and is the thing to re-run after pulling new code: it adds tabs and columns that did not exist before, rewrites the formulas, and leaves your data and your customisations alone. It only ever *adds* seed rows, so a category or a config key added upstream after your book was built arrives this way and no other.
+`git pull`, then `npm run deploy` — it pushes, and moves the redirect onto the new code ([`docs/DEPLOY.md`](DEPLOY.md)). Then re-run `setup()`, which is idempotent: it adds tabs and columns that did not exist before, rewrites the formulas, and leaves your data and your customisations alone. It only ever *adds* seed rows, so a category or a config key added upstream after your book was built arrives this way and no other.
 
 The one thing it does not do is change an answer you have already given. If a default moved, **Spendsheet → Set up and maintain → Update mappings to defaults** lists every row where your book and the seed disagree and asks before touching any of them. A row you deliberately filled in — `alert_email`, `owner_email` — is not a disagreement and is never listed.
 
