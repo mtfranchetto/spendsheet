@@ -258,6 +258,15 @@ describe('draining', () => {
     expect(drain(c).incomplete).toBe(2);
   });
 
+  it('counts the seed formula on any row but the form', () => {
+    // Filled down or typed there, it is a date someone placed: the seed is
+    // only ever written to the row you type on.
+    const c = withWallet();
+    c.__spreadsheet.getSheetByName('cash_entry').getRange('A3').setFormula(c.CASH_DATE_SEED);
+
+    expect(drain(c).incomplete).toBe(1);
+  });
+
   it('carries the seeded date into an entry typed beside it', () => {
     const c = withWallet();
     type(c, 2, { account: 'wallet', amount: 3 });
