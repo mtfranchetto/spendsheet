@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "serve": "wrangler dev",
+    "predeploy": "npm run typecheck && npm --prefix .. test",
     "deploy": "vite build && wrangler deploy --var BUILD_SHA:$(git rev-parse --short HEAD) && node scripts/accounts.mjs ensure",
     "accounts": "node scripts/accounts.mjs",
     "setup": "node scripts/setup.mjs"
