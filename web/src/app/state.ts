@@ -48,7 +48,7 @@ import { createMemo, createRoot, createSignal } from 'solid-js';
 import { api, ApiNoAccess, ApiRefused, ApiStale, type Me } from '../api/client';
 import type { FreshRows } from '../api/contract';
 import { bookFromBatch, tabOf, type BatchGet, type Book, type Row } from '../domain/book';
-import { clockAt } from '../domain/days';
+import { clockAt, dayKey } from '../domain/days';
 import { appAnalyticsData, appOpenData, appOverviewData, appRecordsData } from '../domain/payloads';
 import { ledgerOf } from '../domain/query';
 import { QUERY_PAGE_SIZE, TABS } from '../domain/schema';
@@ -168,10 +168,18 @@ const derived = createRoot(() => {
     { lazy: true }
   );
 
-  return { book, rowsByUid, clock, open, overview, analytics, records };
+  // The month of the book's first row, which is where stepping back through periods stops.
+  const earliest = createMemo(() => {
+    let first: number | null = null;
+    for (const row of ledger()) if (row._day !== null && (first === null || row._day < first)) first = row._day;
+    const key = dayKey(first);
+    return key ? { year: Number(key.slice(0, 4)), month: Number(key.slice(5, 7)) } : null;
+  });
+
+  return { book, rowsByUid, clock, open, overview, analytics, records, earliest };
 });
 
-export const { book, clock, open, overview, analytics, records } = derived;
+export const { book, clock, open, overview, analytics, records, earliest } = derived;
 
 /** The row a uid names, as the book last read it — its sheet row is `_row`. */
 export const rowOf = (uid: string): Row | undefined => derived.rowsByUid().get(uid);

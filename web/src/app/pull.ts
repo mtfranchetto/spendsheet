@@ -54,6 +54,9 @@ export function installPullToRefresh(node: HTMLElement, onPull: () => void, busy
   const start = (event: TouchEvent) => {
     if (event.touches.length !== 1) return hide();
     if (window.scrollY > 0 || busy()) return;
+    // A sheet pins the page to open without moving it, so `scrollY` reads 0
+    // wherever the list was — and a drag on the sheet is not a pull on the page.
+    if (document.querySelector('dialog[open]')) return;
     // A drag inside something scrolled away from its own top is that thing's scroll.
     for (let at = event.target as Node | null; at && at !== document.body; at = at.parentNode) {
       if ((at as Element).scrollTop > 0) return;

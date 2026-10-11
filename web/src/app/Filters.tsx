@@ -14,13 +14,13 @@
  * reading.
  */
 
-import { createEffect, createSignal, For, Match, Show, Switch } from 'solid-js';
+import { createSignal, For, Match, Show, Switch } from 'solid-js';
 import { dayKey } from '../domain/days';
 import { resolveWindow, type Period } from '../domain/query';
-import { monthTitle, shortDate, withIcon } from './format';
+import { monthTitle, rangeTitle, withIcon } from './format';
 import { categoryIcon, subcategoryIcon } from './Rows';
-import { openWithoutMoving } from './Sheet';
-import { clock, open, overview, setAnalyticsFilters, setRecordsFilters, view } from './state';
+import { Dialog } from './Sheet';
+import { clock, earliest, open, overview, setAnalyticsFilters, setRecordsFilters, view } from './state';
 import { chosenAccounts, periodId, periodUnit, stepPeriod, type AnalyticsFilters, type RecordsFilters } from './view';
 
 type Picking = 'period' | 'accounts' | 'label' | null;
@@ -40,16 +40,6 @@ export function FilterBar(props: { which: 'records' | 'analytics' }) {
   const set = (change: Partial<RecordsFilters>) => (onRecords() ? setRecordsFilters(change) : setAnalyticsFilters(change));
   const [picking, setPicking] = createSignal<Picking>(null);
   const close = () => setPicking(null);
-  let dialog: HTMLDialogElement | undefined;
-
-  createEffect(
-    () => picking() !== null,
-    (showing) => {
-      if (!dialog) return;
-      if (showing && !dialog.open) openWithoutMoving(dialog);
-      if (!showing && dialog.open) dialog.close();
-    }
-  );
 
   // ---- the period ----
 
@@ -64,7 +54,7 @@ export function FilterBar(props: { which: 'records' | 'analytics' }) {
   };
   const stepped = (by: 1 | -1) => {
     const now = clock();
-    return now ? stepPeriod(filters().period, by, now) : null;
+    return now ? stepPeriod(filters().period, by, now, earliest()) : null;
   };
   const step = (by: 1 | -1) => {
     const period = stepped(by);
@@ -75,7 +65,7 @@ export function FilterBar(props: { which: 'records' | 'analytics' }) {
     const at = unit();
     if (at) return at.unit === 'month' ? monthTitle(at.year, at.month) : String(at.year);
     if (period.kind === 'custom') {
-      return period.from && period.to ? shortDate(String(period.from)) + ' – ' + shortDate(String(period.to)) : 'Custom';
+      return period.from && period.to ? rangeTitle(String(period.from), String(period.to), clock()?.year ?? 0) : 'Custom';
     }
     return periods().find((entry) => entry.id === period.kind)?.label || 'Period';
   };
@@ -228,19 +218,8 @@ export function FilterBar(props: { which: 'records' | 'analytics' }) {
         </Show>
       </div>
 
-      <dialog
-        ref={(el) => (dialog = el)}
-        onClose={close}
-        onClick={(event) => {
-          if (event.target === dialog) close();
-        }}
-      >
-        {/* First in the markup, for the reason `SheetHost`'s is: `showModal` focuses the first thing it can. */}
-        <button type="button" class="sheet-close" autofocus aria-label="Close" onClick={close}>
-          ✕
-        </button>
-        <div class="sheet-body">
-          <Switch>
+      <Dialog open={picking() !== null} onClose={close}>
+        <Switch>
             <Match when={picking() === 'period'}>
               <h2>Period</h2>
               <div role="listbox" aria-label="Period">
@@ -311,9 +290,8 @@ export function FilterBar(props: { which: 'records' | 'analytics' }) {
                 </For>
               </div>
             </Match>
-          </Switch>
-        </div>
-      </dialog>
+        </Switch>
+      </Dialog>
     </div>
   );
 }

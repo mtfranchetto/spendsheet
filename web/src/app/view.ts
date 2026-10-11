@@ -44,9 +44,6 @@ export function periodId(spec: Period | undefined): string {
   return spec.kind;
 }
 
-/** The earliest year a period may name; anything before it is a hand-edited URL. */
-const FIRST_YEAR = 1990;
-
 /** The book's clock, as far as a period needs it: `month` is zero-based, as `Clock`'s is. */
 type Now = { year: number; month: number };
 
@@ -73,25 +70,30 @@ export function periodUnit(spec: Period | undefined, now: Now): { unit: 'month';
 
 /**
  * The period one month or one year either side, or null where there is none:
- * a period with no unit, a month that has not started, a year before any id
- * can name.
+ * a period with no unit, a month or year that has not started, one before the
+ * book's first row. `earliest` is that row's month, 1–12 as a period's is; a
+ * book with no rows has nothing behind the present to step to.
+ *
+ * Each end stops only the step towards it. A bookmark can name a month
+ * outside both, and the arrow that leads back in has to work from there.
  *
  * Arriving at the present gives `mtd` or `ytd` rather than this month or this
  * year by number. They are the screens' defaults, so stepping away and back
  * returns to the bare address — and a bookmark of "this month" taken that way
  * still means this month in November.
  */
-export function stepPeriod(spec: Period | undefined, by: 1 | -1, now: Now): Period | null {
+export function stepPeriod(spec: Period | undefined, by: 1 | -1, now: Now, earliest: { year: number; month: number } | null): Period | null {
   const at = periodUnit(spec, now);
   if (!at) return null;
   if (at.unit === 'year') {
     const year = at.year + by;
-    if (year > now.year || year < FIRST_YEAR) return null;
+    if (by > 0 ? year > now.year : year < (earliest ? earliest.year : now.year)) return null;
     return year === now.year ? { kind: 'ytd' } : { kind: 'year', year };
   }
   const index = at.year * 12 + (at.month - 1) + by;
   const present = now.year * 12 + now.month;
-  if (index > present || index < FIRST_YEAR * 12) return null;
+  const first = earliest ? earliest.year * 12 + (earliest.month - 1) : present;
+  if (by > 0 ? index > present : index < first) return null;
   return index === present ? { kind: 'mtd' } : { kind: 'month', year: Math.floor(index / 12), month: (index % 12) + 1 };
 }
 
@@ -109,7 +111,7 @@ export function periodFromId(id: string, from: string | null, to: string | null,
   const year = /^year:(\d{4})$/.exec(id);
   if (year) {
     const value = Number(year[1]);
-    return value >= FIRST_YEAR && value <= thisYear ? { kind: 'year', year: value } : null;
+    return value >= 1990 && value <= thisYear ? { kind: 'year', year: value } : null;
   }
   const month = /^month:(\d{4})-(\d{2})$/.exec(id);
   if (month) {

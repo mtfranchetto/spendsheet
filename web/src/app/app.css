@@ -249,15 +249,12 @@ label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px
 */
 .filters { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 
-/* The glass is drawn over the field's own padding. `appearance: none` for the
-   reason the date input below has it: a control the phone draws natively is
-   free to ignore the box it was given, and this one's padding is where the
-   glass goes. */
+/* The glass is drawn over the field's own left padding. */
 .search { position: relative; }
 .search > svg { position: absolute; left: 12px; top: 50%; width: 18px; height: 18px;
                 transform: translateY(-50%); pointer-events: none;
                 fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
-.search > input { -webkit-appearance: none; appearance: none; padding-left: 38px; }
+.search > input { padding-left: 38px; }
 
 /*
   ‹ October 2026 ›

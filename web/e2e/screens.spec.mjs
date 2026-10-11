@@ -59,30 +59,26 @@ test('a category opens onto its children, and a child drills into Records with a
   await expect(page.locator('.filters .chip.on')).toHaveCount(0);
 });
 
-test('the arrows step the period a year or a month at a time, and stop at the present', async ({ page }) => {
+test('the arrows step the period, and each end stops only the step towards it', async ({ page }) => {
   await worker(page, signedIn());
-  const now = new Date();
-  const year = now.getFullYear();
+  const when = page.locator('.stepper .when');
 
-  // Records opens on the year so far.
+  // A bookmark from before the book's first row: back is closed, and forward leads in.
+  await page.goto('/?v=analytics&p=month:2020-05');
+  await expect(when).toHaveText(/2020/);
+  const may = await when.textContent();
+  await expect(page.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Next month' }).click();
+  await expect(page).toHaveURL(/p=month%3A2020-06/);
+  await expect(when).toHaveText(/2020/);
+  await expect(when).not.toHaveText(may);
+
+  // Records opens on the year so far and Charts on the month so far: nothing later has started.
   await page.goto('/?v=records');
-  await expect(page.locator('.stepper .when')).toHaveText(String(year));
+  await expect(when).toHaveText(/^\d{4}$/);
   await expect(page.getByRole('button', { name: 'Next year' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Previous year' }).click();
-  await expect(page.locator('.stepper .when')).toHaveText(String(year - 1));
-  await expect(page).toHaveURL(new RegExp('p=year%3A' + (year - 1)));
-  await page.getByRole('button', { name: 'Next year' }).click();
-  await expect(page).toHaveURL(/\?v=records$/);
-
-  // Charts opens on the month so far, and a step back crosses into last year in January.
   await page.locator('#tabs button', { hasText: 'Charts' }).click();
   await expect(page.getByRole('button', { name: 'Next month' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Previous month' }).click();
-  const before = new Date(year, now.getMonth() - 1, 1);
-  const id = before.getFullYear() + '-' + String(before.getMonth() + 1).padStart(2, '0');
-  await expect(page).toHaveURL(new RegExp('p=month%3A' + id));
-  await page.getByRole('button', { name: 'Next month' }).click();
-  await expect(page).toHaveURL(/\?v=analytics$/);
 });
 
 test('a pill opens a sheet, and what is chosen there is on the pill and in the address', async ({ page }) => {
@@ -247,6 +243,18 @@ test('pulling down at the top reads the book again', async ({ page }) => {
   await drag(page, 100, 140);
   await page.waitForTimeout(300);
   expect(fake.counts['/api/read']).toBe(2);
+});
+
+test('a drag down while a sheet is up is not a pull on the page behind it', async ({ page }) => {
+  const fake = await worker(page, signedIn());
+  await page.goto('/?v=records');
+  await expect.poll(() => fake.counts['/api/read']).toBe(1);
+  await page.locator('.filters .chip.opens').first().click();
+  await expect(page.getByRole('option', { name: 'Fineco' })).toBeVisible();
+
+  await drag(page, 100, 260);
+  await page.waitForTimeout(300);
+  expect(fake.counts['/api/read']).toBe(1);
 });
 
 test('the page cannot be pinched or double-tapped into a zoom', async ({ page }) => {
