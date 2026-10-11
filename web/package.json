@@ -21,7 +21,7 @@
     "@solidjs/vite-plugin": "3.0.0-next.47",
     "esbuild": "0.28.2",
     "typescript": "^7.0.2",
-    "vite": "8.3.1",
+    "vite": "8.3.3",
     "vitest": "5.0.3",
     "wrangler": "^4.45.0"
   },
