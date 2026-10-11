@@ -58,9 +58,9 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
    *(No Node? **Extensions → Apps Script**, then create one file per `.gs` file in [`src/`](src/) and paste each in, names and number prefixes kept, plus [`src/appsscript.json`](src/appsscript.json). The editor has no bulk import, so it is every file by hand.)*
 3. **Deploy → New deployment → Web app**, execute as *me*, access *Anyone*. Copy the `/exec` URL. This is what your bank redirects back to after login, and it's how this works without a server.
 4. Register a **sandbox** app at [enablebanking.com](https://enablebanking.com) — it asks only for a name and that redirect URL. Download the `.pem` private key.
-5. Run `installCredentials()` from the Apps Script editor and paste what it asks for.
+5. Run `installCredentials()` from the Apps Script editor and paste what it asks for. The redirect URL has its own button: paste the `/exec` URL from step 3 and press **Pin this URL** — **Save** does not store it, and [without a pin the bank can refuse the redirect](docs/SETUP.md#6-install-the-credentials).
 6. In the Sheet: **Spendsheet → Set up and maintain → Setup sheet**. The first run asks for authorization and Google warns you twice — *"Google hasn't verified this app"* (open **Advanced → Go to Spendsheet (unsafe)**), then the permission list. Both are expected: *unverified* only means nobody paid for Google's OAuth review of a script you put into your own Drive. [Why it can't be removed, and what the scopes actually grant.](docs/SETUP.md#3-build-the-tabs)
-7. **Spendsheet → Connect a bank** → pick **Mock ASPSP** → complete the fake login → **Spendsheet → Sync now** → transactions land. ✅
+7. **Spendsheet → Connect a bank** → pick **Mock ASPSP** → complete the fake login → **Spendsheet → Sync now** → transactions land. ✅ The first time, the fake bank has no account: [you create one, then connect a second time](docs/SETUP.md#8-connect-the-simulated-bank).
 
 ### Part 2 — production (once you're convinced)
 

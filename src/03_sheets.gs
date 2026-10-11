@@ -192,8 +192,9 @@ function nextEmptyRow_(sheet, keyColumn) {
  * insisting on one key column means a row whose first cell you haven't filled
  * yet is invisible, and a transaction you typed silently never syncs.
  *
- * Only safe on a tab with no formulas in that block, since a formula counts
- * as content. `cash_entry` has none.
+ * A formula counts as content, so this is only for a tab whose formulas are
+ * meant to be seen as rows. `cash_entry` has one, the seeded date on the row
+ * you type on, and the drain decides what that row is (`isUntouchedCashForm`).
  */
 function lastFilledRow_(sheet, width) {
   var lastRow = sheet.getLastRow();

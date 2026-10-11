@@ -105,10 +105,10 @@ function beginAuthorization(aspspName, country, psuType) {
       ' application, and must be the URL of your ACTIVE deployment ' +
       '(Deploy → Manage deployments → Web app → URL).' +
       (isPinned
-        ? '\n\nThis URL is pinned. If it is wrong, re-pin it via Install credentials.'
+        ? '\n\nThis URL is pinned. If it is wrong, re-pin it via Spendsheet → Set up and maintain → Install credentials.'
         : '\n\nNothing is pinned, so this value was guessed by the runtime — which returns ' +
           'an archived deployment often enough to be worth not trusting. Pin the right one ' +
-          'via Spendsheet → Install credentials.');
+          'via Spendsheet → Set up and maintain → Install credentials.');
     throw err;
   }
 

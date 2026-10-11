@@ -397,6 +397,24 @@ describe('the text a bank sends', () => {
     expect(read(api).d).toBe('€5');
   });
 
+  it('reads the whole of that block as Windows-1252 has it', () => {
+    // Held to the code page rather than to whatever decoder the test runner
+    // ships: 0x80–0x9F is where Windows-1252 and Latin-1 part, and a decoder
+    // that reads it as Latin-1 turns `€` and every curly quote into a control
+    // code. `„` `…` `Œ` `™` `Ÿ` sit at 0x84, 0x85, 0x8C, 0x99 and 0x9F.
+    const api = withApi(() => ({ code: 200, bytes: Buffer.concat([
+      Buffer.from('{"d":"'), Buffer.from([0x84, 0x85, 0x8C, 0x99, 0x9F, 0xE9]), Buffer.from('"}')]) }));
+
+    expect(read(api).d).toBe('„…Œ™Ÿé');
+  });
+
+  it('has no character for a byte the code page leaves unassigned', () => {
+    const api = withApi(() => ({ code: 200,
+      bytes: Buffer.concat([Buffer.from('{"d":"a'), Buffer.from([0x81]), Buffer.from('b"}')]) }));
+
+    expect(read(api).d).toBe('a' + REPLACED + 'b');
+  });
+
   it('leaves a well-formed UTF-8 body alone, accents and all', () => {
     const api = withApi(ok({ d: 'Café München Øresund' }));
 

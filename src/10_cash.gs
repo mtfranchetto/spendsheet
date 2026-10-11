@@ -22,9 +22,47 @@
  * people abandon.
  */
 
+/** What the date cell of an empty form holds. See `seedCashEntryDate_`. */
+var CASH_DATE_SEED = '=TODAY()';
+
+/** The row you type on: the one the seed is written to and every clear resets. */
+var CASH_FORM_ROW = 2;
+
 /** The row is yours until it has the two things that make it a transaction. */
 function isCompleteCashEntry(entry) {
   return Boolean(entry.account) && !isBlankCell_(entry.amount) && isFinite(Number(entry.amount));
+}
+
+/**
+ * The form as `setup()` and every clear leave it: the seeded date and nothing
+ * anyone typed.
+ *
+ * Decided on the formula rather than on the value. `=TODAY()` and a date you
+ * typed come back from `getValues` as the same thing, and they are not: a date
+ * you typed on an otherwise empty row is an entry begun, and still worth being
+ * told about. A row is untouched only while the seed is still in its date cell.
+ */
+function isUntouchedCashForm(entry, dateFormula) {
+  return hasOnlyCashDate(entry) && isCashDateSeed(dateFormula);
+}
+
+/** A date, and every other cell empty. */
+function hasOnlyCashDate(entry) {
+  return CASH_ENTRY_COLUMNS.every(function (name) {
+    return isBlankCell_(entry[name]) === (name !== 'date');
+  });
+}
+
+/**
+ * Whether a formula is the seed, however the cell hands it back.
+ *
+ * Case and spacing are not compared: what `getFormulas` returns is Sheets'
+ * spelling of the formula rather than ours, and a seed spelled another way is
+ * still a row nobody typed on. `checkCashFormSeed_` asks the live book.
+ */
+function isCashDateSeed(formula) {
+  var spelled = function (text) { return String(text || '').replace(/\s+/g, '').toUpperCase(); };
+  return spelled(formula) === spelled(CASH_DATE_SEED);
 }
 
 /**
@@ -102,13 +140,43 @@ function cashEntryMoment_(date, now) {
 }
 
 /**
+ * `entries` without the empty form.
+ *
+ * Only the form's own row can be it: that is the one cell the seed is ever
+ * written to, so the same formula on a row below is a date someone put there.
+ * One cell read, and only while that row holds a date and nothing else.
+ */
+function withoutUntouchedForm_(sheet, entries) {
+  var form = entries.filter(function (entry) {
+    return entry._row === CASH_FORM_ROW && hasOnlyCashDate(entry);
+  })[0];
+  if (!form) return entries;
+
+  if (!isUntouchedCashForm(form, cashFormDateCell_(sheet).getFormula())) return entries;
+  return entries.filter(function (entry) { return entry !== form; });
+}
+
+/** The date cell of the row you type on. */
+function cashFormDateCell_(sheet) {
+  return sheet.getRange(colOf(CASH_ENTRY_COLUMNS, 'date') + CASH_FORM_ROW);
+}
+
+/**
  * Move every completed `cash_entry` row into `transactions`.
  *
  * Incomplete rows are left alone rather than rejected: on a phone, a row with
- * a date and no amount yet is someone mid-typing, not an error. They stay
+ * an account and no amount yet is someone mid-typing, not an error. They stay
  * unprocessed and get picked up whenever they are finished, and the run
  * message says how many are waiting so they cannot sit there unnoticed
  * forever.
+ *
+ * **The empty form is not one of them.** The row you type on always holds a
+ * date, because `seedCashEntryDate_` puts `=TODAY()` there, so a tab nobody
+ * has touched reads as one row with a date and nothing else. That row is
+ * neither an entry nor a half-typed one (`isUntouchedCashForm`). The formula
+ * in its date cell is read to tell it from a date someone typed, and only
+ * while that row holds nothing but a date — an entry completed on the form's
+ * row, the path a phone waits on, does not pay for the read.
  *
  * **`known` is a membership test, not the sync's index.** Every uid already in
  * the ledger, mapped to anything truthy. The sync hands over the `byUid` it
@@ -132,7 +200,8 @@ function drainCashEntries_(known, now) {
     .filter(function (entry) { return entry.processed; })
     .map(function (entry) { return entry._row; });
 
-  var entries = all.filter(function (entry) { return !entry.processed; });
+  var entries = withoutUntouchedForm_(
+    sheet, all.filter(function (entry) { return !entry.processed; }));
   if (!entries.length) return { inserted: 0, incomplete: 0, stamped: stamped };
 
   var names = cashAccountNames_();
@@ -359,7 +428,7 @@ function onCashEntryEdit_(sheet, range) {
  * Empty the rows that made it into `transactions`.
  *
  * Only the ones carrying a `processed` stamp, which `drainCashEntries_` writes
- * last of all. An incomplete row — a date typed, an amount not yet — is
+ * last of all. An incomplete row — an account typed, an amount not yet — is
  * someone mid-entry and is left exactly alone.
  *
  * `rows` comes from the drain, which read the whole tab moments ago and knows
@@ -403,15 +472,16 @@ function stampedCashRows_(sheet) {
  *
  * A formula rather than a written-in date, so a tab you opened on Monday and
  * typed into on Tuesday records Tuesday. `drainCashEntries_` reads it through
- * `getValues`, which returns the computed date, so nothing downstream knows the
- * difference.
+ * `getValues`, which returns the computed date, so an entry carries it like any
+ * date you typed. The formula itself is what marks a row nobody has touched —
+ * `isUntouchedCashForm`.
  *
  * Re-seeded after every clear because `clearContent` destroys the formula along
  * with everything else — which is correct, and means the refill belongs here
  * rather than only in the builder that runs at setup.
  */
 function seedCashEntryDate_(sheet) {
-  sheet.getRange(colOf(CASH_ENTRY_COLUMNS, 'date') + '2').setFormula('=TODAY()');
+  cashFormDateCell_(sheet).setFormula(CASH_DATE_SEED);
 }
 
 /**
@@ -426,12 +496,12 @@ function buildCashEntryForm_(ss) {
   var sheet = ss.getSheetByName(TABS.CASH_ENTRY);
   if (!sheet) return;
 
-  sheet.getRange(2, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
+  sheet.getRange(CASH_FORM_ROW, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
     .setBackground(FILL_COLOR.INPUT);
 
   // Only when the row is empty. A date you deliberately backdated, on a row you
   // are still typing, must survive a `setup()` run.
-  if (isBlankCell_(sheet.getRange(colOf(CASH_ENTRY_COLUMNS, 'date') + '2').getValue())) {
+  if (isBlankCell_(cashFormDateCell_(sheet).getValue())) {
     seedCashEntryDate_(sheet);
   }
 
