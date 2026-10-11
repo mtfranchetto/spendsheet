@@ -336,9 +336,15 @@ export function baseCurrency(book: Book): string {
   return String(book.config.base_currency || 'EUR');
 }
 
-/** Every included, active, base-currency account's balance; the rest are counted as skipped. */
-export function netWorthNow(book: Book, filters: Scope) {
-  const summary = { total: 0, counted: 0, skipped: 0, currency: baseCurrency(book) };
+/**
+ * The accounts net worth counts — included, active, in the base currency, with
+ * a balance — and how many were looked at and left out. The one statement of
+ * which accounts count: the total and anything split out of it both read this.
+ */
+export function netWorthAccounts(book: Book, filters: Scope) {
+  const currency = baseCurrency(book);
+  const counted: { account: Row; balance: number }[] = [];
+  let skipped = 0;
 
   for (const account of book.accounts) {
     if (isBlankCell(account.account_id)) continue;
@@ -347,17 +353,21 @@ export function netWorthNow(book: Book, filters: Scope) {
 
     const balance = cellNumber(account.balance);
     if (!isTruthyCell(account.include_in_net_worth) ||
-        String(account.currency || '') !== summary.currency ||
+        String(account.currency || '') !== currency ||
         balance === null) {
-      summary.skipped++;
+      skipped++;
       continue;
     }
-    summary.total += balance;
-    summary.counted++;
+    counted.push({ account, balance });
   }
+  return { counted, skipped, currency };
+}
 
-  summary.total = round2(summary.total);
-  return summary;
+/** Every included, active, base-currency account's balance; the rest are counted as skipped. */
+export function netWorthNow(book: Book, filters: Scope) {
+  const { counted, skipped, currency } = netWorthAccounts(book, filters);
+  const total = counted.reduce((sum, entry) => sum + entry.balance, 0);
+  return { total: round2(total), counted: counted.length, skipped, currency };
 }
 
 // ---------------------------------------------------------------------------

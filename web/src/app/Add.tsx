@@ -13,13 +13,12 @@
 
 import { createSignal, For, Show } from 'solid-js';
 import { formatAmount, liveAmount, parseAmount } from './amount';
+import { TRANSFER_CATEGORY, VALUATION_SUBCATEGORY } from '../domain/schema';
 import { money } from './format';
 import { CategoryPicker, LabelChips, type Choice } from './Sheet';
 import { currency, formAccount, go, open, overview, toast } from './state';
 import { addCash, entryId } from './writes';
 
-const TRANSFER_CATEGORY = 'Transfer';
-const VALUATION_SUBCATEGORY = 'Valuation change';
 
 function Back() {
   return (

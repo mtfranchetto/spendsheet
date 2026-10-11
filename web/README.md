@@ -22,7 +22,7 @@ transfer, a rule, cash and asset values, and deleting cash you typed.
 | `wrangler.jsonc` | static assets from `dist/`; only `/api/*`, `/auth/*` and `/connect` reach the Worker. |
 | `public/_headers` | the CSP for every static file, which the Worker never sees. |
 | `src/sheets/records.ts` | Sheets API values → `readRecords_`-shaped records: padded rows, counted by the key column. |
-| `src/domain/` | the book, asked a question, on the phone: aggregation, `runChecks_` and `normalizeMerchant` in TypeScript, over day numbers and the book's clock. Framework-free. `payloads.ts` answers in the shapes of the Apps Script viewer's five calls, which `tests/parity.test.mjs` holds it to. |
+| `src/domain/` | the book, asked a question, on the phone: aggregation, `runChecks_` and `normalizeMerchant` in TypeScript, over day numbers and the book's clock. Framework-free. `payloads.ts` answers in the shapes of the Apps Script viewer's five calls, which `tests/parity.test.mjs` holds it to. `longview.ts` answers Charts' Long view: the last 12 months, the 12 before them and the whole ledger, with its windows decided in its header. |
 | `src/store/copy.ts` | the last `batchGet`, in IndexedDB, for the account that read it. |
 | `public/sw.js` | the shell from this device's cache, before the network is asked anything. Never `/api`, `/auth` or `/connect`. |
 | `src/api/client.ts` | asking the Worker something, and telling a refusal from a dropped connection from a book out of reach. |
@@ -148,6 +148,7 @@ the vantage point that misled the last storage conclusion.
 | | expected |
 |---|---|
 | Charts, a period against the `reports` tab over the same period | the same totals — two implementations that agree |
+| Charts → Long view, *Annual spending* and *Savings rate* against `reports` N17 and N19 (*Last 12 months, spending* and *savings rate*) | the same spending to the cent and the same rate to the percent |
 | Force-quit the icon and reopen it | the last copy draws as soon as the account answers, under *Last updated …*, then the strip goes |
 | Airplane mode, then open the icon | the last copy draws, with *This is the last copy this phone kept* — not *Could not reach the server* |
 | Pull down at the top | *Refreshing*, then the strip goes |

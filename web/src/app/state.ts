@@ -49,12 +49,13 @@ import { api, ApiNoAccess, ApiRefused, ApiStale, type Me } from '../api/client';
 import type { FreshRows } from '../api/contract';
 import { bookFromBatch, tabOf, type BatchGet, type Book, type Row } from '../domain/book';
 import { clockAt, dayKey } from '../domain/days';
+import { longView as longViewOf } from '../domain/longview';
 import { appAnalyticsData, appOpenData, appOverviewData, appRecordsData } from '../domain/payloads';
-import { ledgerOf } from '../domain/query';
+import { ledgerOf, type Period } from '../domain/query';
 import { QUERY_PAGE_SIZE, TABS } from '../domain/schema';
 import type { Cell } from '../sheets/records';
 import { forgetCopy, readAnyCopy, writeCopy, type StoredCopy } from '../store/copy';
-import { parseView, type AnalyticsFilters, type RecordsFilters, type Screen, type View } from './view';
+import { parseView, type AnalyticsFilters, type ChartsMode, type RecordsFilters, type Screen, type View } from './view';
 
 export type Session = { kind: 'checking' } | { kind: 'out' } | { kind: 'unreachable' } | { kind: 'in'; me: Me };
 
@@ -176,10 +177,20 @@ const derived = createRoot(() => {
     return key ? { year: Number(key.slice(0, 4)), month: Number(key.slice(5, 7)) } : null;
   });
 
-  return { book, rowsByUid, clock, open, overview, analytics, records, earliest };
+  // Charts' other mode. It reads no filter, so only the book and the day move it.
+  const longView = createMemo(
+    () => {
+      const b = book();
+      const c = clock();
+      return b && c ? longViewOf(b, ledger(), c) : null;
+    },
+    { lazy: true }
+  );
+
+  return { book, rowsByUid, clock, open, overview, analytics, records, earliest, longView };
 });
 
-export const { book, clock, open, overview, analytics, records, earliest } = derived;
+export const { book, clock, open, overview, analytics, records, earliest, longView } = derived;
 
 /** The row a uid names, as the book last read it — its sheet row is `_row`. */
 export const rowOf = (uid: string): Row | undefined => derived.rowsByUid().get(uid);
@@ -457,6 +468,11 @@ export function go(screen: Screen): void {
   window.scrollTo(0, 0);
 }
 
+/** Period or Long view. The period's filters are kept, so switching back finds them as they were. */
+export function setChartsMode(mode: ChartsMode): void {
+  setView((current) => ({ ...current, charts: mode }));
+}
+
 export function setAnalyticsFilters(change: Partial<AnalyticsFilters>): void {
   setView((current) => ({ ...current, analytics: { ...current.analytics, ...change } }));
 }
@@ -486,13 +502,19 @@ export function toggleExpanded(name: string): void {
  * **replaced**, not merged: a search typed last week surviving would make a
  * list that no longer sums to the figure you tapped. A custom period is
  * cloned so editing it on Records cannot reach back into Charts.
+ *
+ * A figure from the long view brings its own `period` and nothing else: it was
+ * summed over every account and label, so the period's filters do not apply.
  */
-export function drillToRecords(drill: { spendOnly?: boolean; incomeOnly?: boolean; category?: string; subcategory?: string }): void {
+export function drillToRecords(drill: {
+  spendOnly?: boolean; incomeOnly?: boolean; category?: string; subcategory?: string; period?: Period;
+}): void {
   const from = view().analytics;
+  const chosen = from.period.kind === 'custom' ? { kind: 'custom', from: from.period.from, to: from.period.to } : from.period;
   replaceRecordsFilters({
-    period: from.period.kind === 'custom' ? { kind: 'custom', from: from.period.from, to: from.period.to } : from.period,
-    account: from.account,
-    label: from.label,
+    period: drill.period ? { ...drill.period } : chosen,
+    account: drill.period ? 'All' : from.account,
+    label: drill.period ? 'All' : from.label,
     search: '',
     unconfirmedOnly: false,
     spendOnly: !!drill.spendOnly,

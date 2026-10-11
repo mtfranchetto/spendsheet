@@ -1,53 +1,36 @@
 /**
- * Analytics.tsx — Charts: four answers with their shapes, then the charts.
+ * Analytics.tsx — Charts: a switch between its two modes, and the period one.
  *
- * Two of the stat cards open the
+ * **Period** is four answers with their shapes, then the charts, over a period
+ * the filter bar picks. **Long view** is `LongView.tsx`: no picker, fixed long
+ * windows. One switch at the top is the only way between them, because they
+ * are two readings of one screen rather than two places to be — a fourth tab
+ * would have put a planning question on the same footing as the ledger.
+ *
+ * Two of the period's stat cards open the
  * rows behind them and two do not: Spending and Income are each a total over
  * rows of one sign, so the list adds up to the figure; Balance is a position
  * and Cash flow a net, and a list behind either would sum to neither.
  */
 
-import { Show } from 'solid-js';
-import type { JSX } from '@solidjs/web';
+import { For, Show } from 'solid-js';
 import { money, shortDate } from './format';
 import { BarChart, Donut, FlowThumb, IncomeThumb, LineChart, Sparkline } from './Charts';
 import { FilterBar } from './Filters';
+import { LongView } from './LongView';
 import { CategoryBars } from './Rows';
-import { analytics, currency, drillToRecords } from './state';
+import { StatCard } from './Stat';
+import { analytics, currency, drillToRecords, setChartsMode, view } from './state';
+import type { ChartsMode } from './view';
 
-/** A headline number with its shape beside it; a button only when there are rows behind it. */
-function StatCard(props: { label: string; value: string; thumb: JSX.Element; onTap?: () => void }) {
-  return (
-    <div class="card">
-      <Show
-        when={props.onTap}
-        fallback={
-          <div class="stat">
-            <div class="grow">
-              <div class="label">{props.label}</div>
-              <div class="value num">{props.value}</div>
-            </div>
-            {props.thumb}
-          </div>
-        }
-      >
-        <button type="button" class="stat tappable" aria-label={props.label + ' ' + props.value + ', show these transactions'} onClick={() => props.onTap?.()}>
-          <div class="grow">
-            <div class="label">{props.label}</div>
-            <div class="value num">{props.value}</div>
-          </div>
-          {props.thumb}
-          <span class="chev">›</span>
-        </button>
-      </Show>
-    </div>
-  );
-}
+const MODES: { id: ChartsMode; label: string }[] = [
+  { id: 'period', label: 'Period' },
+  { id: 'long', label: 'Long view' }
+];
 
-export function Analytics() {
+function Period() {
   return (
     <>
-      <h1>Charts</h1>
       <FilterBar which="analytics" />
       <Show when={analytics()} fallback={<div class="spinner">Loading…</div>}>
         {(data) => (
@@ -95,6 +78,26 @@ export function Analytics() {
             </div>
           </>
         )}
+      </Show>
+    </>
+  );
+}
+
+export function Analytics() {
+  return (
+    <>
+      <h1>Charts</h1>
+      <div class="segmented top" role="group" aria-label="Which view">
+        <For each={MODES}>
+          {(mode) => (
+            <button type="button" class="seg" aria-pressed={view().charts === mode.id ? 'true' : 'false'} onClick={() => setChartsMode(mode.id)}>
+              {mode.label}
+            </button>
+          )}
+        </For>
+      </div>
+      <Show when={view().charts === 'long'} fallback={<Period />}>
+        <LongView />
       </Show>
     </>
   );

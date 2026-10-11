@@ -99,6 +99,14 @@ export const CATEGORY_SOURCE = {
 } as const;
 
 export const TX_TYPE = { EXPENSE: 'expense', INCOME: 'income', TRANSFER: 'transfer' } as const;
+
+/**
+ * Where a change in an asset's value is filed: `Transfer › Valuation change`,
+ * a seed row of `categories`. The form that writes one and the long view that
+ * adds them up both name it from here.
+ */
+export const TRANSFER_CATEGORY = 'Transfer';
+export const VALUATION_SUBCATEGORY = 'Valuation change';
 export const ACCOUNT_KIND = { BANK: 'bank', CASH: 'cash', ASSET: 'asset' } as const;
 export const ACCOUNT_KINDS = [ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, ACCOUNT_KIND.ASSET] as const;
 export const RUN_RESULT = { OK: 'OK', PARTIAL: 'PARTIAL', FAIL: 'FAIL' } as const;

@@ -43,6 +43,9 @@ const ALL_FORMULAS = () => [
   ['monthlyQuery', ctx.monthlyQueryStringFormula()],
   ['yearToDate', ctx.yearToDateSpendFormula_(0)],
   ['lastYearToDate', ctx.yearToDateSpendFormula_(-1)],
+  ['trailingSpending', ctx.trailingYearFormula_('spending')],
+  ['trailingIncome', ctx.trailingYearFormula_('income')],
+  ['savingsRate', ctx.savingsRateFormula_('$N$17', '$N$18')],
   ['monthKey', ctx.monthKeyFormula_()]
 ];
 
@@ -157,7 +160,7 @@ describe('in_reports', () => {
       expect(formula).not.toContain("<> 'transfer'");
     });
 
-    [ctx.yearToDateSpendFormula_(0),
+    [ctx.yearToDateSpendFormula_(0), ctx.trailingYearFormula_('spending'), ctx.trailingYearFormula_('income'),
       ctx.labelCountFormula(), ctx.labelTotalFormula()].forEach((formula) => {
       expect(formula).toContain(ctx.txRange_('in_reports') + ',TRUE');
     });
@@ -516,6 +519,53 @@ describe('the reports tab', () => {
     reports.getRange('B' + c.REPORT.FILTER_ROW).setValue('Last year');
     c.setup();
     expect(reports.getRange('B' + c.REPORT.FILTER_ROW).getValue()).toBe('Last year');
+  });
+
+  it('answers the last 12 months in three cells the phone can be checked against', () => {
+    const label = (row) => reports.getRange('M' + row).getValue();
+    const formula = (row) => reports.getRange('N' + row).getFormula();
+
+    expect([label(17), label(18), label(19)]).toEqual([
+      'Last 12 months, spending', 'Last 12 months, income', 'Last 12 months, savings rate'
+    ]);
+    expect(formula(17)).toBe(c.trailingYearFormula_('spending'));
+    expect(formula(18)).toBe(c.trailingYearFormula_('income'));
+    // The year-on-year rows above did not move.
+    expect(formula(14)).toBe(c.yearToDateSpendFormula_(0));
+    expect(formula(16)).toBe('=$N$14-$N$15');
+  });
+
+  it('starts the last 12 months the day after the same date a year ago, and ends them with today whole', () => {
+    const spending = c.trailingYearFormula_('spending');
+    const income = c.trailingYearFormula_('income');
+
+    // EDATE clamps 29 February to the 28th, as the phone does.
+    expect(spending).toContain('">="&EDATE(TODAY(),-12)+1');
+    // Not `<=TODAY()`: a booking date with a time of day is after midnight.
+    expect(spending).toContain('"<"&TODAY()+1');
+    expect(spending).not.toContain('"<="&TODAY()');
+
+    // Spending is the negative rows, flipped to read as money out; income is the positive ones as they are.
+    expect(spending.startsWith('=-SUMIFS(')).toBe(true);
+    expect(spending).toContain('"<0")');
+    expect(income.startsWith('=SUMIFS(')).toBe(true);
+    expect(income).toContain('">0")');
+    [spending, income].forEach((formula) => expect(formula).toContain(c.txRange_('amount_base')));
+  });
+
+  it('leaves the savings rate blank when nothing came in, and formats it as the one percentage in a money column', () => {
+    const rate = reports.getRange('N' + c.REPORT.RATE_ROW).getFormula();
+    expect(c.REPORT.RATE_ROW).toBe(c.REPORT.YOY_ROW + 5);
+    expect(rate).toBe('=IF($N$18>0,($N$18-$N$17)/$N$18,"")');
+
+    // The last format laid on the cell wins, and the money format covers the whole column.
+    // The harness names a range `row,col,rows,cols`, and N is column 14.
+    const formats = reports.calls.filter((call) => call.kind === 'numberFormat');
+    const last = (matches) => formats.map(matches).lastIndexOf(true);
+    const money = last((call) => call.a1.startsWith(c.REPORT.RESULT_ROW + ',14,') && call.pattern !== '0%');
+    const percent = last((call) => call.a1 === c.REPORT.RATE_ROW + ',14,1,1' && call.pattern === '0%');
+    expect(money).toBeGreaterThan(-1);
+    expect(percent).toBeGreaterThan(money);
   });
 
   it('builds its dropdown lists from two cells rather than an array literal', () => {
