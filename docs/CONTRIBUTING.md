@@ -88,31 +88,9 @@ The browser suite narrows this but does not close it: it runs the page against c
 - Files are numbered because Apps Script concatenates them in name order. The number is load order, not decoration.
 - **Code only for what runs unattended and repeatedly.** One-time human operations get documented, not automated — this is why there is no CSV importer and no "add account" wizard. A pull request that adds one will be asked what makes it recurring.
 
-## Optional: clasp
+## clasp
 
-The Apps Script editor has no bulk import — you create each file and paste into it, and drag-and-drop does nothing. That's fine for the three files a user needs, but `src/` grows to eleven, so `clasp` pushes the whole folder in one command.
-
-It's the developer path, not the user path: the README stays copy-paste so nobody needs Node to *use* this.
-
-`clasp` is already a devDependency, so there's nothing to install globally.
-
-**One-time setup:**
-
-```bash
-# 1. Enable the Apps Script API for your Google account (once, ever):
-#    https://script.google.com/home/usersettings  →  Google Apps Script API: ON
-#    Without this, push fails with a 403 that doesn't explain itself.
-
-npx clasp login          # opens a browser
-
-# 2. Point at your script. Apps Script → Project Settings → Script ID.
-cat > .clasp.json <<'JSON'
-{ "scriptId": "PASTE_YOUR_SCRIPT_ID", "rootDir": "src" }
-JSON
-
-npm run status           # lists what would be pushed — check before the first push
-npm run push             # --force the first time, to overwrite the remote manifest
-```
+`clasp` is how the code reaches the Apps Script project, for users and contributors alike. Logging in and writing `.clasp.json` is [step 2 of the setup](SETUP.md#2-add-the-code); it is a devDependency, so there is nothing to install globally.
 
 **Day to day:**
 
@@ -126,7 +104,7 @@ npm run deploy:dry    # print what that would do, change nothing
 
 ### Why `rootDir` is `src`
 
-`clasp` requires `appsscript.json` to sit in `rootDir`, which is why the manifest lives in `src/` rather than at the repo root. The payoff is that files arrive in the editor named `00_config`, `04_setup`, `14_menu` — exactly what the README tells copy-paste users to call them. With `rootDir: "."` they'd arrive as `src/00_config`, and the two setup paths would produce different projects.
+`clasp` requires `appsscript.json` to sit in `rootDir`, which is why the manifest lives in `src/` rather than at the repo root. The payoff is that files arrive in the editor named `00_config`, `04_setup`, `19_menu` — exactly what someone pasting them by hand calls them. With `rootDir: "."` they'd arrive as `src/00_config`, and the two setup paths would produce different projects.
 
 ### Watch out
 

@@ -657,7 +657,7 @@ function formatReports_(sheet) {
  * Nothing else here is editable — every other cell is a formula or a label —
  * and until now nothing said so. A dropdown looks exactly like a result until
  * you happen to tap it, which is how a filtering UI becomes a tab people scroll
- * past. `DASH_COLOR.INPUT` is the same blue the `review` tab uses for the two
+ * past. `FILL_COLOR.INPUT` is the same blue the `review` tab uses for the two
  * cells you act on there, so "blue means this one is mine" is one rule across
  * the book rather than a per-tab convention.
  *
@@ -669,9 +669,9 @@ function markReportInputs_(sheet) {
   var last = REPORT.FILTER_ROW + REPORT_FILTERS.length - 1;
 
   sheet.getRange('B' + REPORT.FILTER_ROW + ':B' + last)
-    .setBackground(DASH_COLOR.INPUT);
+    .setBackground(FILL_COLOR.INPUT);
   sheet.getRange('B' + REPORT.CUSTOM_ROW + ':B' + (REPORT.CUSTOM_ROW + 1))
-    .setBackground(DASH_COLOR.INPUT);
+    .setBackground(FILL_COLOR.INPUT);
 
   sheet.getRange('A1').setNote(
     'The blue cells are the ones you change. Everything else is a formula.\n\n' +

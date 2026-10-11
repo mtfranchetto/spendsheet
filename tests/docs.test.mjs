@@ -175,3 +175,35 @@ describe('the counts the docs quote', () => {
     });
   });
 });
+
+describe('the tabs the docs name', () => {
+  // A page that documents a tab the book does not have reads as instructions
+  // for it: block by block, cell by cell, and none of it there to find. The
+  // shapes checked are the ones that claim it outright — a section headed by a
+  // name, a name followed by the word, and the first of a pair that is. Prose
+  // that names a tab without backticks is past what a pattern can know.
+  const TAB = '`(_?[a-z][a-z_]*)`';
+  const named = (text) => [
+    ...text.matchAll(new RegExp('^#{2,3} ' + TAB + '$', 'gm')),
+    ...text.matchAll(new RegExp(TAB + ' tabs?\\b', 'g')),
+    ...text.matchAll(new RegExp(TAB + ' and `_?[a-z][a-z_]*` tabs\\b', 'g'))
+  ].map((m) => m[1]);
+
+  const real = new Set(Object.values(ctx.TABS));
+
+  // The notes an agent reads and the app's own page name tabs too.
+  const everywhere = pages.concat(['CLAUDE.md', 'web/README.md']
+    .map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]));
+
+  it('finds some to check, or this file is asleep', () => {
+    expect(everywhere.flatMap(([, text]) => named(text)).length).toBeGreaterThan(10);
+  });
+
+  it('names only tabs setup builds', () => {
+    const wrong = everywhere.flatMap(([file, text]) => named(text)
+      .filter((name) => !real.has(name))
+      .map((name) => `${file}: \`${name}\``));
+
+    expect(wrong).toEqual([]);
+  });
+});

@@ -1,0 +1,29 @@
+# Three ecosystems, monthly. The workflow pins its actions to commit SHAs, which
+# makes an update a diff somebody reads — and nothing proposes that diff unless
+# this file asks for it.
+#
+# Monthly rather than weekly: nothing here faces the internet with a dependency
+# in the request path. The Worker and the page ship no runtime dependency but
+# Solid; everything else is tooling.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: monthly
+    groups:
+      # Pinned exactly and moved together — see "Dependencies" in web/README.md.
+      solid:
+        patterns:
+          - "solid-js"
+          - "@solidjs/*"

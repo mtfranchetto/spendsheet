@@ -193,7 +193,21 @@ npm run build && npm run serve        # page and Worker together on :8787
 `npm run dev` runs Vite on :4322 with the Worker's paths proxied to :8787, for
 working on the page with hot reload.
 
+## Dependencies
+
+Solid is on its 2.0 release-candidate line, and `solid-js`, `@solidjs/web` and
+`@solidjs/vite-plugin` are pinned to exact versions rather than ranges: one
+candidate can break the one before it, and the three have to move together. A
+bump is one pull request that changes all three, with the typecheck, the build
+and the browser suite behind it — `.github/dependabot.yml` groups them for
+that reason. They come off exact pins when 2.0 is `latest` on npm.
+
 ## Tests
+
+`npm run deploy` here runs the compiler and then the root's `npm test` before it
+builds anything, as the root's deploy does — the writes in `worker/actions.ts`
+reach the ledger, and a deploy is the last place a red test can stop one. So
+both installs have to be present: `npm ci` at the root and here.
 
 `npm test` **at the repository root** runs these alongside the `.gs` suites:
 Vitest's default include is the whole repo. Check the file list rather than the

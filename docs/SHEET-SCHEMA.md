@@ -317,7 +317,7 @@ A row missing an account or an amount is **left unprocessed rather than rejected
 
 **`reports`** and **`review`** have a page of their own: [`docs/REPORTS.md`](REPORTS.md). The short version is that both are formulas, checkboxes and dropdowns — never a menu item — because **custom menus, sidebars and dialogs do not exist in the Google Sheets mobile app**.
 
-There were two more, `dashboard` and `recent`, and they are gone. They answered "what is my position" and "what happened lately" through a grid renderer that had to open every row and every array formula before it could show you anything — which is the problem the [mobile web app](MOBILE.md) exists to solve, and solves better. Removing them took ~1,300 lines and about fifty `ARRAYFORMULA` anchors out of the book.
+There is deliberately no tab for "what is my position" or "what happened lately". A grid renderer has to open every row and every array formula before it can show you anything, so the [mobile web app](MOBILE.md) answers both instead, computed from the ledger.
 
 `review` is the only tab in the book with a schema you have not seen: `uid` · `booking_date` · `account_name` · `description` · `amount_base` · `guess` · `why` · `confirmed` · `category_override` · `subcategory_override` · `status`. `uid` is hidden and is not for reading — it is the pointer that lets a tick written on your phone find the right transaction after the queue has been thrown away and rebuilt.
 
