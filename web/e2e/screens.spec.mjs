@@ -33,15 +33,17 @@ test('an account tile opens its records, and the filter is in the address', asyn
   await page.goto('/');
   await page.locator('.tile', { hasText: 'Fineco' }).click();
   await expect(page).toHaveURL(/v=records&a=Fineco/);
-  await expect(page.locator('.chip', { hasText: 'Fineco' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.filters .chip.on', { hasText: 'Fineco' })).toBeVisible();
   await expect(page.locator('.rec-sub', { hasText: 'Wallet' })).toHaveCount(0);
 });
 
 test('a deep link opens the screen and filters it names', async ({ page }) => {
   await worker(page, signedIn());
   await page.goto('/?v=records&u=1&p=last_12');
-  await expect(page.getByRole('button', { name: 'Showing: needs review' })).toBeVisible();
-  await expect(page.getByLabel('Period')).toHaveValue('last_12');
+  await expect(page.locator('.filters').getByRole('button', { name: 'Needs review' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.stepper .when')).toHaveText('Last 12 months');
+  // Twelve months ending today is no one month or year, so there is nothing to step by.
+  await expect(page.locator('.stepper .step')).toHaveCount(0);
   // Every row drawn is one that needs review.
   await expect(page.locator('.tap .check')).toHaveCount(0);
 });
@@ -52,9 +54,58 @@ test('a category opens onto its children, and a child drills into Records with a
   await page.locator('.catrow', { hasText: 'Food & Drink' }).last().click();
   await page.locator('.catkid', { hasText: 'Groceries' }).last().click();
   await expect(page.locator('h1')).toHaveText('Records');
-  await expect(page.locator('.drills .chip.on')).toHaveCount(3);
-  await page.getByRole('button', { name: 'Clear all' }).click();
-  await expect(page.locator('.drills')).toHaveCount(0);
+  await expect(page.locator('.filters .chip.on')).toHaveCount(3);
+  await page.locator('.filters').getByRole('button', { name: 'Clear' }).click();
+  await expect(page.locator('.filters .chip.on')).toHaveCount(0);
+});
+
+test('the arrows step the period a year or a month at a time, and stop at the present', async ({ page }) => {
+  await worker(page, signedIn());
+  const now = new Date();
+  const year = now.getFullYear();
+
+  // Records opens on the year so far.
+  await page.goto('/?v=records');
+  await expect(page.locator('.stepper .when')).toHaveText(String(year));
+  await expect(page.getByRole('button', { name: 'Next year' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous year' }).click();
+  await expect(page.locator('.stepper .when')).toHaveText(String(year - 1));
+  await expect(page).toHaveURL(new RegExp('p=year%3A' + (year - 1)));
+  await page.getByRole('button', { name: 'Next year' }).click();
+  await expect(page).toHaveURL(/\?v=records$/);
+
+  // Charts opens on the month so far, and a step back crosses into last year in January.
+  await page.locator('#tabs button', { hasText: 'Charts' }).click();
+  await expect(page.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous month' }).click();
+  const before = new Date(year, now.getMonth() - 1, 1);
+  const id = before.getFullYear() + '-' + String(before.getMonth() + 1).padStart(2, '0');
+  await expect(page).toHaveURL(new RegExp('p=month%3A' + id));
+  await page.getByRole('button', { name: 'Next month' }).click();
+  await expect(page).toHaveURL(/\?v=analytics$/);
+});
+
+test('a pill opens a sheet, and what is chosen there is on the pill and in the address', async ({ page }) => {
+  await worker(page, signedIn());
+  await page.goto('/?v=records');
+  const pill = page.locator('.filters .chip.opens').first();
+  await expect(pill).toHaveText('Accounts');
+  await pill.click();
+  await page.getByRole('option', { name: 'Fineco' }).click();
+  // Several at a time, so the sheet stays until it is dismissed.
+  await expect(page.getByRole('option', { name: 'Fineco' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('option', { name: 'Fineco' })).toBeHidden();
+  await expect(pill).toHaveText('Fineco');
+  await expect(page).toHaveURL(/v=records&a=Fineco/);
+  await expect(page.locator('.rec-sub', { hasText: 'Wallet' })).toHaveCount(0);
+
+  // A period from the sheet closes it.
+  await page.locator('.stepper .when').click();
+  await page.getByRole('option', { name: 'Last 12 months' }).click();
+  await expect(page.getByRole('option', { name: 'Last 12 months' })).toBeHidden();
+  await expect(page.locator('.stepper .when')).toHaveText('Last 12 months');
+  await expect(page).toHaveURL(/p=last_12/);
 });
 
 test('the stored copy is drawn before the read lands, and says how old it is', async ({ page }) => {

@@ -75,9 +75,9 @@ export function dayHeading(key: string, today: string): string {
     (String(year) === today.slice(0, 4) ? '' : ' ' + year);
 }
 
-/** January…December, short, in the phone's locale. */
-export function monthNames(): string[] {
-  return Array.from({ length: 12 }, (_, month) => new Date(2000, month, 1).toLocaleDateString(undefined, { month: 'short' }));
+/** `October 2026`, in the phone's locale. `month` is 1–12. */
+export function monthTitle(year: number, month: number): string {
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
 /** `🛒 Groceries`, or `Groceries` with no leading space when the icon cell is empty. */

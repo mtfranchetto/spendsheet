@@ -510,7 +510,7 @@ function RuleForm(props: { record: PageRecord }) {
  * to the focused field otherwise, and closing leaves you somewhere else in
  * the list than where you opened it.
  */
-function openWithoutMoving(dialog: HTMLDialogElement): void {
+export function openWithoutMoving(dialog: HTMLDialogElement): void {
   const at = window.scrollY;
   const style = document.body.style;
   style.position = 'fixed';

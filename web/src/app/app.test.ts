@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatAmount, parseAmount } from './amount';
 import { agoWords, dayHeading, money, shortDate, withIcon } from './format';
 import { barGeometry, donutSlices, lineGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS } from './geometry';
-import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodOptionId, viewSearch } from './view';
+import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodUnit, stepPeriod, viewSearch } from './view';
 
 describe('format', () => {
   it('groups thousands at four digits as well as five, so a column lines up', () => {
@@ -120,10 +120,55 @@ describe('view', () => {
     expect(parseView('?v=records&p=month:2026-13', 2026).records.period).toEqual({ kind: 'ytd' });
   });
 
-  it('selects one option for every month, and keeps the month in the id', () => {
+  it('keeps the month and the year in the id', () => {
     expect(periodId({ kind: 'month', year: 2026, month: 3 })).toBe('month:2026-03');
-    expect(periodOptionId({ kind: 'month', year: 2026, month: 3 })).toBe('month');
     expect(periodId({ kind: 'year', year: 2024 })).toBe('year:2024');
+  });
+
+  // October 2026: `month` is zero-based, as the book's clock has it.
+  const october = { year: 2026, month: 9 };
+
+  it('reads a period as the one month or one year it covers, or neither', () => {
+    expect(periodUnit({ kind: 'mtd' }, october)).toEqual({ unit: 'month', year: 2026, month: 10 });
+    expect(periodUnit({ kind: 'last_month' }, october)).toEqual({ unit: 'month', year: 2026, month: 9 });
+    expect(periodUnit({ kind: 'last_month' }, { year: 2026, month: 0 })).toEqual({ unit: 'month', year: 2025, month: 12 });
+    expect(periodUnit({ kind: 'month', year: 2024, month: 2 }, october)).toEqual({ unit: 'month', year: 2024, month: 2 });
+    expect(periodUnit({ kind: 'ytd' }, october)).toEqual({ unit: 'year', year: 2026 });
+    expect(periodUnit({ kind: 'year', year: 2024 }, october)).toEqual({ unit: 'year', year: 2024 });
+    for (const kind of ['week', 'last_12', 'custom']) expect(periodUnit({ kind }, october)).toBeNull();
+  });
+
+  it('steps a month at a time, across the turn of a year', () => {
+    expect(stepPeriod({ kind: 'mtd' }, -1, october)).toEqual({ kind: 'month', year: 2026, month: 9 });
+    expect(stepPeriod({ kind: 'last_month' }, -1, october)).toEqual({ kind: 'month', year: 2026, month: 8 });
+    expect(stepPeriod({ kind: 'month', year: 2026, month: 1 }, -1, october)).toEqual({ kind: 'month', year: 2025, month: 12 });
+    expect(stepPeriod({ kind: 'month', year: 2025, month: 12 }, 1, october)).toEqual({ kind: 'month', year: 2026, month: 1 });
+  });
+
+  it('steps a year at a time', () => {
+    expect(stepPeriod({ kind: 'ytd' }, -1, october)).toEqual({ kind: 'year', year: 2025 });
+    expect(stepPeriod({ kind: 'year', year: 2024 }, 1, october)).toEqual({ kind: 'year', year: 2025 });
+  });
+
+  it('arrives at the present as the default, so stepping away and back is the bare address', () => {
+    expect(stepPeriod({ kind: 'month', year: 2026, month: 9 }, 1, october)).toEqual({ kind: 'mtd' });
+    expect(stepPeriod({ kind: 'year', year: 2025 }, 1, october)).toEqual({ kind: 'ytd' });
+    const view = defaultView();
+    view.screen = 'analytics';
+    view.analytics.period = stepPeriod(stepPeriod(view.analytics.period, -1, october)!, 1, october)!;
+    expect(viewSearch(view)).toBe('?v=analytics');
+  });
+
+  it('has no step into a month or a year that has not started, nor from a period with no unit', () => {
+    expect(stepPeriod({ kind: 'mtd' }, 1, october)).toBeNull();
+    expect(stepPeriod({ kind: 'ytd' }, 1, october)).toBeNull();
+    expect(stepPeriod({ kind: 'last_12' }, -1, october)).toBeNull();
+    expect(stepPeriod({ kind: 'year', year: 1990 }, -1, october)).toBeNull();
+  });
+
+  it('gives every step an id the address can read back', () => {
+    const stepped = stepPeriod({ kind: 'mtd' }, -1, october)!;
+    expect(periodFromId(periodId(stepped), null, null, 2026)).toEqual(stepped);
   });
 
   it('reads All and an empty list as the same answer', () => {
