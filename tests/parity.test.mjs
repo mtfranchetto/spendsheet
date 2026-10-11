@@ -114,8 +114,8 @@ function port(c) {
 }
 
 /** `runChecks_` as the payload carries it — what `appHealth` is the port of. */
-function gsHealth(c, rowCount) {
-  return c.runChecks_(new Date(), rowCount).map((alert) => ({
+function gsHealth(c) {
+  return c.runChecks_(new Date()).map((alert) => ({
     kind: String(alert.kind || ''),
     subject: String(alert.subject || ''),
     detail: String(alert.detail || '')
@@ -202,7 +202,7 @@ describe.each(INSTANTS)('the old viewer\'s answers %s', (_label, instant, file) 
   it('the health strip, against the checks the book still runs', () => {
     const c = sickBook();
     const ts = port(c);
-    expect(wire(appHealth(ts.book, ts.clock, ts.ledger.length))).toEqual(wire(gsHealth(c, ts.ledger.length)));
+    expect(wire(appHealth(ts.book, ts.clock, ts.ledger.length))).toEqual(wire(gsHealth(c)));
   });
 
   it('actually exercised every detector, so the health comparison means something', () => {
@@ -236,7 +236,7 @@ describe('the row-loss check, from _monitor rather than script properties', () =
 
   const health = (c) => {
     const ts = port(c);
-    return { gs: wire(gsHealth(c, ts.ledger.length)), ts: wire(appHealth(ts.book, ts.clock, ts.ledger.length)) };
+    return { gs: wire(gsHealth(c)), ts: wire(appHealth(ts.book, ts.clock, ts.ledger.length)) };
   };
 
   it('agrees a delete that left its copy is excused', () => {

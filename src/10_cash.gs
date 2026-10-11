@@ -427,7 +427,7 @@ function buildCashEntryForm_(ss) {
   if (!sheet) return;
 
   sheet.getRange(2, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
-    .setBackground(DASH_COLOR.INPUT);
+    .setBackground(FILL_COLOR.INPUT);
 
   // Only when the row is empty. A date you deliberately backdated, on a row you
   // are still typing, must survive a `setup()` run.

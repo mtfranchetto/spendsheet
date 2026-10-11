@@ -77,7 +77,7 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 15. **Spendsheet → Re-categorise all**, then **Spendsheet → Set up and maintain → Rebuild charts**.
 16. Put the phone app up from `web/` ([`web/README.md`](web/README.md)), paste its address into `_config` → `viewer_url`, then **Spendsheet → Open the app**. ([`docs/MOBILE.md`](docs/MOBILE.md))
 
-This is the step that makes categorisation work on day one rather than in six months, and it's why the import lands before the cascade rather than after it. Cadence detection is the same story: an annual insurance premium is invisible in the rolling ~90 days PSD2 gives you.
+This is the step that makes categorisation work on day one rather than in six months, and it's why the import lands before the cascade rather than after it.
 
 Full detail in [`docs/SETUP.md`](docs/SETUP.md).
 

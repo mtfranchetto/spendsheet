@@ -156,12 +156,7 @@ function buildReviewTab_(ss, report) {
  * real checkbox holding a real boolean, so `=$H2=TRUE` needs no coercion and
  * says so explicitly.
  *
- * This used to defer the whole argument to `flagDashboardStates_`, which went
- * with `16_dashboard.gs` — leaving the reasoning for one of this project's
- * hardest-won invariants pointing at a name that greps to nothing, which is
- * strictly worse than no pointer at all. `git log -- src/16_dashboard.gs` has
- * the original. `tests/locale.test.mjs` now holds every rule in the book to
- * both halves, which is where this belonged in the first place.
+ * `tests/locale.test.mjs` holds every rule in the book to both halves.
  */
 function markReviewInputs_(sheet) {
   var column = function (name) { return colOf(REVIEW_COLUMNS, name); };
@@ -169,7 +164,7 @@ function markReviewInputs_(sheet) {
   var width = colIndex_(REVIEW_COLUMNS, 'subcategory_override') - first + 1;
 
   sheet.getRange(2, first, Math.max(sheet.getMaxRows() - 1, 1), width)
-    .setBackground(DASH_COLOR.INPUT);
+    .setBackground(FILL_COLOR.INPUT);
 
   var done = SpreadsheetApp.newConditionalFormatRule()
     .whenFormulaSatisfied('=$' + column('confirmed') + '2=TRUE')

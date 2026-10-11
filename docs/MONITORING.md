@@ -115,7 +115,9 @@ The phone app keeps working throughout, because it reads the stored columns A–
 
 `selfCheck()` catches `syncAll_()` being broken, hung or crashing. It **cannot** catch both triggers being deleted, or the whole project being disabled: nothing inside the script can report that the script isn't running.
 
-An external dead-man's switch — [healthchecks.io](https://healthchecks.io) has a free tier — is the only real fix. It's deliberately out of scope to keep third-party setup at zero, and will be documented here as a ten-line opt-in for anyone who wants it.
+The phone app is the one vantage point outside the script: it computes the same staleness check from the book, in the browser, so opening it says *Sync has not run for N days* whether or not anything in Apps Script is still running. That only helps on a day you open it.
+
+An external dead-man's switch — [healthchecks.io](https://healthchecks.io) has a free tier — is the only unattended fix, and it is deliberately out of scope to keep third-party setup at zero.
 
 ## Rate limits are tighter than they look
 

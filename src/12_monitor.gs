@@ -72,27 +72,15 @@ function selfCheck(e) {
   return findings;
 }
 
-/**
- * `knownRowCount` is for a caller that has already read the ledger.
- *
- * Measured on the live book: the six detectors cost ~300ms between them once
- * their tabs are shared, and `checkRowLoss_` alone costs **1,700–2,200ms** —
- * about 40% of the whole app dashboard — because it scans 4,614 rows of the
- * `transactions` key column to arrive at a number the caller is holding.
- *
- * Passed down rather than fetched, because `12_monitor.gs` sits below
- * `21_query.gs` and may not reach for the ledger itself. A caller that has it
- * says so; everybody else — `selfCheck`, the sync guard, the health check —
- * omits the argument and scans, which is the behaviour that was there before.
- */
-function runChecks_(now, knownRowCount) {
+/** Every detector, in the order the header lists them. */
+function runChecks_(now) {
   var config = readConfig_();
   return []
     .concat(checkStaleness_(config, now))
     .concat(checkEmptyRuns_(config, now))
     .concat(checkConsents_(config, now))
     .concat(checkFailingAccounts_())
-    .concat(checkRowLoss_(knownRowCount));
+    .concat(checkRowLoss_());
 }
 
 /**
@@ -255,10 +243,8 @@ function checkFailingAccounts_() {
  * Only a drop pays for this: the archive and the ledger's uids are read when
  * the count has gone down, never on the ordinary path.
  */
-function checkRowLoss_(knownCount) {
-  var current = knownCount === undefined || knownCount === null
-    ? currentRowCount_()
-    : Number(knownCount);
+function checkRowLoss_() {
+  var current = currentRowCount_();
   var props = PropertiesService.getScriptProperties();
   var recorded = Number(props.getProperty(ROW_COUNT_PROP) || 0);
 

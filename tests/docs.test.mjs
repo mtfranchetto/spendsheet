@@ -175,3 +175,29 @@ describe('the counts the docs quote', () => {
     });
   });
 });
+
+describe('the tabs the docs name', () => {
+  // A page that documents a tab the book does not have reads as instructions
+  // for it: block by block, cell by cell, and none of it there to find. The
+  // two shapes checked are the ones that claim it outright — a section headed
+  // by a name, and a name followed by the word.
+  const TAB = '`(_?[a-z][a-z_]*)`';
+  const named = (text) => [
+    ...text.matchAll(new RegExp('^#{2,3} ' + TAB + '$', 'gm')),
+    ...text.matchAll(new RegExp(TAB + ' tabs?\\b', 'g'))
+  ].map((m) => m[1]);
+
+  const real = new Set(Object.values(ctx.TABS));
+
+  it('finds some to check, or this file is asleep', () => {
+    expect(pages.flatMap(([, text]) => named(text)).length).toBeGreaterThan(10);
+  });
+
+  it('names only tabs setup builds', () => {
+    const wrong = pages.flatMap(([file, text]) => named(text)
+      .filter((name) => !real.has(name))
+      .map((name) => `${file}: \`${name}\``));
+
+    expect(wrong).toEqual([]);
+  });
+});

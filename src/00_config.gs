@@ -47,22 +47,18 @@ var TABS = {
   REVIEW: 'review',
   // Where runSmokeTests() writes. Nothing here runs unattended.
   //
-  // `dashboard` and `recent` were two more visible tabs and are gone: the app
-  // answers both questions on a phone, and between them they were fifty
-  // ARRAYFORMULA anchors — the single largest source of the failures this
-  // project has spent sessions on. `git log -- src/16_dashboard.gs`.
+  // Deliberately no tab for "what is my position" or "what happened lately":
+  // the phone app answers both from the ledger, where a tab would need some
+  // fifty ARRAYFORMULA anchors to do it.
   TESTS: '_tests'
 };
 
 /**
- * The three fills every tab uses to mean the same three things.
- *
- * Lived in `16_dashboard.gs` and outlived it: `cash_entry`, `reports` and
- * `review` all colour an input cell, and none of them is a dashboard. Kept
- * under the old name because renaming it would touch three files to say the
- * same thing — the comment is cheaper than the churn.
+ * The three fills every tab uses to mean the same three things. `cash_entry`,
+ * `reports` and `review` all colour an input cell from here, so "blue means
+ * mine" is one rule across the book.
  */
-var DASH_COLOR = {
+var FILL_COLOR = {
   BAD: '#fce8e6',         // act now: consent expired, sync stopped
   WARN: '#fef7e0',        // act soon: consent lapsing, a backlog forming
   INPUT: '#e8f0fe'        // this cell is yours — type here, pick here
@@ -470,7 +466,7 @@ var DEFAULT_CONFIG = [
   ['stale_threshold_days', 2, 'selfCheck alerts if the last success is older than this.'],
   ['empty_run_threshold_days', 3, 'Alert after this many consecutive days of 0 rows.'],
   ['consent_warning_days', 7, 'Warn when a bank consent has fewer days left than this.'],
-  ['stale_balance_days', 3, 'Colour an account on the dashboard when its balance is older than this.'],
+  ['stale_balance_days', 3, 'Mark an account in the app when its balance is older than this.'],
   ['alert_email', '', 'Leave blank to use the account owner address.'],
   ['fetch_pending', 'yes', 'Set to no per-account to save one API call/day.'],
   ['max_calls_per_account_per_day', 4, 'Most ASPSPs cap unattended fetching here.'],

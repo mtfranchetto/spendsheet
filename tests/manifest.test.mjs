@@ -138,10 +138,9 @@ describe('appsscript.json', () => {
  * nothing at all about the ones it skipped, so a **new kind of file** is
  * dropped by a push that reports success.
  *
- * That is exactly how the web app half-shipped: the allowlist was written
- * when `src/` held only `.gs` files, `page.html` was never pushed, and the
- * server side of the feature went live pointing at a template that was not
- * there. Nothing in the push output distinguished that from a good one.
+ * A served template added beside the `.gs` files is the case to picture: the
+ * server side goes live pointing at a file that was never sent, and nothing
+ * in the push output distinguishes that from a good one.
  *
  * So the allowlist is checked against the directory rather than trusted:
  * every file in `src/` must match a rule that admits it. Adding a file kind
@@ -176,11 +175,6 @@ describe('.claspignore', () => {
     expect(excluded).toEqual([]);
   });
 
-  it('admits the served page', () => {
-    // Named on its own because the push is silent about it and the harness
-    // cannot load it, so this is the only place its absence would show.
-    expect(admits.some((pattern) => pattern.test('page.html'))).toBe(true);
-  });
 });
 
 /**

@@ -42,10 +42,8 @@ function sheetOrThrow_(name) {
 // ---------------------------------------------------------------------------
 
 /*
- * These lived in `16_dashboard.gs` until the dashboard tab was removed, which
- * is the wrong home for them twice over: the reports tab and the review tab
- * both build formulas, and neither has anything to do with a dashboard. They
- * are addressing, and addressing is what this file is.
+ * Here because the reports tab and the review tab both build formulas, and
+ * what they share is addressing — which is what this file is.
  */
 
 /** `AA` -> 27. The inverse of `columnLetter`. */
