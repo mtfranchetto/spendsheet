@@ -25,7 +25,9 @@ export TOOLS_ROOT_DIR="$(cd "$HERE/.." && pwd)"
 
 case "${1:-check}" in
   install)
-    tools_install
+    # `||` so that one failed install neither stops the rows after it nor
+    # skips the report, which is what says what is still missing.
+    tools_install || echo "Not everything installed. The report below says what is still missing."
     echo
     ;;
   check) ;;
@@ -44,7 +46,11 @@ tools_auth
 
 echo
 if [ "$ready" -ne 0 ]; then
-  echo "Something required is missing. Run:  $(basename "$0") install"
+  if node_too_old; then
+    echo "Node is older than this project runs on. Upgrade it first; install cannot."
+  else
+    echo "Something required is missing. Run:  $(basename "$0") install"
+  fi
   exit 1
 fi
 

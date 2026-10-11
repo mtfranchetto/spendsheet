@@ -34,6 +34,7 @@
 #   brew:<formula>   a Homebrew formula
 #   cask:<name>      a Homebrew cask
 #   bootstrap        installed per-project by `npm run bootstrap`, never globally
+#   playwright       a browser the locked Playwright downloads
 #   manual           a human has to do it
 TOOLS_TABLE='
 brew|required|manual|installs everything else on macOS
@@ -43,7 +44,7 @@ git|required|manual|ships with the Xcode command line tools
 openssl|required|brew:openssl|generates SESSION_KEY
 clasp|required|bootstrap|pushes src/ to Apps Script and moves the consent redirect
 wrangler|required|bootstrap|deploys the Worker and writes its secrets
-webkit|optional|bootstrap|the browser npm run test:e2e drives
+webkit|optional|playwright|the browser npm run test:e2e drives
 gh|optional|brew:gh|opens pull requests
 jq|optional|brew:jq|reads JSON in scripts and by hand
 rsvg-convert|optional|brew:librsvg|regenerates apple-touch-icon.png from icon.svg
@@ -124,13 +125,22 @@ version_at_least() {
   return 0
 }
 
+# A Node that is on the machine and older than the floor. Present-and-old is
+# its own state: installing cannot fix it, and every `npm ci` refuses to run on
+# it once `engine-strict` is set.
+node_too_old() {
+  tool_present node && ! version_at_least "$(node --version)" "$(node_floor)"
+}
+
 # Walk the table, calling back for each row. Keeps the parsing in one place
 # rather than repeating the same `while IFS` in check and install.
 tools_each() {
   local callback="$1" name kind installer why
   printf '%s\n' "$TOOLS_TABLE" | while IFS='|' read -r name kind installer why; do
     [ -n "$name" ] || continue
-    "$callback" "$name" "$kind" "$installer" "$why"
+    # The loop's stdin is the table, and an installer that reads a line of it
+    # would end the walk early with the remaining rows never visited.
+    "$callback" "$name" "$kind" "$installer" "$why" </dev/null
   done
 }
 
@@ -141,8 +151,8 @@ tools_each() {
 _tools_report_row() {
   local name="$1" kind="$2" installer="$3" why="$4"
 
-  if [ "$name" = node ] && tool_present node && ! version_at_least "$(node --version)" "$(node_floor)"; then
-    printf '  %-14s %-9s %s\n' "$name" "TOO OLD" "$(node --version), and this needs $(node_floor) or later (.nvmrc)"
+  if [ "$name" = node ] && node_too_old; then
+    printf '  %-14s %-9s %s\n' "$name" "TOO OLD" "$(node --version), and this needs $(node_floor) or later"
     : >"$TOOLS_MISSING_MARKER"
   elif tool_present "$name"; then
     printf '  %-14s %-9s %s\n' "$name" "ok" "$(tool_version "$name")"
@@ -158,7 +168,9 @@ _tools_report_row() {
 
 # Prints one line per tool. Returns non-zero if a *required* one is absent.
 tools_check() {
-  TOOLS_MISSING_MARKER="$(mktemp -t spendsheet-tools)"
+  # A full template with its X's: GNU `mktemp -t` refuses one without them and
+  # prints nothing, which left the marker's path empty and the check passing.
+  TOOLS_MISSING_MARKER="$(mktemp "${TMPDIR:-/tmp}/spendsheet-tools.XXXXXX")"
   rm -f "$TOOLS_MISSING_MARKER"
 
   echo "Tools"
@@ -191,7 +203,7 @@ tools_auth() {
   elif "$(tool_path wrangler)" whoami 2>/dev/null | grep -qi 'account id'; then
     printf '  %-14s %-9s\n' "wrangler" "ok"
   else
-    printf '  %-14s %-9s %s\n' "wrangler" "SIGN IN" "npx wrangler login"
+    printf '  %-14s %-9s %s\n' "wrangler" "SIGN IN" "npx wrangler login    (in web/, where it is installed)"
   fi
 
   # The same bias for `clasp`: only its "logged in as" line counts, and the
@@ -201,7 +213,7 @@ tools_auth() {
   elif "$(tool_path clasp)" show-authorized-user 2>/dev/null | grep -qi 'logged in as'; then
     printf '  %-14s %-9s\n' "clasp" "ok"
   else
-    printf '  %-14s %-9s %s\n' "clasp" "SIGN IN" "npx clasp login"
+    printf '  %-14s %-9s %s\n' "clasp" "SIGN IN" "npx clasp login    (at the repository root, where it is installed)"
   fi
 
   if tool_present gh; then
@@ -237,6 +249,12 @@ _tools_install_row() {
       echo "==> npm run bootstrap (in ${TOOLS_ROOT_DIR})"
       ( cd "$TOOLS_ROOT_DIR" && npm run bootstrap )
       ;;
+    playwright)
+      # After the bootstrap rows, so Playwright is there to ask. On its own
+      # this is one download, where a bootstrap replaces both `node_modules`.
+      echo "==> playwright install ${name}"
+      "$(tool_path playwright)" install "$name"
+      ;;
     manual)
       echo "==> ${name} cannot be installed from here — see the note below"
       ;;
@@ -253,6 +271,19 @@ having. Install it yourself, then run this again:
   https://brew.sh
 
 NOBREW
+    return 1
+  fi
+
+  if node_too_old; then
+    cat <<OLDNODE
+Node is $(node --version) and this project needs $(node_floor) or later. Nothing
+here upgrades a Node that is already installed, and no install below would run
+on this one. Upgrade it, then run this again:
+
+  brew upgrade node          if Homebrew installed it
+  nvm install / fnm use      if a version manager did; .nvmrc names the line
+
+OLDNODE
     return 1
   fi
 

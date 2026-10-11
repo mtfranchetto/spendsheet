@@ -35,11 +35,30 @@ function emptyRoot(engines) {
   return dir;
 }
 
-/** A directory whose `node` answers `--version` with the version given. */
+/**
+ * A directory whose `node` is this process's node with one answer changed:
+ * `--version`. Everything else runs for real, so `npm` and whatever else
+ * starts through `env node` still gets a working one.
+ */
 function fakeNode(version) {
   const dir = mkdtempSync(join(tmpdir(), 'spendsheet-node-'));
   const path = join(dir, 'node');
-  writeFileSync(path, `#!/bin/sh\necho ${version}\n`);
+  writeFileSync(
+    path,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${version}; else exec "${process.execPath}" "$@"; fi\n`
+  );
+  chmodSync(path, 0o755);
+  return dir;
+}
+
+/**
+ * A directory whose `brew` exists and refuses everything, so `tools_install`
+ * gets past "is Homebrew here" on a machine without it and can install nothing.
+ */
+function fakeBrew() {
+  const dir = mkdtempSync(join(tmpdir(), 'spendsheet-brew-'));
+  const path = join(dir, 'brew');
+  writeFileSync(path, '#!/bin/sh\nexit 1\n');
   chmodSync(path, 0o755);
   return dir;
 }
@@ -61,7 +80,7 @@ describe('the table', () => {
   it('uses only the kinds and installers the script acts on', () => {
     for (const [name, kind, installer] of rows) {
       expect(['required', 'optional'], name).toContain(kind);
-      expect(installer, name).toMatch(/^(brew:.+|cask:.+|bootstrap|manual)$/);
+      expect(installer, name).toMatch(/^(brew:.+|cask:.+|bootstrap|playwright|manual)$/);
     }
   });
 
@@ -127,6 +146,17 @@ describe('the Node floor', () => {
       PATH: `${fakeNode('v22.12.0')}:${process.env.PATH}`
     });
     expect(result.stdout).toMatch(/^ {2}node +ok +v22\.12\.0$/m);
+    expect(result.stdout).toMatch(/^ {2}npm +ok +[0-9]+\.[0-9]+\.[0-9]+$/m);
+  });
+
+  it('installs nothing on a Node below it, and says to upgrade', () => {
+    const result = shell('tools_install', {
+      TOOLS_ROOT_DIR: emptyRoot('>=22.12.0'),
+      PATH: `${fakeBrew()}:${fakeNode('v20.19.0')}:${process.env.PATH}`
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/Node is v20\.19\.0 and this project needs 22\.12\.0 or later/);
+    expect(result.stdout).not.toMatch(/==>/);
   });
 });
 
@@ -137,6 +167,19 @@ describe('project-local tools', () => {
     expect(result.stdout).toMatch(/^ {2}wrangler +MISSING/m);
     expect(result.stdout).toMatch(/^ {2}webkit +- +optional/m);
     expect(result.status).toBe(1);
+  });
+});
+
+describe('installing', () => {
+  it('goes on to the rows after one that fails, as the command runs it', () => {
+    const table = ['first|optional|brew:first|x', 'second|optional|brew:second|y'].join('\n');
+    const result = shell(`set -euo pipefail; TOOLS_TABLE='${table}'; tools_install || echo FAILED; echo AFTER`, {
+      TOOLS_ROOT_DIR: emptyRoot('>=22.12.0'),
+      PATH: `${fakeBrew()}:${fakeNode('v22.12.0')}:${process.env.PATH}`
+    });
+    expect(result.stdout).toMatch(/==> brew install first\n/);
+    expect(result.stdout).toMatch(/==> brew install second\n/);
+    expect(result.stdout).toMatch(/AFTER\n$/);
   });
 });
 
