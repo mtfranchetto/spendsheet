@@ -496,7 +496,7 @@ function buildCashEntryForm_(ss) {
   var sheet = ss.getSheetByName(TABS.CASH_ENTRY);
   if (!sheet) return;
 
-  sheet.getRange(2, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
+  sheet.getRange(CASH_FORM_ROW, 1, 1, CASH_ENTRY_COLUMNS.length - 1)
     .setBackground(FILL_COLOR.INPUT);
 
   // Only when the row is empty. A date you deliberately backdated, on a row you

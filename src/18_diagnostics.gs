@@ -423,14 +423,16 @@ function emptyCharts_() {
  * Seed a date cell the way `cash_entry` is seeded and read it back both ways.
  *
  * On a probe cell of `_tests` rather than on the form itself, which may hold
- * an entry someone is halfway through. Two things have to hold: the value is a
+ * an entry someone is halfway through — the cell `checkTextSafeRoundTrip_`
+ * uses, the last column a tab is born with, and each check clears it before
+ * the next runs. Two things have to hold: the value is a
  * date, which is what makes the row visible to the drain at all, and the
  * formula comes back as something `isUntouchedCashForm` recognises — or every
  * sync reports a cash entry nobody typed.
  */
 function checkCashFormSeed_() {
   var sheet = sheetOrThrow_(TABS.TESTS);
-  var probe = sheet.getRange(1, 27);
+  var probe = sheet.getRange(1, 26);
 
   try {
     probe.setFormula(CASH_DATE_SEED);

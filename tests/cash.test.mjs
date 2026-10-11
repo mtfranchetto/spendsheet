@@ -92,7 +92,7 @@ describe('the smoke test for the seed', () => {
   it('passes on a book whose seed reads back as a date', () => {
     const c = withWallet();
     expect(c.checkCashFormSeed_()).toMatch(/read as a date/);
-    expect(c.__spreadsheet.getSheetByName('_tests').getRange(1, 27).getFormula()).toBe('');
+    expect(c.__spreadsheet.getSheetByName('_tests').getRange(1, 26).getFormula()).toBe('');
   });
 
   it('fails when the seed does not come back as a date', () => {
