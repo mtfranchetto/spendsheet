@@ -130,7 +130,7 @@ The *why* behind the non-obvious decisions lives in the source comments, which a
 The same checkout you pushed from runs the tests:
 
 ```bash
-npm install && npm test
+npm run bootstrap && npm test
 ```
 
 Tests run the **exact `.gs` files that ship** — `tests/harness.mjs` loads them into a `node:vm` context with the Google globals stubbed. No build step, no transpilation, no duplicated source. The phone app in `web/` is TypeScript; the same `npm test` runs its suites, `npm run test:e2e` drives it in WebKit, and [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) has the rest.

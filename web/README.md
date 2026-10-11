@@ -65,8 +65,8 @@ secret comes from.
 **1. Create the Worker** (to learn its address)
 
 ```sh
-npm install            # here in web/, and at the repository root: the deploy
-                       # runs the root's tests before it builds anything
+npm run bootstrap --prefix ..   # both installs: the deploy runs the root's
+                                # tests before it builds anything
 npx wrangler login     # protect the Cloudflare account with 2FA or a passkey:
                        # anyone who can deploy here can capture your token
 npm run deploy         # prints https://spendsheet.<you>.workers.dev
@@ -187,7 +187,7 @@ are never parsed.
 ## Running it locally
 
 ```sh
-npm install
+npm run bootstrap --prefix ..
 cp .dev.vars.example .dev.vars        # then fill it in
 npm run build && npm run serve        # page and Worker together on :8787
 ```
@@ -209,7 +209,8 @@ that reason. They come off exact pins when 2.0 is `latest` on npm.
 `npm run deploy` here runs the compiler and then the root's `npm test` before it
 builds anything, as the root's deploy does — the writes in `worker/actions.ts`
 reach the ledger, and a deploy is the last place a red test can stop one. So
-both installs have to be present: `npm ci` at the root and here.
+both installs have to be present, which is what `npm run bootstrap` at the
+root does.
 
 `npm test` **at the repository root** runs these alongside the `.gs` suites:
 Vitest's default include is the whole repo. Check the file list rather than the

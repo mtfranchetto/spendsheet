@@ -3,7 +3,7 @@
 ## Running the tests
 
 ```bash
-npm install
+npm run bootstrap  # both installs, root and web/, and the WebKit the browser suite drives
 npm test           # the .gs in node:vm against faked Google services, and web/ under Vitest
 npm run test:watch
 ```
@@ -11,7 +11,6 @@ npm run test:watch
 The phone app has a suite of its own, in a browser, and it is a separate command:
 
 ```bash
-npx playwright install webkit    # once
 npm run test:e2e
 ```
 

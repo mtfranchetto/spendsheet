@@ -28,5 +28,8 @@
   "dependencies": {
     "@solidjs/web": "2.0.0-rc.14",
     "solid-js": "2.0.0-rc.14"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

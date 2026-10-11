@@ -20,7 +20,7 @@ Not a work account — and not for quota reasons, since the free consumer limits
 
 ### 2. Add the code
 
-[`clasp`](https://github.com/google/clasp), Google's command-line tool for Apps Script, pushes the whole of [`src/`](../src/) in one command. It needs Node (20.19+ or 22.12+) and nothing installed globally — it comes with `npm install`.
+[`clasp`](https://github.com/google/clasp), Google's command-line tool for Apps Script, pushes the whole of [`src/`](../src/) in one command. It needs Node 22.12 or later ([`.nvmrc`](../.nvmrc) names the line CI runs) and nothing installed globally — it comes with `npm install`.
 
 ```bash
 git clone https://github.com/mtfranchetto/spendsheet.git
