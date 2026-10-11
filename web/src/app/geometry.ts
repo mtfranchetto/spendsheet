@@ -50,25 +50,8 @@ export function spacedMarks(marks: readonly Mark[]): Mark[] {
  * gets one mark, since three identical figures read as a broken scale.
  */
 export function lineGeometry(series: readonly Point[], label: (value: number) => string) {
-  const values = series.map((point) => point.value);
-  const low = Math.min(...values);
-  const high = Math.max(...values);
-  const range = high - low;
-
-  const points = series
-    .map((point, i) => {
-      const x = (i / (series.length - 1)) * 100;
-      const y = range === 0 ? 20 : 38 - ((point.value - low) / range) * 36;
-      return x.toFixed(2) + ',' + y.toFixed(2);
-    })
-    .join(' ');
-
-  const marks = spacedMarks(
-    range === 0
-      ? [{ y: 20, label: label(low) }]
-      : [{ y: 2, label: label(high) }, { y: 38, label: label(low) }, { y: 20, label: label((low + high) / 2) }]
-  );
-  return { points, marks };
+  const { lines, marks } = linesGeometry([series], label);
+  return { points: lines[0], marks };
 }
 
 /**
@@ -76,6 +59,7 @@ export function lineGeometry(series: readonly Point[], label: (value: number) =>
  * them, because two lines each stretched to fill the plot would cross wherever
  * their own ranges happened to, and the gap between them — which is the thing
  * being read — would mean nothing. Every series has the same number of points.
+ * One line is the same arithmetic with one series, which is all `lineGeometry` is.
  */
 export function linesGeometry(series: readonly (readonly Point[])[], label: (value: number) => string) {
   const values = series.flatMap((line) => line.map((point) => point.value));

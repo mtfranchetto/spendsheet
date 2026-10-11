@@ -29,6 +29,7 @@
 
 import { For, Show } from 'solid-js';
 import type { LongView as Data } from '../domain/longview';
+import { HELD_OTHER } from '../domain/longview';
 import { ACCOUNT_KIND } from '../domain/schema';
 import { BarChart, ColumnChart, FlowThumb, LineChart, LinesChart, Sparkline } from './Charts';
 import { fullDate, money, monthNames, percent, shortDate, withIcon } from './format';
@@ -53,7 +54,8 @@ const sentence = (words: string) => words.charAt(0).toUpperCase() + words.slice(
 const KIND_NAMES: { [kind: string]: string } = {
   [ACCOUNT_KIND.ASSET]: 'Investments and assets',
   [ACCOUNT_KIND.BANK]: 'Bank accounts',
-  [ACCOUNT_KIND.CASH]: 'Cash'
+  [ACCOUNT_KIND.CASH]: 'Cash',
+  [HELD_OTHER]: 'Other accounts'
 };
 
 /** A share of the widest row, as a CSS width. A negative has no length to its right. */
@@ -101,7 +103,7 @@ function Cards(props: { data: Data }) {
         value={change(data().netWorth.change)}
         note={
           cash(data().netWorth.before) + ' → ' + cash(data().netWorth.now) +
-          (data().netWorth.sinceStart ? ' since ' + fullDate(data().netWorth.since) + ', where the ledger starts' : '')
+          (data().netWorth.sinceStart ? ' since ' + fullDate(data().netWorth.since) + ', before the ledger starts' : '')
         }
         thumb={<Sparkline series={data().netWorth.series.slice(-13)} />}
       />
@@ -337,7 +339,8 @@ function Rates(props: { data: Data }) {
     const across = overall === null ? '' : percent(overall) + (data().history.aYear ? ' across the year. ' : ' so far. ');
     if (!worst) return across + 'No complete month had income, so none has a rate.';
     return across +
-      (worst.rate < 0 ? shortDate(worst.key) + ' spent more than it earned.' : 'Every month kept something.') +
+      (worst.rate < 0 ? shortDate(worst.key) + ' spent more than it earned.'
+        : worst.rate > 0 ? 'Every month kept something.' : 'No month spent more than it earned.') +
       (rated().length < data().rates.length ? ' A month with no income has no rate, and no bar.' : '') +
       (worst.rate < RATE_FLOOR ? ' Bars stop at ' + percent(RATE_FLOOR) + '.' : '');
   };

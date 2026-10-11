@@ -122,7 +122,7 @@ describe('a ledger of five months', () => {
   });
 
   it('measures the change in net worth from its first row, and says so', () => {
-    expect(data.netWorth).toMatchObject({ now: 10000, before: 5000, change: 5000, since: '2026-05-01', sinceStart: true });
+    expect(data.netWorth).toMatchObject({ now: 10000, before: 5000, change: 5000, since: '2026-04-30', sinceStart: true });
   });
 
   it('leaves a calendar month it has never seen blank rather than free', () => {
@@ -195,6 +195,21 @@ describe('a ledger of twenty-five months', () => {
       { name: 'Travel', now: 600, before: 0, change: 600 },
       { name: 'Health', now: 0, before: 300, change: -300 }
     ]);
+  });
+
+  it('compares every category, not only the thirty largest of each window', () => {
+    // Forty categories in each year. `Small` is the smallest of last year's and
+    // among the largest of this one: cut from last year's list, it would read
+    // as a thousand of new spending rather than nine hundred more.
+    const many = (year: number) => Array.from({ length: 40 }, (_, i) =>
+      row(year, 8, 20, -(1000 + i), { category: 'Category ' + i, subcategory: 'Any' }));
+    const answer = view([
+      ...monthsEnding(2026, 9, 25),
+      ...many(2025), ...many(2026),
+      row(2025, 8, 21, -100, { category: 'Small', subcategory: 'Any' }),
+      row(2026, 8, 21, -1000, { category: 'Small', subcategory: 'Any' })
+    ], NOW);
+    expect(answer.movers).toEqual([{ name: 'Small', now: 1000, before: 100, change: 900 }]);
   });
 
   it('gives a finished year its whole, and both years the same stretch from January', () => {
@@ -346,6 +361,35 @@ describe('net worth', () => {
 
   it('counts bank and cash as what can be spent, and not the fund', () => {
     expect(data.runway.liquid).toBe(10200);
+  });
+
+  it('gathers an account of a kind it does not know under its own row, so the rows still sum', () => {
+    const odd = bookOf({
+      transactions: [row(2026, 3, 1, 400, { account_name: 'Pension' })],
+      accounts: [...accounts, { account_id: 'p', name: 'Pension', kind: 'Savings pot', currency: 'EUR', balance: 8000, include_in_net_worth: true, active: true }]
+    });
+    const answer = longView(odd.book, odd.ledger, NOW);
+    expect(answer.held.map((entry) => [entry.kind, entry.balance, entry.change])).toEqual([
+      ['asset', 50000, 0], ['bank', 10000, 0], ['cash', 200, 0], ['other', 8000, 400]
+    ]);
+    expect(answer.held.reduce((sum, entry) => sum + entry.balance, 0)).toBe(answer.netWorth.now);
+    // Not spendable until it says what it is.
+    expect(answer.runway.liquid).toBe(10200);
+  });
+
+  it('counts history from the first reported row, not from a revaluation dated before it', () => {
+    const backdated = bookOf({
+      transactions: [
+        ...monthsEnding(2026, 9, 5),
+        row(2019, 1, 1, 100, { account_name: 'Fund', ...moved, subcategory: 'Valuation change' })
+      ],
+      accounts
+    });
+    const answer = longView(backdated.book, backdated.ledger, NOW);
+    expect(answer.history.months).toBe(5);
+    expect(answer.years).toEqual([]);
+    // The line is of net worth, and does start where its first row is.
+    expect(answer.netWorth.series[0].key).toBe('2019-01-01');
   });
 
   it('draws the line from the first row through each month end to today', () => {

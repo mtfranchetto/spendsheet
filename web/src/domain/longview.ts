@@ -22,8 +22,8 @@
  * Every monthly series stops at the end of last month. The month in progress
  * would draw as a short bar or as a dip at the end of a line, and both read as
  * news. At the other end, the ledger's first month counts only when its first
- * row is on the 1st: nothing else tells a month that began quietly from one the
- * ledger had not reached yet.
+ * reported row is on the 1st: nothing else tells a month that began quietly
+ * from one the ledger had not reached yet.
  *
  * ## Short history is stated, not annualised
  *
@@ -58,10 +58,10 @@
  */
 
 import type { Book, Row } from './book';
-import { cellNumber, isBlankCell, isTruthyCell, round2, text } from './cells';
+import { cellNumber, isTruthyCell, round2, text } from './cells';
 import { addMonths, dayKey, monthKey, startOfMonth, startOfMonthDay, type Clock } from './days';
 import {
-  aggregate, balanceSeries, baseCurrency, matchesAccount, matchesFilters, netWorthNow,
+  aggregate, balanceSeries, groupKey, matchesAccount, matchesFilters, netWorthAccounts, netWorthNow,
   type LedgerRow, type Window
 } from './query';
 import { ACCOUNT_KIND, TRANSFER_CATEGORY, VALUATION_SUBCATEGORY } from './schema';
@@ -76,8 +76,18 @@ export const LONG_VIEW_PACE_YEARS = [1, 5, 10] as const;
 /** How many categories "biggest changes" keeps: the ones that moved most, either way. */
 export const LONG_VIEW_MOVERS = 8;
 
-/** Net worth's kinds in the order they are drawn: what is invested, then what can be spent. */
-const HELD_KINDS = [ACCOUNT_KIND.ASSET, ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH] as const;
+/**
+ * Net worth's kinds in the order they are drawn: what is invested, then what
+ * can be spent. `kind` is a cell somebody can type into, so an account whose
+ * kind is none of the three is gathered last under `HELD_OTHER` — left out, its
+ * balance would be in the total and in no row under it.
+ */
+export const HELD_OTHER = 'other';
+const HELD_KINDS = [ACCOUNT_KIND.ASSET, ACCOUNT_KIND.BANK, ACCOUNT_KIND.CASH, HELD_OTHER] as const;
+
+function heldKind(kind: string): string {
+  return kind === ACCOUNT_KIND.ASSET || kind === ACCOUNT_KIND.BANK || kind === ACCOUNT_KIND.CASH ? kind : HELD_OTHER;
+}
 
 /** Today's date `years` back, or the last day of that month where it has no such date. */
 export function sameDate(clock: Clock, years: number): number {
@@ -139,19 +149,27 @@ function growth(now: number, before: number): number | null {
   return before > 0 ? now / before - 1 : null;
 }
 
-/** The accounts `netWorthNow` counts, with the balance it counted. */
+/** The accounts `netWorthNow` counts, with the balance it counted and the kind they are drawn under. */
 function countedAccounts(book: Book): { name: string; kind: string; balance: number }[] {
-  const currency = baseCurrency(book);
-  const counted: { name: string; kind: string; balance: number }[] = [];
-  for (const account of book.accounts) {
-    if (isBlankCell(account.account_id) || !isTruthyCell(account.active)) continue;
-    if (!isTruthyCell(account.include_in_net_worth)) continue;
-    if (String(account.currency || '') !== currency) continue;
-    const balance = cellNumber(account.balance);
-    if (balance === null) continue;
-    counted.push({ name: String(account.name || ''), kind: text(account.kind), balance });
+  return netWorthAccounts(book, {}).counted.map(({ account, balance }) => ({
+    name: String(account.name || ''), kind: heldKind(text(account.kind)), balance
+  }));
+}
+
+/**
+ * Spending by category, every category. `aggregate` keeps the largest thirty
+ * for a list somebody reads; a comparison between two windows needs the rest,
+ * or a category ranked thirty-first in one of them reads as absent from it.
+ */
+function spendingByCategory(rows: readonly LedgerRow[]): { [name: string]: number } {
+  const totals: { [name: string]: number } = {};
+  for (const row of rows) {
+    const amount = cellNumber(row.amount_base);
+    if (amount === null || amount >= 0) continue;
+    const name = groupKey(row.category);
+    totals[name] = (totals[name] || 0) - amount;
   }
-  return counted;
+  return totals;
 }
 
 function isRevaluation(row: Row): boolean {
@@ -181,14 +199,19 @@ export function longView(book: Book, ledger: readonly LedgerRow[], clock: Clock)
   const { t12, p12 } = longWindows(clock);
   const reported = ledger.filter((row) => matchesFilters(row, {}));
 
-  const first = firstDay(ledger, clock);
+  // History is counted from the first row reports count: every monthly series
+  // here is of those rows, and a revaluation backdated to before them is not a
+  // month of spending the ledger holds.
+  const first = firstDay(reported, clock);
   const months = completeMonths(first, clock);
   const aYear = months.length >= LONG_VIEW_YEAR_MONTHS;
   const twoYears = months.length >= LONG_VIEW_COMPARE_MONTHS;
 
   // ---- T12 and P12 -------------------------------------------------------
-  const now = aggregate(reported.filter((row) => inWindow(row, t12)), t12);
-  const before = aggregate(reported.filter((row) => inWindow(row, p12)), p12);
+  const rowsNow = reported.filter((row) => inWindow(row, t12));
+  const rowsBefore = reported.filter((row) => inWindow(row, p12));
+  const now = aggregate(rowsNow, t12);
+  const before = aggregate(rowsBefore, p12);
   const spent = now.totals.expenses;
   const earned = now.totals.income;
   const saved = now.totals.net;
@@ -257,7 +280,8 @@ export function longView(book: Book, ledger: readonly LedgerRow[], clock: Clock)
   const change = round2(moved(counted, t12));
   const revalued = round2(moved(counted.filter(isRevaluation), t12));
   const started = firstDay(counted, clock);
-  // Where the ledger starts inside T12, the change is since its first row, and says so.
+  // Where the ledger starts inside T12, the change is everything it holds: from
+  // the day before its first row, which is the day `before` is the balance of.
   const sinceStart = started !== null && started > t12.from;
 
   const liquid = round2(accounts
@@ -272,14 +296,12 @@ export function longView(book: Book, ledger: readonly LedgerRow[], clock: Clock)
   }));
 
   // A category in one window and not the other spent zero in the other.
-  const totalBefore: { [name: string]: number } = {};
-  for (const row of before.byCategory) totalBefore[row.name] = row.total;
-  const totalNow: { [name: string]: number } = {};
-  for (const row of now.byCategory) totalNow[row.name] = row.total;
+  const totalBefore = spendingByCategory(rowsBefore);
+  const totalNow = spendingByCategory(rowsNow);
   const movers = [...new Set([...Object.keys(totalNow), ...Object.keys(totalBefore)])]
     .map((name) => {
-      const current = totalNow[name] || 0;
-      const earlier = totalBefore[name] || 0;
+      const current = round2(totalNow[name] || 0);
+      const earlier = round2(totalBefore[name] || 0);
       return { name, now: current, before: earlier, change: round2(current - earlier) };
     })
     .filter((row) => row.change !== 0)
@@ -325,7 +347,7 @@ export function longView(book: Book, ledger: readonly LedgerRow[], clock: Clock)
       now: worth.total,
       before: round2(worth.total - change),
       change,
-      since: dayKey(sinceStart ? started : t12.from - 1),
+      since: dayKey(sinceStart ? (started as number) - 1 : t12.from - 1),
       sinceStart,
       series: worthSeries(counted, worth.total, clock)
     },
