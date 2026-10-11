@@ -159,7 +159,7 @@ jobs:
       # readable: `trace: 'retain-on-failure'` records the DOM at every step, so
       # `npx playwright show-trace` gives you the page as it was rather than a
       # line number. A screenshotless CI failure on a *drawing* bug is a guess.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && failure() }}
         with:
           name: playwright-trace
