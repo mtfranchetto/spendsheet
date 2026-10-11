@@ -74,6 +74,10 @@ The phone app lives in `web/` and runs locally against a real book — [`web/REA
 
 What it does not prove: **WebKit is not iOS Safari.** It will not reproduce how the phone sizes a native `input[type="date"]`, which is precisely the bug that shipped here once. Say whether you checked on the device or in a browser; they answer different questions.
 
+### The README's pictures
+
+`npm run screenshots` retakes the phone screenshots in `docs/assets/screenshots/` with the same engine and the same answered Worker, from an invented book in `web/screenshots/book.mjs` — thirty months of generated rows, so the charts have something to draw. Run it after changing how a screen looks, and commit the images with the change. Dates count back from today, so every image moves when it runs; that is expected. It has its own config (`playwright.screenshots.config.mjs`) so the suite never rewrites a tracked file.
+
 Before keeping a browser test, break the thing it covers and watch it go red. A test that cannot fail is worse than no test, because it is counted.
 
 ## What can't be tested here

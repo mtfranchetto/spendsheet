@@ -13,7 +13,8 @@
     "push:watch": "clasp push --watch",
     "pull": "clasp pull",
     "status": "clasp status",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "screenshots": "playwright test -c playwright.screenshots.config.mjs"
   },
   "keywords": [
     "open-banking",

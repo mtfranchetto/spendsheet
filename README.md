@@ -98,6 +98,15 @@ The menu only shows an item whose function actually exists, so a partial checkou
 
 The Sheets mobile app opens 4,600 rows and fifty array formulas before it shows you anything, which is a poor way to check what you spent this week. So there's a second front door: a web app on the same data, with three screens — home, records, charts — and forms for cash and asset values. Confirming a category from it writes straight back to `transactions`.
 
+<p align="center">
+  <img src="docs/assets/screenshots/home.png" width="24%" alt="Home: net worth, a tile for each account, and thirty days of net worth as a line">
+  <img src="docs/assets/screenshots/records.png" width="24%" alt="Records: a search box, period and filter pills, a pending hold, then transactions by day">
+  <img src="docs/assets/screenshots/charts.png" width="24%" alt="Charts for one month: balance, spending, income and cash flow, then a cashflow bar chart">
+  <img src="docs/assets/screenshots/long-view.png" width="24%" alt="Charts, Long view: annual spending, savings rate, runway and net worth change over the last 12 months">
+</p>
+
+<p align="center"><sub>Home, Records, Charts and the Long view — drawn by the app itself from an invented household. Nobody's data.</sub></p>
+
 It runs on a free Cloudflare Worker, signs you in with Google, and reads the one book with your own grant — `drive.file`, so it can see that file and nothing else in your Drive. Setting it up is in [`web/README.md`](web/README.md); what every screen does is in [`docs/MOBILE.md`](docs/MOBILE.md).
 
 There is deliberately no "Add manual account" — you type a row in `accounts` — and no CSV importer: **File → Import** loads the file, and the mapping is formulas you can read and correct in `_import_staged`. *Import staged rows* only commits what you have already reviewed there, and it exists because that step was two pastes that had to land on the same row without crossing the one column holding a formula. Both are documented in [`docs/IMPORT.md`](docs/IMPORT.md).
