@@ -3,6 +3,7 @@
 ## Running the tests
 
 ```bash
+npm run tools      # is this machine ready: each tool, its version, and what still needs signing in
 npm run bootstrap  # both installs, root and web/, and the WebKit the browser suite drives
 npm test           # the .gs in node:vm against faked Google services, and web/ under Vitest
 npm run test:watch

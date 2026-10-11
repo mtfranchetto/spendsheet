@@ -36,7 +36,7 @@ transfer, a rule, cash and asset values, and deleting cash you typed.
 | `src/domain/transfer.ts` | which row on another bank is the other half of a move; the page finds it, the Worker checks it. |
 | `src/app/writes.ts` | the writes from the page: one lane, rows named when a write leaves, swipes batched, the guess laid over the book until the answer lands. |
 | `src/app/Sheet.tsx`, `Add.tsx`, `swipe.ts`, `amount.ts` | a row's details, a rule, the cash and revalue forms, the swipe and hold, and amounts in the phone's separators. |
-| `scripts/tools.sh` | is this machine ready. |
+| `../scripts/tools.sh` | is this machine ready, for the book as well as for this. `npm run tools` runs it from either directory. |
 
 ## Routes
 

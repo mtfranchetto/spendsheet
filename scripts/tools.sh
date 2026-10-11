@@ -11,14 +11,14 @@
 #
 # The table of what "ready" means lives in `lib/tools.sh`.
 #
-# Neither mode ever signs you in. `wrangler login` opens a browser and wants a
-# human; this reports whether it still needs one, which is the half people
-# actually forget.
+# Neither mode ever signs you in. `clasp login` and `wrangler login` open a
+# browser and want a human; this reports whether each still needs one, which is
+# the half people actually forget.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export TOOLS_WEB_DIR="$(cd "$HERE/.." && pwd)"
+export TOOLS_ROOT_DIR="$(cd "$HERE/.." && pwd)"
 
 # shellcheck source=lib/tools.sh
 . "$HERE/lib/tools.sh"
@@ -48,4 +48,4 @@ if [ "$ready" -ne 0 ]; then
   exit 1
 fi
 
-echo "Ready. Next:  see web/README.md for the one-time Google and Cloudflare setup."
+echo "Ready. Next:  docs/SETUP.md for the book, web/README.md for the phone app."

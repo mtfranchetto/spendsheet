@@ -5,6 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "tools": "./scripts/tools.sh",
+    "tools:install": "./scripts/tools.sh install",
     "bootstrap": "npm ci && npm ci --prefix web && npx playwright install webkit",
     "test": "vitest run",
     "test:watch": "vitest",
