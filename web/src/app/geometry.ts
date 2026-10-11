@@ -71,6 +71,63 @@ export function lineGeometry(series: readonly Point[], label: (value: number) =>
   return { points, marks };
 }
 
+/**
+ * Several lines on **one** scale: the low and the high are taken across all of
+ * them, because two lines each stretched to fill the plot would cross wherever
+ * their own ranges happened to, and the gap between them — which is the thing
+ * being read — would mean nothing. Every series has the same number of points.
+ */
+export function linesGeometry(series: readonly (readonly Point[])[], label: (value: number) => string) {
+  const values = series.flatMap((line) => line.map((point) => point.value));
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const range = high - low;
+
+  const lines = series.map((line) =>
+    line
+      .map((point, i) => {
+        const x = (i / (line.length - 1)) * 100;
+        const y = range === 0 ? 20 : 38 - ((point.value - low) / range) * 36;
+        return x.toFixed(2) + ',' + y.toFixed(2);
+      })
+      .join(' ')
+  );
+
+  const marks = spacedMarks(
+    range === 0
+      ? [{ y: 20, label: label(low) }]
+      : [{ y: 2, label: label(high) }, { y: 38, label: label(low) }, { y: 20, label: label((low + high) / 2) }]
+  );
+  return { lines, marks };
+}
+
+export type Column = { index: number; x: number; y: number; width: number; height: number };
+
+/**
+ * Bars of one sign, from zero at the foot of the plot. From zero and not from
+ * the smallest value: these are amounts compared by height, and a truncated
+ * baseline makes a month costing a tenth more look twice as tall. A slot is
+ * kept for every value, so twelve months are twelve positions whichever are
+ * drawn; a `null` is a slot left empty, which is not a bar of no height.
+ */
+export function columnGeometry(values: readonly (number | null)[], label: (value: number) => string) {
+  const peak = values.reduce((top: number, value) => Math.max(top, value ?? 0), 0);
+  const top = 1;
+  const bottom = PLOT_UNITS - 1;
+  const slot = 100 / (values.length || 1);
+
+  const bars: Column[] = [];
+  values.forEach((value, index) => {
+    if (value === null || !peak) return;
+    const height = Math.max((value / peak) * (bottom - top), 0.4);
+    bars.push({ index, x: index * slot + slot * 0.15, y: bottom - height, width: slot * 0.7, height });
+  });
+
+  const marks: Mark[] = [{ y: bottom, label: label(0) }];
+  if (peak > 0) marks.push({ y: top, label: label(peak) }, { y: (top + bottom) / 2, label: label(peak / 2) });
+  return { bars, marks: spacedMarks(marks) };
+}
+
 export type Bucket = { key: string; income: number; expenses: number };
 export type Bar = { x: number; y: number; width: number; height: number; up: boolean };
 

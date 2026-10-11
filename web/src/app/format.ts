@@ -14,8 +14,12 @@
  * put `14.500,00 €` beside `8920,40 €` in columns that are lined up digit by
  * digit. The fallback is for a currency code `Intl` does not know —
  * `base_currency` is a cell somebody can type into.
+ *
+ * `signed` is for a change rather than an amount: `+€700.00`.
  */
-export function money(value: number | null | undefined, currency: string, options: { whole?: boolean } = {}): string {
+export function money(
+  value: number | null | undefined, currency: string, options: { whole?: boolean; signed?: boolean } = {}
+): string {
   if (value === null || value === undefined || (value as unknown) === '') return '—';
   const digits = options.whole ? 0 : 2;
   try {
@@ -23,6 +27,8 @@ export function money(value: number | null | undefined, currency: string, option
       style: 'currency',
       currency,
       useGrouping: true,
+      // A change says which way it went; zero went neither.
+      signDisplay: options.signed ? 'exceptZero' : 'auto',
       maximumFractionDigits: digits,
       minimumFractionDigits: digits
     }).format(value);
@@ -39,6 +45,27 @@ export function shortDate(key: string | null | undefined): string {
   const parts = String(key).split('-');
   const month = MONTHS[Number(parts[1]) - 1] || parts[1];
   return parts.length > 2 ? Number(parts[2]) + ' ' + month : month + ' ' + parts[0];
+}
+
+/** `2024-08-06` as `6 Aug 2024`: across a whole ledger the year is the question. */
+export function fullDate(key: string | null | undefined): string {
+  if (!key) return '';
+  return shortDate(key) + ' ' + String(key).slice(0, 4);
+}
+
+/**
+ * A ratio as a percentage. `null` is a ratio with nothing under it — a savings
+ * rate in a month with no income — and prints as a dash, never as 0%.
+ */
+export function percent(value: number | null | undefined, options: { digits?: number; signed?: boolean } = {}): string {
+  if (value === null || value === undefined) return '—';
+  const digits = options.digits ?? 0;
+  return new Intl.NumberFormat(undefined, {
+    style: 'percent',
+    signDisplay: options.signed ? 'exceptZero' : 'auto',
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits
+  }).format(value);
 }
 
 /**

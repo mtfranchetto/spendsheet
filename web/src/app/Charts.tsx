@@ -11,8 +11,8 @@
 import { For, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  barGeometry, categoryColor, donutSlices, lineGeometry, pixelsOf, PLOT_PIXELS, sparkPoints,
-  type Bucket, type Mark, type Point
+  barGeometry, categoryColor, columnGeometry, donutSlices, lineGeometry, linesGeometry, pixelsOf, PLOT_PIXELS,
+  sparkPoints, type Bucket, type Mark, type Point
 } from './geometry';
 import { money, shortDate } from './format';
 import { currency } from './state';
@@ -50,15 +50,17 @@ function Gridlines(props: { marks: Mark[] }) {
 /**
  * A line, from a series of `{key, value}`. Each end captioned with **its own**
  * value: pairing the first date with the low was right only for a line that
- * happened to rise.
+ * happened to rise. `date` words the two ends, for a line long enough that the
+ * year is part of the answer.
  */
-export function LineChart(props: { series: Point[] | null | undefined }) {
+export function LineChart(props: { series: Point[] | null | undefined; date?: (key: string) => string }) {
   return (
     <Show when={props.series && props.series.length >= 2 ? props.series : null} fallback={<p class="muted">Not enough days to draw a line yet.</p>}>
       {(series) => {
         const geometry = () => lineGeometry(series(), whole);
         const first = () => series()[0];
         const last = () => series()[series().length - 1];
+        const date = (key: string) => (props.date || shortDate)(key);
         return (
           <div>
             <Scaled marks={geometry().marks}>
@@ -74,8 +76,8 @@ export function LineChart(props: { series: Point[] | null | undefined }) {
               </svg>
             </Scaled>
             <div class="row">
-              <span class="muted">{shortDate(first().key) + ' · ' + whole(first().value)}</span>
-              <span class="muted">{shortDate(last().key) + ' · ' + whole(last().value)}</span>
+              <span class="muted">{date(first().key) + ' · ' + whole(first().value)}</span>
+              <span class="muted">{date(last().key) + ' · ' + whole(last().value)}</span>
             </div>
           </div>
         );
@@ -84,12 +86,16 @@ export function LineChart(props: { series: Point[] | null | undefined }) {
   );
 }
 
-/** Cashflow, as bars from a zero line: out below, in above. */
-export function BarChart(props: { buckets: Bucket[] | null | undefined }) {
+/**
+ * Cashflow, as bars from a zero line: out below, in above. The same drawing
+ * serves any signed series with what is above zero as `income` and what is
+ * below as `expenses`; `scale` words its marks and `title` says what it is.
+ */
+export function BarChart(props: { buckets: Bucket[] | null | undefined; scale?: (value: number) => string; title?: string }) {
   return (
     <Show when={props.buckets && props.buckets.length ? props.buckets : null} fallback={<p class="muted">Nothing in this period.</p>}>
       {(buckets) => {
-        const geometry = () => barGeometry(buckets(), whole);
+        const geometry = () => barGeometry(buckets(), props.scale || whole);
         return (
           <div>
             <Scaled marks={geometry().marks}>
@@ -97,7 +103,7 @@ export function BarChart(props: { buckets: Bucket[] | null | undefined }) {
                 viewBox="0 0 100 40"
                 preserveAspectRatio="none"
                 role="img"
-                aria-label={buckets().length + ' periods of income and spending'}
+                aria-label={props.title || buckets().length + ' periods of income and spending'}
                 style={{ height: PLOT_PIXELS + 'px' }}
               >
                 <For each={geometry().bars}>
@@ -130,6 +136,71 @@ export function BarChart(props: { buckets: Bucket[] | null | undefined }) {
         );
       }}
     </Show>
+  );
+}
+
+export type NamedLine = { name: string; tone: 'in' | 'out'; series: Point[] };
+
+/**
+ * Several lines on one scale, each named in a legend that carries its latest
+ * value: the end of a line is what is read, and two ends close together in a
+ * gutter are the labels `spacedMarks` exists to drop.
+ */
+export function LinesChart(props: { lines: NamedLine[]; title: string }) {
+  const geometry = () => linesGeometry(props.lines.map((line) => line.series), whole);
+  const drawn = () => props.lines.map((line, i) => ({ ...line, points: geometry().lines[i] }));
+  const ends = () => props.lines[0].series;
+  return (
+    <div>
+      <div class="legend">
+        <For each={props.lines}>
+          {(line) => (
+            <span>
+              <span class={['sw', line.tone]} aria-hidden="true" />
+              {line.name + ' '}
+              <span class="num">{whole(line.series[line.series.length - 1].value)}</span>
+            </span>
+          )}
+        </For>
+      </div>
+      <Scaled marks={geometry().marks}>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label={props.title} style={{ height: PLOT_PIXELS + 'px' }}>
+          <Gridlines marks={geometry().marks} />
+          <For each={drawn()}>
+            {(line) => <polyline points={line.points} class={['line', line.tone]} vector-effect="non-scaling-stroke" />}
+          </For>
+        </svg>
+      </Scaled>
+      <div class="row">
+        <span class="muted">{shortDate(ends()[0].key)}</span>
+        <span class="muted">{shortDate(ends()[ends().length - 1].key)}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Amounts as bars from zero, one slot per value with its tick under it. A
+ * `null` leaves its slot empty: see `columnGeometry`.
+ */
+export function ColumnChart(props: { values: (number | null)[]; ticks: string[]; title: string }) {
+  const geometry = () => columnGeometry(props.values, whole);
+  return (
+    <div>
+      <Scaled marks={geometry().marks}>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label={props.title} style={{ height: PLOT_PIXELS + 'px' }}>
+          <Gridlines marks={geometry().marks} />
+          <For each={geometry().bars}>
+            {(bar) => (
+              <rect x={bar.x.toFixed(2)} y={bar.y.toFixed(2)} width={bar.width.toFixed(2)} height={bar.height.toFixed(2)} class="barmark flat" />
+            )}
+          </For>
+        </svg>
+      </Scaled>
+      <div class="xlabels" aria-hidden="true">
+        <For each={props.ticks}>{(tick) => <span>{tick}</span>}</For>
+      </div>
+    </div>
   );
 }
 

@@ -8,7 +8,7 @@
  */
 
 import { For, Show } from 'solid-js';
-import type { PageRecord } from '../domain/query';
+import type { PageRecord, Period } from '../domain/query';
 import { TX_TYPE } from '../domain/schema';
 import { money, withIcon } from './format';
 import { categoryColor } from './geometry';
@@ -145,11 +145,17 @@ export type CategoryTotal = { name: string; total: number; children?: { name: st
  * with no children, so one gesture never means two things depending on data
  * you cannot see. Children are drawn against their parent's total, in the
  * parent's hue, faded.
+ *
+ * `note` puts two short facts under a parent's bar. `period` is for totals
+ * that were not summed over the period Charts has picked: the drill then opens
+ * Records on that window instead.
  */
-export function CategoryBars(props: { rows: CategoryTotal[] | null | undefined }) {
+export function CategoryBars<T extends CategoryTotal>(props: {
+  rows: T[] | null | undefined; note?: (row: T) => [string, string]; period?: Period; empty?: string;
+}) {
   const biggest = () => (props.rows && props.rows[0] ? props.rows[0].total : 0) || 1;
   return (
-    <Show when={props.rows && props.rows.length} fallback={<p class="muted">Nothing spent in this period.</p>}>
+    <Show when={props.rows && props.rows.length} fallback={<p class="muted">{props.empty || 'Nothing spent in this period.'}</p>}>
       <div>
         <For each={props.rows || []}>
           {(row) => {
@@ -178,6 +184,14 @@ export function CategoryBars(props: { rows: CategoryTotal[] | null | undefined }
                       style={{ background: categoryColor(row.name), width: Math.max(2, (row.total / biggest()) * 100).toFixed(1) + '%' }}
                     />
                   </div>
+                  <Show when={props.note}>
+                    {(note) => (
+                      <div class="row barnote">
+                        <span class="muted">{note()(row)[0]}</span>
+                        <span class="muted num">{note()(row)[1]}</span>
+                      </div>
+                    )}
+                  </Show>
                 </button>
                 <Show when={open()}>
                   <div class="children">
@@ -187,7 +201,7 @@ export function CategoryBars(props: { rows: CategoryTotal[] | null | undefined }
                           type="button"
                           class="catkid"
                           aria-label={child.name + ' in ' + row.name + ' ' + money(child.total, currency()) + ', show these transactions'}
-                          onClick={() => drillToRecords({ spendOnly: true, category: row.name, subcategory: child.name })}
+                          onClick={() => drillToRecords({ spendOnly: true, category: row.name, subcategory: child.name, period: props.period })}
                         >
                           <div class="row">
                             <span class="grow ellipsis">{child.name}</span>
@@ -205,7 +219,7 @@ export function CategoryBars(props: { rows: CategoryTotal[] | null | undefined }
                         </button>
                       )}
                     </For>
-                    <button type="button" class="link catmore" onClick={() => drillToRecords({ spendOnly: true, category: row.name })}>
+                    <button type="button" class="link catmore" onClick={() => drillToRecords({ spendOnly: true, category: row.name, period: props.period })}>
                       {'All ' + row.name + ' transactions →'}
                     </button>
                   </div>

@@ -53,7 +53,8 @@ var REPORT = {
 
   RESULT_ROW: 14,       // A:B result, C the same total as money out
   MONTH_ROW: 14,        // G:I result, J label, K money out
-  YOY_ROW: 14,          // M:N
+  YOY_ROW: 14,          // M:N — three rows year on year, then three for the last 12 months
+  RATE_ROW: 19,         // N — the last of those, and the one cell of the block that is not money
 
   RESULT_COL: 'A',
   MONTH_COL: 'G',
@@ -385,10 +386,18 @@ function writeReportFormulas_(sheet, sep) {
  * above happen to be looking at. Wiring it to the dropdowns would make it move
  * whenever you drilled into something, which is the fastest way to stop
  * trusting a number.
+ *
+ * The three rows under it are the last 12 months — spending, income, and the
+ * share of income kept — for the same reason and one more: the phone's Long
+ * view computes those three from the ledger, and these cells are the second
+ * implementation it is checked against. They are here rather than behind the
+ * Period dropdown because "Last 12 months" there starts on the 1st of a
+ * month, and the phone's window starts the day after today's date a year ago.
  */
 function writeYearOnYear_(sheet, put) {
   var col = REPORT.YOY_COL;
   var value = nextColumn_(col, 1);
+  var cell = function (offset) { return '$' + value + '$' + (REPORT.YOY_ROW + offset); };
 
   sheet.getRange(col + (REPORT.YOY_ROW - 1))
     .setValue('Year on year (all spending)').setFontWeight('bold');
@@ -396,13 +405,50 @@ function writeYearOnYear_(sheet, put) {
   var rows = [
     ['This year to date', yearToDateSpendFormula_(0)],
     ['Last year, same point', yearToDateSpendFormula_(-1)],
-    ['Difference', '=$' + value + '$' + REPORT.YOY_ROW + '-$' + value + '$' + (REPORT.YOY_ROW + 1)]
+    ['Difference', '=' + cell(0) + '-' + cell(1)],
+    ['Last 12 months, spending', trailingYearFormula_('spending')],
+    ['Last 12 months, income', trailingYearFormula_('income')],
+    ['Last 12 months, savings rate', savingsRateFormula_(cell(3), cell(4))]
   ];
 
   rows.forEach(function (row, i) {
     sheet.getRange(col + (REPORT.YOY_ROW + i)).setValue(row[0]);
     put(value + (REPORT.YOY_ROW + i), row[1]);
   });
+}
+
+
+/**
+ * Money out, or money in, over the twelve months ending today.
+ *
+ * From the day after today's date a year ago: `EDATE` takes the last day of
+ * the month where last year has no such date, so 29 February starts its year
+ * on 1 March — the rule `longview.ts` states for the phone.
+ *
+ * The upper bound is `< tomorrow` and not `<= today`. A booking date can carry
+ * a time of day — a UTC midnight written into a Rome book is 02:00 — and
+ * `<= TODAY()` compares against midnight, so it drops every such row booked
+ * today. The phone floors a date to its day, and this is the same answer.
+ */
+function trailingYearFormula_(side) {
+  var amount = txRange_('amount_base');
+  var date = txRange_('booking_date');
+
+  return '=' + (side === 'spending' ? '-' : '') + 'SUMIFS(' + amount + ',' +
+    date + ',">="&EDATE(TODAY(),-12)+1,' +
+    date + ',"<"&TODAY()+1,' +
+    txRange_('in_reports') + ',TRUE,' +
+    amount + ',"' + (side === 'spending' ? '<0' : '>0') + '")';
+}
+
+/**
+ * What was kept, as a share of what came in — blank when nothing came in.
+ *
+ * Blank and not zero: no income is no rate, and `0%` would say every cent of
+ * an income was spent.
+ */
+function savingsRateFormula_(spending, income) {
+  return '=IF(' + income + '>0,(' + income + '-' + spending + ')/' + income + ',"")';
 }
 
 /**
@@ -587,6 +633,10 @@ function formatReports_(sheet) {
   ].forEach(function (column) {
     sheet.getRange(column + REPORT.RESULT_ROW + ':' + column).setNumberFormat(money);
   });
+
+  // After the loop, which formats the whole column it sits in as money: a
+  // share of income printed that way reads as thirty-one cents.
+  sheet.getRange(nextColumn_(REPORT.YOY_COL, 1) + REPORT.RATE_ROW).setNumberFormat('0%');
 
   sheet.getRange('B' + REPORT.CUSTOM_ROW + ':B' + (REPORT.CUSTOM_ROW + 1))
     .setNumberFormat('yyyy-mm-dd');
