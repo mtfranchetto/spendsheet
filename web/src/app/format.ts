@@ -102,9 +102,26 @@ export function dayHeading(key: string, today: string): string {
     (String(year) === today.slice(0, 4) ? '' : ' ' + year);
 }
 
+/**
+ * Two day keys as one stretch, earlier first whichever way they were typed:
+ * `1 Sep – 11 Oct`, with each end's year once either is not this one — a
+ * range that leaves its year off reads as this year's.
+ */
+export function rangeTitle(from: string, to: string, thisYear: number): string {
+  const [first, last] = from <= to ? [from, to] : [to, from];
+  const dated = first.slice(0, 4) !== String(thisYear) || last.slice(0, 4) !== String(thisYear);
+  const name = (key: string) => shortDate(key) + (dated ? ' ' + key.slice(0, 4) : '');
+  return name(first) + ' – ' + name(last);
+}
+
 /** January…December, short, in the phone's locale. */
 export function monthNames(): string[] {
   return Array.from({ length: 12 }, (_, month) => new Date(2000, month, 1).toLocaleDateString(undefined, { month: 'short' }));
+}
+
+/** `October 2026`, in the phone's locale. `month` is 1–12. */
+export function monthTitle(year: number, month: number): string {
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
 /** `🛒 Groceries`, or `Groceries` with no leading space when the icon cell is empty. */

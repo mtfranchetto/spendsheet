@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { formatAmount, parseAmount } from './amount';
-import { agoWords, dayHeading, fullDate, money, percent, shortDate, withIcon } from './format';
+import { agoWords, dayHeading, fullDate, money, percent, rangeTitle, shortDate, withIcon } from './format';
 import {
   barGeometry, columnGeometry, donutSlices, lineGeometry, linesGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS
 } from './geometry';
-import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodOptionId, viewSearch } from './view';
+import { chosenAccounts, defaultView, parseView, periodFromId, periodId, periodUnit, stepPeriod, viewSearch } from './view';
 
 describe('format', () => {
   it('groups thousands at four digits as well as five, so a column lines up', () => {
@@ -63,6 +63,18 @@ describe('format', () => {
   it('puts no leading space before a name with no icon', () => {
     expect(withIcon('', 'Groceries')).toBe('Groceries');
     expect(withIcon('🛒', 'Groceries')).toBe('🛒 Groceries');
+  });
+});
+
+describe('rangeTitle', () => {
+  it('leaves the year off a range inside this one, and names it at both ends otherwise', () => {
+    expect(rangeTitle('2026-09-01', '2026-10-11', 2026)).toBe('1 Sep – 11 Oct');
+    expect(rangeTitle('2024-08-06', '2025-09-03', 2026)).toBe('6 Aug 2024 – 3 Sep 2025');
+    expect(rangeTitle('2025-12-20', '2026-01-05', 2026)).toBe('20 Dec 2025 – 5 Jan 2026');
+  });
+
+  it('puts the earlier day first, as the window does', () => {
+    expect(rangeTitle('2026-10-11', '2026-09-01', 2026)).toBe('1 Sep – 11 Oct');
   });
 });
 
@@ -175,10 +187,72 @@ describe('view', () => {
     expect(parseView('?v=records&p=month:2026-13', 2026).records.period).toEqual({ kind: 'ytd' });
   });
 
-  it('selects one option for every month, and keeps the month in the id', () => {
+  it('keeps the month and the year in the id', () => {
     expect(periodId({ kind: 'month', year: 2026, month: 3 })).toBe('month:2026-03');
-    expect(periodOptionId({ kind: 'month', year: 2026, month: 3 })).toBe('month');
     expect(periodId({ kind: 'year', year: 2024 })).toBe('year:2024');
+  });
+
+  // October 2026: `month` is zero-based, as the book's clock has it.
+  const october = { year: 2026, month: 9 };
+
+  it('reads a period as the one month or one year it covers, or neither', () => {
+    expect(periodUnit({ kind: 'mtd' }, october)).toEqual({ unit: 'month', year: 2026, month: 10 });
+    expect(periodUnit({ kind: 'last_month' }, october)).toEqual({ unit: 'month', year: 2026, month: 9 });
+    expect(periodUnit({ kind: 'last_month' }, { year: 2026, month: 0 })).toEqual({ unit: 'month', year: 2025, month: 12 });
+    expect(periodUnit({ kind: 'month', year: 2024, month: 2 }, october)).toEqual({ unit: 'month', year: 2024, month: 2 });
+    expect(periodUnit({ kind: 'ytd' }, october)).toEqual({ unit: 'year', year: 2026 });
+    expect(periodUnit({ kind: 'year', year: 2024 }, october)).toEqual({ unit: 'year', year: 2024 });
+    for (const kind of ['week', 'last_12', 'custom']) expect(periodUnit({ kind }, october)).toBeNull();
+  });
+
+  // The book's first row is in March 2024.
+  const first = { year: 2024, month: 3 };
+
+  it('steps a month at a time, across the turn of a year', () => {
+    expect(stepPeriod({ kind: 'mtd' }, -1, october, first)).toEqual({ kind: 'month', year: 2026, month: 9 });
+    expect(stepPeriod({ kind: 'last_month' }, -1, october, first)).toEqual({ kind: 'month', year: 2026, month: 8 });
+    expect(stepPeriod({ kind: 'month', year: 2026, month: 1 }, -1, october, first)).toEqual({ kind: 'month', year: 2025, month: 12 });
+    expect(stepPeriod({ kind: 'month', year: 2025, month: 12 }, 1, october, first)).toEqual({ kind: 'month', year: 2026, month: 1 });
+  });
+
+  it('steps a year at a time', () => {
+    expect(stepPeriod({ kind: 'ytd' }, -1, october, first)).toEqual({ kind: 'year', year: 2025 });
+    expect(stepPeriod({ kind: 'year', year: 2024 }, 1, october, first)).toEqual({ kind: 'year', year: 2025 });
+  });
+
+  it('arrives at the present as the default, so stepping away and back is the bare address', () => {
+    expect(stepPeriod({ kind: 'month', year: 2026, month: 9 }, 1, october, first)).toEqual({ kind: 'mtd' });
+    expect(stepPeriod({ kind: 'year', year: 2025 }, 1, october, first)).toEqual({ kind: 'ytd' });
+    const view = defaultView();
+    view.screen = 'analytics';
+    view.analytics.period = stepPeriod(stepPeriod(view.analytics.period, -1, october, first)!, 1, october, first)!;
+    expect(viewSearch(view)).toBe('?v=analytics');
+  });
+
+  it('has no step into a month or a year that has not started, nor from a period with no unit', () => {
+    expect(stepPeriod({ kind: 'mtd' }, 1, october, first)).toBeNull();
+    expect(stepPeriod({ kind: 'ytd' }, 1, october, first)).toBeNull();
+    expect(stepPeriod({ kind: 'last_12' }, -1, october, first)).toBeNull();
+  });
+
+  it('has no step back past the book\'s first row, and none at all behind the present for a book with no rows', () => {
+    expect(stepPeriod({ kind: 'month', year: 2024, month: 4 }, -1, october, first)).toEqual({ kind: 'month', year: 2024, month: 3 });
+    expect(stepPeriod({ kind: 'month', year: 2024, month: 3 }, -1, october, first)).toBeNull();
+    expect(stepPeriod({ kind: 'year', year: 2024 }, -1, october, first)).toBeNull();
+    expect(stepPeriod({ kind: 'mtd' }, -1, october, null)).toBeNull();
+    expect(stepPeriod({ kind: 'ytd' }, -1, october, null)).toBeNull();
+  });
+
+  it('steps back in from a month outside both ends, which a bookmark can name', () => {
+    expect(stepPeriod({ kind: 'month', year: 2027, month: 3 }, -1, october, first)).toEqual({ kind: 'month', year: 2027, month: 2 });
+    expect(stepPeriod({ kind: 'month', year: 2027, month: 3 }, 1, october, first)).toBeNull();
+    expect(stepPeriod({ kind: 'month', year: 1989, month: 5 }, 1, october, first)).toEqual({ kind: 'month', year: 1989, month: 6 });
+    expect(stepPeriod({ kind: 'month', year: 1989, month: 5 }, -1, october, first)).toBeNull();
+  });
+
+  it('gives every step an id the address can read back', () => {
+    const stepped = stepPeriod({ kind: 'mtd' }, -1, october, first)!;
+    expect(periodFromId(periodId(stepped), null, null, 2026)).toEqual(stepped);
   });
 
   it('reads All and an empty list as the same answer', () => {

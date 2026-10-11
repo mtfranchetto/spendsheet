@@ -297,14 +297,39 @@ button.danger.armed { background: var(--bad-bg); font-weight: 600; }
 
 label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
 .field { width: 100%; }
-.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.filters > * { flex: 1 1 45%; min-width: 130px; }
-.filters > .wide { flex: 1 1 100%; }
-/* A date range is one control with two ends — see `filterBar`. `min-width: 0`
+/*
+  The filter bar: search, the period, the pills — a line each, so the list
+  they filter starts within a thumb's reach of the top of the screen.
+*/
+.filters { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+
+/* The glass is drawn over the field's own left padding. */
+.search { position: relative; }
+.search > svg { position: absolute; left: 12px; top: 50%; width: 18px; height: 18px;
+                transform: translateY(-50%); pointer-events: none;
+                fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+.search > input { padding-left: 38px; }
+
+/*
+  ‹ October 2026 ›
+
+  The arrows are a full tap target each and the name takes what is left, so
+  it stays centred whether they are drawn or not — a period with nothing to
+  step by has none, and the name must not jump sideways when they go.
+*/
+.stepper { display: flex; align-items: center; }
+.stepper > button { border: none; background: none; }
+.stepper > .step { flex: 0 0 var(--tap); padding: 0; color: var(--accent);
+                   font-size: 24px; line-height: 1; }
+.stepper > .when { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; }
+.stepper > .when::after { content: "\25BE"; color: var(--muted); margin-left: 6px;
+                          font-weight: 400; }
+
+/* A date range is one control with two ends — see `FilterBar`. `min-width: 0`
    because a date input has a wide intrinsic width and would otherwise refuse
    to shrink below it, pushing its partner off the row this exists to hold. */
-.filters > .range { display: flex; gap: 8px; }
-.filters > .range > * { flex: 1 1 50%; min-width: 0; }
+.range { display: flex; gap: 8px; margin: 12px 0; }
+.range > * { flex: 1 1 50%; min-width: 0; }
 /* iOS Safari sizes a date input to its own content and **ignores `width`**
    while the native appearance is on, so the `width: 100%` above was obeyed by
    every browser this was built in and silently dropped by the only device it
@@ -313,14 +338,6 @@ label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px
 input[type="date"] { -webkit-appearance: none; appearance: none;
                      min-width: 0; text-align: left; }
 
-/*
-  Every control says what it filters.
-
-  Two adjacent dropdowns both reading "All" is not a default, it is a
-  guessing game — the value is the same and only the position distinguishes
-  them, which is knowledge the screen refuses to show. The `aria-label` was
-  already there and was doing this job for a screen reader only.
-*/
 /*
   Expense · Income · Transfer, at the top of the transaction sheet.
 
@@ -379,17 +396,22 @@ input[type="date"] { -webkit-appearance: none; appearance: none;
 }
 
 /*
-  The drill chips on Records, which are a different kind of chip: an account
-  chip is a toggle you press, these report a filter set on another screen and
-  the only thing they do is remove it. Hence `.on` rather than
-  `aria-pressed` — there is no off state to be in — and the ✕, which says
-  "tapping me takes this away" where a filled chip would say the opposite.
+  A pill that is set, which is a different thing from a toggle that is on.
+  `aria-pressed` belongs to a chip you press to flip. These either open a
+  sheet (`.opens`, with the caret that says so) or report a filter set on
+  another screen and do nothing but remove it — hence the ✕, which says
+  "tapping me takes this away" where a filled chip alone would say the
+  opposite. All three are filled the same way, since "this is narrowing what
+  you see" is the one thing each has to say.
+
+  `var(--bg)` for the reason the rule above it gives: `--accent` is a light
+  blue in dark mode, and white on it is 2.1:1.
 */
-.drills { margin: -4px 0 12px; }
-/* `var(--bg)` for the reason the rule above it now gives: `--accent` is a
-   light blue in dark mode, and white on it is 2.1:1. */
 .chip.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.chip.opens::after { content: "\25BE"; margin-left: 6px; opacity: .75; }
 .chip .x { margin-left: 7px; opacity: .75; }
+/* Beside the pills and at their height, so it sits on their line. */
+.chips > .link { min-height: 34px; padding: 0 6px; font-size: 13px; }
 
 /* A row you can act on. 44px is the smallest thing a thumb hits reliably. */
 .tap {
@@ -832,6 +854,8 @@ dialog {
   position: relative; /* the anchor for .sheet-close, which is absolute */
 }
 dialog::backdrop { background: rgba(0,0,0,.45); }
+/* The button that ends a sheet of choices, clear of the last of them. */
+.sheet-body > [role="listbox"] ~ .primary { margin-top: 12px; }
 
 /* The close button is the dialog's *first* child, because `showModal` hands
    focus to the first focusable descendant and the thing that used to be

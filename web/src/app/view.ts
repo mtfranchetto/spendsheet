@@ -51,13 +51,57 @@ export function periodId(spec: Period | undefined): string {
   return spec.kind;
 }
 
+/** The book's clock, as far as a period needs it: `month` is zero-based, as `Clock`'s is. */
+type Now = { year: number; month: number };
+
 /**
- * The `<option>` a period stands for — **not** `periodId`: one option covers
- * all twelve months ("A month…", with chips for which), so `month:2026-03`
- * selects `month`. The URL keeps the full id, or a bookmark forgets its month.
+ * The one month or one year a period covers, or null for a period that is
+ * neither — which is what the arrows beside the period move by, and what its
+ * name is printed from. Read the way `resolveWindow` reads it, so the name on
+ * screen and the rows under it cannot disagree about a half-specified month.
  */
-export function periodOptionId(spec: Period | undefined): string {
-  return spec && spec.kind === 'month' ? 'month' : periodId(spec);
+export function periodUnit(spec: Period | undefined, now: Now): { unit: 'month'; year: number; month: number } | { unit: 'year'; year: number } | null {
+  const kind = (spec && spec.kind) || 'mtd';
+  if (kind === 'mtd') return { unit: 'month', year: now.year, month: now.month + 1 };
+  if (kind === 'last_month') {
+    return now.month === 0 ? { unit: 'month', year: now.year - 1, month: 12 } : { unit: 'month', year: now.year, month: now.month };
+  }
+  if (kind === 'month') {
+    const month = Number(spec?.month);
+    return { unit: 'month', year: Number(spec?.year) || now.year, month: month >= 1 && month <= 12 ? month : now.month + 1 };
+  }
+  if (kind === 'ytd') return { unit: 'year', year: now.year };
+  if (kind === 'year') return { unit: 'year', year: Number(spec?.year) || now.year };
+  return null;
+}
+
+/**
+ * The period one month or one year either side, or null where there is none:
+ * a period with no unit, a month or year that has not started, one before the
+ * book's first row. `earliest` is that row's month, 1–12 as a period's is; a
+ * book with no rows has nothing behind the present to step to.
+ *
+ * Each end stops only the step towards it. A bookmark can name a month
+ * outside both, and the arrow that leads back in has to work from there.
+ *
+ * Arriving at the present gives `mtd` or `ytd` rather than this month or this
+ * year by number. They are the screens' defaults, so stepping away and back
+ * returns to the bare address — and a bookmark of "this month" taken that way
+ * still means this month in November.
+ */
+export function stepPeriod(spec: Period | undefined, by: 1 | -1, now: Now, earliest: { year: number; month: number } | null): Period | null {
+  const at = periodUnit(spec, now);
+  if (!at) return null;
+  if (at.unit === 'year') {
+    const year = at.year + by;
+    if (by > 0 ? year > now.year : year < (earliest ? earliest.year : now.year)) return null;
+    return year === now.year ? { kind: 'ytd' } : { kind: 'year', year };
+  }
+  const index = at.year * 12 + (at.month - 1) + by;
+  const present = now.year * 12 + now.month;
+  const first = earliest ? earliest.year * 12 + (earliest.month - 1) : present;
+  if (by > 0 ? index > present : index < first) return null;
+  return index === present ? { kind: 'mtd' } : { kind: 'month', year: Math.floor(index / 12), month: (index % 12) + 1 };
 }
 
 const NAMED = ['week', 'mtd', 'last_month', 'ytd', 'last_12'];

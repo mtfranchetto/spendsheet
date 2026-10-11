@@ -13,7 +13,8 @@
  * because a page can send anything.
  */
 
-import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import { TRANSFER_OUTSIDE } from '../api/contract';
 import { recordForPage, transferPeers, type LedgerRow, type PageRecord } from '../domain/query';
 import { TX_TYPE } from '../domain/schema';
@@ -510,29 +511,69 @@ function RuleForm(props: { record: PageRecord }) {
  * to the focused field otherwise, and closing leaves you somewhere else in
  * the list than where you opened it.
  */
-function openWithoutMoving(dialog: HTMLDialogElement): void {
+function openWithoutMoving(dialog: HTMLDialogElement): () => void {
   const at = window.scrollY;
   const style = document.body.style;
   style.position = 'fixed';
   style.top = -at + 'px';
   style.left = '0';
   style.right = '0';
-  dialog.addEventListener(
-    'close',
-    () => {
-      style.position = '';
-      style.top = '';
-      style.left = '';
-      style.right = '';
-      window.scrollTo(0, at);
-    },
-    { once: true }
-  );
+  let held = true;
+  const release = () => {
+    if (!held) return;
+    held = false;
+    style.position = '';
+    style.top = '';
+    style.left = '';
+    style.right = '';
+    window.scrollTo(0, at);
+  };
+  dialog.addEventListener('close', release, { once: true });
   dialog.showModal();
+  return release;
+}
+
+/**
+ * A sheet from the bottom, up while `open` is true. Closing it by its ✕, by
+ * Escape or by a tap on the backdrop all arrive at `onClose`.
+ *
+ * The page is let go on cleanup as well as on `close`: a dialog taken out of
+ * the document while it is up — the screen it belongs to going away under it
+ * — fires no `close`, and would leave the page pinned where it was.
+ */
+export function Dialog(props: { id?: string; open: boolean; onClose: () => void; children: JSX.Element }) {
+  let dialog: HTMLDialogElement | undefined;
+  let release: (() => void) | undefined;
+
+  createEffect(
+    () => props.open,
+    (showing) => {
+      if (!dialog) return;
+      if (showing && !dialog.open) release = openWithoutMoving(dialog);
+      if (!showing && dialog.open) dialog.close();
+    }
+  );
+  onCleanup(() => release?.());
+
+  return (
+    <dialog
+      id={props.id}
+      ref={(el) => (dialog = el)}
+      onClose={() => props.onClose()}
+      onClick={(event) => {
+        if (event.target === dialog) props.onClose();
+      }}
+    >
+      {/* First in the markup: `showModal` focuses the first thing it can — see `.sheet-close`. */}
+      <button type="button" class="sheet-close" autofocus aria-label="Close" onClick={() => props.onClose()}>
+        ✕
+      </button>
+      <div class="sheet-body">{props.children}</div>
+    </dialog>
+  );
 }
 
 export function SheetHost() {
-  let dialog: HTMLDialogElement | undefined;
 
   // The row the sheet is about, drawn from the book as it is now — a write
   // landing while it is open redraws it.
@@ -555,34 +596,11 @@ export function SheetHost() {
     return current && target() ? current.kind + ':' + current.uid : null;
   };
 
-  createEffect(
-    () => !!key(),
-    (showing) => {
-      if (!dialog) return;
-      if (showing && !dialog.open) openWithoutMoving(dialog);
-      if (!showing && dialog.open) dialog.close();
-    }
-  );
-
   return (
-    <dialog
-      id="sheet"
-      ref={(el) => (dialog = el)}
-      onClose={closeSheet}
-      onClick={(event) => {
-        if (event.target === dialog) closeSheet();
-      }}
-    >
-      <button type="button" class="sheet-close" autofocus aria-label="Close" onClick={closeSheet}>
-        ✕
-      </button>
-      <div class="sheet-body">
-        <Show when={key()} keyed>
-          {(which) =>
-            which.startsWith('rule:') ? <RuleForm record={target()!} /> : <Detail record={target()!} suggestion={suggestion()} />
-          }
-        </Show>
-      </div>
-    </dialog>
+    <Dialog id="sheet" open={!!key()} onClose={closeSheet}>
+      <Show when={key()} keyed>
+        {(which) => (which.startsWith('rule:') ? <RuleForm record={target()!} /> : <Detail record={target()!} suggestion={suggestion()} />)}
+      </Show>
+    </Dialog>
   );
 }

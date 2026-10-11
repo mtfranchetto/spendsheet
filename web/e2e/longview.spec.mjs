@@ -32,18 +32,18 @@ test('the switch is the way in, and the address says which mode in both directio
   const long = page.getByRole('button', { name: 'Long view', exact: true });
 
   await expect(period).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('select[aria-label="Period"]')).toBeVisible();
+  await expect(page.locator('.stepper .when')).toBeVisible();
 
   await long.click();
   await expect(page).toHaveURL(/\?v=analytics&m=long$/);
   await expect(long).toHaveAttribute('aria-pressed', 'true');
   // No picker: the long view's windows are not chosen.
-  await expect(page.locator('select[aria-label="Period"]')).toHaveCount(0);
+  await expect(page.locator('.stepper .when')).toHaveCount(0);
   await expect(page.getByText('compared with the 12 months before')).toBeVisible();
 
   await period.click();
   await expect(page).toHaveURL(/\?v=analytics$/);
-  await expect(page.locator('select[aria-label="Period"]')).toBeVisible();
+  await expect(page.locator('.stepper .when')).toBeVisible();
 
   // Still three tabs: the long view is a mode of Charts, not a place.
   await expect(page.locator('#tabs button')).toHaveCount(3);
@@ -137,19 +137,21 @@ test('the spending card and a category open Records on the same 12 months', asyn
   await stat(page, 'Annual spending').click();
   await expect(page.locator('h1')).toHaveText('Records');
   await expect(page).toHaveURL(/v=records&p=custom&from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
-  await expect(page.locator('.drills .chip.on')).toHaveText(/Money out/);
-  // To today, from the day after this date a year ago.
+  await expect(page.locator('.filters .chip.on')).toHaveText(/Money out/);
+  // To today, from the day after this date a year ago: both ends are in the period's sheet.
   const today = bookToday();
+  await page.locator('.stepper .when').click();
   await expect(page.getByLabel('Custom to')).toHaveValue(
     today.year + '-' + String(today.month).padStart(2, '0') + '-' + String(today.date).padStart(2, '0'));
   await expect(page.getByLabel('Custom from')).toHaveValue(new RegExp('^' + (today.year - 1) + '-'));
+  await page.getByRole('button', { name: 'Done' }).click();
 
   await page.locator('#tabs button', { hasText: 'Charts' }).click();
   await expect(page).toHaveURL(/\?v=analytics&m=long$/);
   await section(page, 'Where it went').locator('.catrow', { hasText: 'Housing' }).click();
   await page.getByRole('button', { name: 'All Housing transactions →' }).click();
   await expect(page).toHaveURL(/v=records&p=custom&from=/);
-  await expect(page.locator('.drills .chip.on')).toHaveCount(2);
+  await expect(page.locator('.filters .chip.on')).toHaveCount(2);
 });
 
 test('a book with no history says how little it holds instead of drawing a year', async ({ page }) => {
