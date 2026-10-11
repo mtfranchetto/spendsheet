@@ -43,6 +43,12 @@ npm run status           # lists what would be pushed — check before the first
 npx clasp push --force   # --force the first time, to overwrite the remote manifest
 ```
 
+**Two things about `clasp login`.**
+
+*If it opens the wrong browser* — a work profile, say — copy the address it prints into the right one. Should Google answer *"The server cannot process the request because it is malformed"*, look at the address you pasted: if it carries `&amp;` where a plain `&` belongs, replace each one and load it again. `npx clasp login --no-localhost` is the same sign-in without the local listener: it prints the address, and waits for you to paste back the `localhost:8888/?…` address the browser ends on.
+
+*The consent screen lists eight permissions with a box beside each, and this project uses five*: Drive metadata, `drive.file`, web-app deployments, script deployments and script projects. Those cover pushing, listing files, cutting a version and moving the deployment onto it. The other three — service management, Cloud Platform and logging — are for clasp commands nothing here runs, and can stay unticked.
+
 Reload the Apps Script editor and the files are there, named `00_config`, `01_jwt` and so on, with `appsscript.json` setting the timezone, the V8 runtime and the web-app config step 4 needs. `.clasp.json` holds your script ID and is gitignored; keep it that way.
 
 **Without Node**, the editor is the other way in, and it has no bulk import — drag-and-drop does nothing. Create one file per `.gs` file in `src/` and paste the contents, keeping the names and their number prefixes: Apps Script has no module system and loads files in name order, so the numbers *are* the load order. Then paste `src/appsscript.json`, which is hidden until you tick **Project Settings → Show "appsscript.json" manifest file**. A file left out is a menu item that is not offered rather than an error, so count them.
@@ -96,7 +102,7 @@ Copy the `/exec` URL. This is what makes the whole thing serverless: your bank n
 >
 > If you took the `clasp` path, `npm run deploy` is that move, and checks afterwards that the deployment is still open to anyone: [`docs/DEPLOY.md`](DEPLOY.md).
 >
-> If you're ever unsure which URL is live, open **Spendsheet → Set up and maintain → Install credentials**. It shows a **Redirect URL** field, pre-filled with what the runtime reports — and that is a starting guess rather than an answer. `ScriptApp.getService().getUrl()` answers for the context it is *called from*, so run from a menu it returns the HEAD deployment, which is not the one you deployed. Check it against **Deploy → Manage deployments** before you paste it into Enable Banking; what you save in that field is what `startAuth()` sends, so it is also the fix if the two ever disagree.
+> If you're ever unsure which URL is live, open **Spendsheet → Set up and maintain → Install credentials**. It shows a **Redirect URL** field holding the URL you have pinned, empty until you pin one, and under it what the runtime reports — which is a guess rather than an answer. `ScriptApp.getService().getUrl()` answers for the context it is *called from*, so run from a menu it returns the HEAD deployment, which is not the one you deployed. That is why the field is not filled in for you. Take the URL from **Deploy → Manage deployments**; what you pin in that field is what **Connect a bank** sends, so it is also the fix if the two ever disagree.
 
 ### 5. Register a sandbox application
 
@@ -109,6 +115,8 @@ Let the browser generate the key pair. The private key is never transmitted and 
 ### 6. Install the credentials
 
 **Spendsheet → Set up and maintain → Install credentials**, or run `installCredentials()` from the Apps Script editor — pick it in the function dropdown and press **Run**. Either opens the same dialog, which asks for four things: the environment, the redirect URL, the application ID and the private key.
+
+**The redirect URL has its own button.** Paste the `/exec` URL from step 4 into the field and press **Pin this URL**; the note beside it changes from *nothing pinned yet* to *✓ Saved*, and reads *✓ pinned* whenever you open the dialog afterwards. **Save** stores the other three and does not touch the redirect. With nothing pinned, **Connect a bank** sends the runtime's guess, and when that guess is not your active deployment Enable Banking answers `Redirect URI not allowed`.
 
 Paste the **entire** `.pem`, including the `-----BEGIN` and `-----END` lines. It's stored in Script Properties, which is private to the script: never written to the spreadsheet, never in git.
 
@@ -126,9 +134,17 @@ A dialog rather than a simple prompt because a PEM is multi-line and a prompt bo
 
 **Spendsheet → Connect a bank.** In sandbox the list holds test banks only — pick **Mock ASPSP** and complete its simulated login. The browser comes back through the `/exec` URL from step 4 to a plain page that says **Connected** and how many accounts were linked.
 
+**The simulated bank starts with no account in it, so the first pass connects nothing.** What the login looks like the first time:
+
+1. Enable Banking's consent screen, then a sign-in to Enable Banking itself by a link it emails you. **Open that link in the tab the flow is in** — copy it from the email and paste it there. Clicked, it opens a new tab that says you are signed in, and the tab that was waiting stays where it was.
+2. Mock ASPSP shows **No Account**. Its accounts are ones you make, in Enable Banking's control panel: create one, and give it a balance and some transactions, or the sync will have nothing to find.
+3. **Spendsheet → Connect a bank** again. The account is now listed; select it and authorise. This pass is the one that ends on **Connected**.
+
+Creating the account feels like the end of it and is not: nothing is linked until the second pass comes back through the `/exec` URL.
+
 Then **Spendsheet → Sync now**, and the simulated transactions land in `transactions`. That round trip — menu, bank, redirect, session, sync — is every moving part Part 2 uses, which is the point of doing it here first.
 
-If the bank's page answers `400 — Redirect URI not allowed` instead, the URL registered in step 5 and the one saved in step 6 disagree.
+If the bank's page answers `400 — Redirect URI not allowed` instead, the URL registered in step 5 and the one pinned in step 6 disagree — or nothing was pinned.
 
 ---
 
