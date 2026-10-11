@@ -109,7 +109,7 @@ class FakeRange {
     const out = [];
     for (let r = 0; r < this.numRows; r++) {
       const line = [];
-      for (let c = 0; c < this.numCols; c++) line.push(this.sheet._get(this.row + r, this.col + c));
+      for (let c = 0; c < this.numCols; c++) line.push(this.sheet._computed(this.row + r, this.col + c));
       out.push(line);
     }
     return out;
@@ -127,12 +127,7 @@ class FakeRange {
     return out;
   }
 
-  getValue() {
-    const formula = this.sheet.formulas.get(`${this.row},${this.col}`);
-    const results = this.sheet.book && this.sheet.book.formulaResults;
-    if (formula && results && results.has(formula)) return results.get(formula);
-    return this.sheet._get(this.row, this.col);
-  }
+  getValue() { return this.sheet._computed(this.row, this.col); }
 
   setValues(values) {
     values.forEach((line, r) =>
@@ -301,6 +296,23 @@ class FakeSheet {
   record(kind, detail) { this.calls.push({ kind, ...detail }); }
   _key(r, c) { return `${r},${c}`; }
   _get(r, c) { const v = this.cells.get(this._key(r, c)); return v === undefined ? '' : v; }
+  /**
+   * What a read returns: the result of the cell's formula where the book has
+   * been given one (`formulaResults`), and the stored value otherwise. One
+   * answer for `getValue` and `getValues`, because Sheets has one. A formula
+   * with no result listed still reads as whatever is stored under it, usually
+   * nothing, so a test about a row a formula makes visible has to list it —
+   * as the book does for `cash_entry`'s seeded date.
+   */
+  _computed(r, c) {
+    const formula = this.formulas.get(this._key(r, c));
+    const results = this.book && this.book.formulaResults;
+    if (formula && results && results.has(formula)) {
+      const result = results.get(formula);
+      return typeof result === 'function' ? result() : result;
+    }
+    return this._get(r, c);
+  }
   /**
    * Writing a value destroys any formula in that cell, exactly as in Sheets —
    * including when the value is blank, which is the case that matters. A
@@ -517,14 +529,21 @@ class FakeSheet {
 
 class FakeSpreadsheet {
   /**
-   * `locale` decides what the argument-separator probe returns, which is the
-   * only formula this fake evaluates. 'comma' models en-US and friends;
-   * 'semicolon' models it-IT, de-DE, fr-FR — where `=SUM(1,1)` reads as the
-   * single number 1.1 rather than as two arguments.
+   * `locale` decides what the argument-separator probe returns. 'comma' models
+   * en-US and friends; 'semicolon' models it-IT, de-DE, fr-FR — where
+   * `=SUM(1,1)` reads as the single number 1.1 rather than as two arguments.
+   *
+   * `formulaResults` is every formula this fake evaluates: the probe, and
+   * `=TODAY()`, which `cash_entry` seeds into the row you type on. A function
+   * is called at read time, so the date is the day of the read. A test adds a
+   * formula's result here to stand in for what Sheets would have computed.
    */
   constructor(locale = 'comma') {
     this.locale = locale;
-    this.formulaResults = new Map([['=SUM(1,1)', locale === 'semicolon' ? 1.1 : 2]]);
+    this.formulaResults = new Map([
+      ['=SUM(1,1)', locale === 'semicolon' ? 1.1 : 2],
+      ['=TODAY()', () => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), now.getDate()); }]
+    ]);
     this.sheets = [new FakeSheet('Sheet1', this)];
     this.toasts = [];
     this.active = this.sheets[0];

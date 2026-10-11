@@ -77,6 +77,13 @@ function runSmokeTests() {
     return checkTextSafeRoundTrip_();
   }));
 
+  // The drain tells the empty form from a date someone typed by the formula
+  // in its date cell, and the harness hands back whatever was stored there.
+  // How Sheets spells that formula on the way out is the book's to say.
+  results.push(smokeTest_('sheet', 'the cash form reads as empty', function () {
+    return checkCashFormSeed_();
+  }));
+
   results.push(smokeTest_('sheet', 'every subcategory names one category', function () {
     return describeSubcategoryParents_();
   }));
@@ -410,6 +417,41 @@ function emptyCharts_() {
     var options = entry.chart.getOptions ? entry.chart.getOptions() : null;
     return entry.tab + ': ' + (options ? options.get('title') : 'a chart');
   });
+}
+
+/**
+ * Seed a date cell the way `cash_entry` is seeded and read it back both ways.
+ *
+ * On a probe cell of `_tests` rather than on the form itself, which may hold
+ * an entry someone is halfway through. Two things have to hold: the value is a
+ * date, which is what makes the row visible to the drain at all, and the
+ * formula comes back as something `isUntouchedCashForm` recognises — or every
+ * sync reports a cash entry nobody typed.
+ */
+function checkCashFormSeed_() {
+  var sheet = sheetOrThrow_(TABS.TESTS);
+  var probe = sheet.getRange(1, 27);
+
+  try {
+    probe.setFormula(CASH_DATE_SEED);
+    SpreadsheetApp.flush();
+    var formula = probe.getFormulas()[0][0];
+    var value = probe.getValues()[0][0];
+
+    if (!(value instanceof Date)) {
+      throw new Error(CASH_DATE_SEED + ' read back as "' + value + '" rather than a date');
+    }
+    var form = {};
+    CASH_ENTRY_COLUMNS.forEach(function (name) { form[name] = ''; });
+    form.date = value;
+    if (!isUntouchedCashForm(form, formula)) {
+      throw new Error('the seed read back as "' + formula + '", which the drain does not ' +
+        'recognise — every sync will report a cash entry nobody typed');
+    }
+    return 'seeded as ' + formula + ', read as a date';
+  } finally {
+    probe.clearContent();
+  }
 }
 
 /**

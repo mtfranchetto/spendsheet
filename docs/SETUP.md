@@ -116,11 +116,11 @@ A dialog rather than a simple prompt because a PEM is multi-line and a prompt bo
 
 ### 7. Check it works
 
-**Spendsheet → Diagnostics → Run smoke tests**, then unhide the `_tests` tab. Twelve checks, in two groups.
+**Spendsheet → Diagnostics → Run smoke tests**, then unhide the `_tests` tab. Thirteen checks, in two groups.
 
 **The four that matter at this point** are the connection: credentials installed, the JWT signs and decodes, `GET /application` accepted, `GET /aspsps` returns banks. If those pass, your key and application ID are right and the API accepts your token.
 
-**The other eight are about the book** and check things no unit test can, because the harness has no spreadsheet behind it and hands a formula to nothing: that every `ARRAYFORMULA` anchor evaluates rather than sitting there as `#ERROR!`, that `in_reports` is a real boolean column and not text, that a description beginning with `=` is stored as text rather than run as a formula, that no subcategory name appears under two parents, that the book's time zone is the script's (the phone app counts days in the book's), that `owner_email` names the account running it, that Drive accepts a file from this script, and that every chart is pointed at a range with data in it. **Re-run this after pulling new code and running Setup**, not only during first setup — a formula that a decimal-comma locale rejects passes every test in `tests/` and fails here.
+**The other nine are about the book** and check things no unit test can, because the harness has no spreadsheet behind it and hands a formula to nothing: that every `ARRAYFORMULA` anchor evaluates rather than sitting there as `#ERROR!`, that `in_reports` is a real boolean column and not text, that a description beginning with `=` is stored as text rather than run as a formula, that the date `cash_entry` seeds reads back as the empty form rather than as an entry someone began, that no subcategory name appears under two parents, that the book's time zone is the script's (the phone app counts days in the book's), that `owner_email` names the account running it, that Drive accepts a file from this script, and that every chart is pointed at a range with data in it. **Re-run this after pulling new code and running Setup**, not only during first setup — a formula that a decimal-comma locale rejects passes every test in `tests/` and fails here.
 
 ### 8. Connect the simulated bank
 

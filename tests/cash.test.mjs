@@ -58,6 +58,50 @@ const drain = (c) => c.drainCashEntries_(c.readUidIndex_(
 
 const tx = (c) => c.__spreadsheet.getSheetByName('transactions');
 
+describe('isUntouchedCashForm', () => {
+  const blank = Object.fromEntries(ctx.CASH_ENTRY_COLUMNS.map((name) => [name, '']));
+  const dated = { ...blank, date: new Date(2026, 6, 30) };
+
+  it('is the seeded date and nothing else', () => {
+    expect(ctx.isUntouchedCashForm(dated, ctx.CASH_DATE_SEED)).toBe(true);
+  });
+
+  it('is not a date someone typed', () => {
+    expect(ctx.isUntouchedCashForm(dated, '')).toBe(false);
+    expect(ctx.isUntouchedCashForm(dated, '=TODAY()-1')).toBe(false);
+  });
+
+  it('is not a row with no date at all', () => {
+    expect(ctx.isUntouchedCashForm(blank, ctx.CASH_DATE_SEED)).toBe(false);
+    expect(ctx.hasOnlyCashDate(blank)).toBe(false);
+  });
+
+  it('knows the seed in whatever case and spacing the cell returns it', () => {
+    expect(ctx.isUntouchedCashForm(dated, '=today()')).toBe(true);
+    expect(ctx.isUntouchedCashForm(dated, '= TODAY( )')).toBe(true);
+  });
+
+  it('is not a row with anything typed beside the seed', () => {
+    ctx.CASH_ENTRY_COLUMNS.filter((name) => name !== 'date').forEach((name) => {
+      expect(ctx.isUntouchedCashForm({ ...dated, [name]: 'x' }, ctx.CASH_DATE_SEED)).toBe(false);
+    });
+  });
+});
+
+describe('the smoke test for the seed', () => {
+  it('passes on a book whose seed reads back as a date', () => {
+    const c = withWallet();
+    expect(c.checkCashFormSeed_()).toMatch(/read as a date/);
+    expect(c.__spreadsheet.getSheetByName('_tests').getRange(1, 27).getFormula()).toBe('');
+  });
+
+  it('fails when the seed does not come back as a date', () => {
+    const c = withWallet();
+    c.__spreadsheet.formulaResults.set(c.CASH_DATE_SEED, '#NAME?');
+    expect(() => c.checkCashFormSeed_()).toThrow(/rather than a date/);
+  });
+});
+
 describe('cashEntryAmount', () => {
   it('reads a bare number as spending', () => {
     // Standing in a bar you type 3, not -3.
@@ -194,8 +238,37 @@ describe('draining', () => {
   });
 
   it('does nothing when there is nothing typed', () => {
+    // Not an empty tab: the row you type on already holds today's date, and
+    // the drain reads it as one.
     const c = withWallet();
+    const sheet = c.__spreadsheet.getSheetByName('cash_entry');
+    expect(sheet.getRange('A2').getValues()[0][0]).toBeInstanceOf(Date);
+
     expect(drain(c)).toEqual({ inserted: 0, incomplete: 0, stamped: [] });
+  });
+
+  it('still counts a date you typed on a row with nothing else', () => {
+    // The same cells as the empty form, and not the same thing: someone began
+    // an entry here, on the form's row or on one below it.
+    const c = withWallet();
+    type(c, 2, { date: new Date(2026, 6, 30) });
+    expect(drain(c).incomplete).toBe(1);
+
+    type(c, 3, { date: new Date(2026, 6, 31) });
+    expect(drain(c).incomplete).toBe(2);
+  });
+
+  it('carries the seeded date into an entry typed beside it', () => {
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3 });
+
+    // Read on both sides of the drain, so a run that crosses midnight still
+    // has the day the drain saw.
+    const seed = () => c.__spreadsheet.getSheetByName('cash_entry').getRange('A2').getValue().getTime();
+    const before = seed();
+    expect(drain(c).inserted).toBe(1);
+
+    expect([before, seed()]).toContain(tx(c).getRange('D2').getValue().getTime());
   });
 
   it('refuses a uid the ledger already holds', () => {
@@ -253,6 +326,15 @@ describe('through a sync', () => {
     type(c, 2, { date: new Date(2026, 6, 30), account: 'wallet' });
 
     expect(c.syncNow().message).toMatch(/1 cash entry is missing/);
+  });
+
+  it('says nothing about a form nobody has typed on', () => {
+    // Manual and scheduled alike: the nightly run writes the same message to
+    // `_runs`, where a warning about the seeded date would repeat every day.
+    const c = withWallet();
+
+    expect(c.syncNow().message).not.toMatch(/cash entr/);
+    expect(c.syncScheduled({ triggerUid: 't' }).message).not.toMatch(/cash entr/);
   });
 });
 
@@ -353,5 +435,17 @@ describe('typing one entry', () => {
     expect(sheet.getRange('B2').getValue()).toBe('');
     expect(sheet.getRange(c.colOf(c.CASH_ENTRY_COLUMNS, 'note') + '3').getValue())
       .toBe('still typing this one');
+  });
+
+  it('leaves a form the next sync has nothing to say about', () => {
+    // The clear puts the seed back, so the row is the empty form again rather
+    // than a date with nothing beside it.
+    const c = withWallet();
+    type(c, 2, { account: 'wallet', amount: 3.5 });
+    edit(c, 2, 3);
+
+    const sheet = c.__spreadsheet.getSheetByName('cash_entry');
+    expect(sheet.getRange('A2').getFormula()).toBe(c.CASH_DATE_SEED);
+    expect(c.syncNow().message).not.toMatch(/missing/);
   });
 });
