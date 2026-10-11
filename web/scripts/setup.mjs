@@ -22,12 +22,10 @@
  *     and offers no file.
  *   ALLOWED_ACCOUNTS — `accounts.mjs ensure`, as `npm run deploy` does.
  *
- * The repo's rule is that one-time human operations get documented rather
- * than automated. This is the exception `installCredentials()` already made,
- * for the same reason: `SESSION_KEY` has to be exactly 32 bytes of base64 and
- * a client secret has to arrive intact, and a procedure that gets either
- * subtly wrong produces a Worker that refuses every sign-in without saying
- * which value it disliked.
+ * A script and not a procedure because `SESSION_KEY` has to be exactly 32
+ * bytes of base64 and a client secret has to arrive intact, and a procedure
+ * that gets either subtly wrong produces a Worker that refuses every sign-in
+ * without saying which value it disliked.
  */
 
 import { readFileSync, existsSync } from 'node:fs';

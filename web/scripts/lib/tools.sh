@@ -6,9 +6,7 @@
 #
 # ## Why a table rather than a README section
 #
-# The governing rule says one-time human operations get documented rather than
-# automated, and setting up a laptop is as one-time as it gets. What earns this
-# its place is the *check*, which is not one-time at all: a deploy or a
+# Setting up a laptop happens once; the *check* does not. A deploy or a
 # `wrangler secret put` that stops half way for a missing or signed-out tool
 # leaves a Worker with some of its secrets. Knowing the answer before starting
 # is worth more here than the install is.

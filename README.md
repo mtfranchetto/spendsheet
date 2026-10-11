@@ -60,7 +60,7 @@ Deliberately split in two, so you can watch the whole thing work end-to-end agai
 4. Register a **sandbox** app at [enablebanking.com](https://enablebanking.com) — it asks only for a name and that redirect URL. Download the `.pem` private key.
 5. Run `installCredentials()` from the Apps Script editor and paste what it asks for.
 6. In the Sheet: **Spendsheet → Set up and maintain → Setup sheet**. The first run asks for authorization and Google warns you twice — *"Google hasn't verified this app"* (open **Advanced → Go to Spendsheet (unsafe)**), then the permission list. Both are expected: *unverified* only means nobody paid for Google's OAuth review of a script you put into your own Drive. [Why it can't be removed, and what the scopes actually grant.](docs/SETUP.md#3-build-the-tabs)
-7. **Spendsheet → Connect a bank** → pick **Mock ASPSP** → complete the fake login → transactions land. ✅
+7. **Spendsheet → Connect a bank** → pick **Mock ASPSP** → complete the fake login → **Spendsheet → Sync now** → transactions land. ✅
 
 ### Part 2 — production (once you're convinced)
 

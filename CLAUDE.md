@@ -8,9 +8,11 @@ Conventions that are load-bearing here and not obvious from reading the code. Ea
 
 > **Code only for what runs unattended and repeatedly. One-time human operations get documented, not automated.**
 
-This is why there's no CSV importer (File → Import, then paste-values) and no "add manual account" wizard (you type a row). Don't introduce them; if a new feature is one-time, write it into `docs/` instead.
+**It governs features of the book** — what a person does in the Sheet or on the phone. This is why there's no CSV importer (File → Import, then paste-values) and no "add manual account" wizard (you type a row). Don't introduce them; if a new feature is one-time, write it into `docs/` instead.
 
-The one accepted exception is `installCredentials()`: a documented procedure that silently corrupts a multi-line PEM is a trap, not a procedure.
+A one-time feature earns code only where the documented procedure fails silently. `installCredentials()` is the model: a procedure that silently corrupts a multi-line PEM is a trap, not a procedure. `11_triggers.gs` and the commit in `13_import.gs` argue the same ground in their headers.
+
+**Technical setup is outside it.** Installing tools, building the book's infrastructure and deploying get scripted wherever an API allows; `docs/SETUP.md` holds the steps no API reaches.
 
 ## Where things go
 

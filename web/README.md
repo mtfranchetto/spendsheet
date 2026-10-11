@@ -59,12 +59,14 @@ cannot see the book, and the page offers `/connect`.
 
 ## One-time setup
 
-Three commands and a console visit. `scripts/setup.mjs` argues why the
-secrets are scripted despite the repo's rule for one-time operations.
+Four commands and a console visit. `scripts/setup.mjs` says where each
+secret comes from.
 
 **1. Create the Worker** (to learn its address)
 
 ```sh
+npm install            # here in web/, and at the repository root: the deploy
+                       # runs the root's tests before it builds anything
 npx wrangler login     # protect the Cloudflare account with 2FA or a passkey:
                        # anyone who can deploy here can capture your token
 npm run deploy         # prints https://spendsheet.<you>.workers.dev
