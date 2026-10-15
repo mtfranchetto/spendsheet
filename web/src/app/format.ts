@@ -47,6 +47,16 @@ export function shortDate(key: string | null | undefined): string {
   return parts.length > 2 ? Number(parts[2]) + ' ' + month : month + ' ' + parts[0];
 }
 
+/**
+ * One row's day: `6 Aug` this year, `6 Aug 2024` otherwise. A day with its
+ * year left off reads as this year's, and a row from an earlier October then
+ * looks like one from the future. `today` is the book's day key.
+ */
+export function rowDate(key: string | null | undefined, today: string): string {
+  if (!key) return '';
+  return String(key).slice(0, 4) === today.slice(0, 4) ? shortDate(key) : fullDate(key);
+}
+
 /** `2024-08-06` as `6 Aug 2024`: across a whole ledger the year is the question. */
 export function fullDate(key: string | null | undefined): string {
   if (!key) return '';

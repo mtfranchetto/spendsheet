@@ -19,7 +19,7 @@ import { TRANSFER_OUTSIDE } from '../api/contract';
 import { recordForPage, transferPeers, type LedgerRow, type PageRecord } from '../domain/query';
 import { TX_TYPE } from '../domain/schema';
 import { formatAmount, liveAmount, parseAmount } from './amount';
-import { money, shortDate, withIcon } from './format';
+import { money, rowDate, withIcon } from './format';
 import { categoryIcon, subcategoryIcon } from './Rows';
 import { book, closeSheet, currency, open, openSheet, overview, sheet, toast } from './state';
 import { addRule, deleteRecord, markTransfer, sendDecision, type DecisionFields } from './writes';
@@ -277,7 +277,7 @@ function Detail(props: { record: PageRecord; suggestion: Suggestion }) {
     <>
       <h2>{record.description || '(no description)'}</h2>
       <p class="muted">
-        {shortDate(record.date) + (record.time ? ' ' + record.time : '') + ' · ' + record.account + ' · ' + money(record.amount, currency())}
+        {rowDate(record.date, open()?.generatedAt || '') + (record.time ? ' ' + record.time : '') + ' · ' + record.account + ' · ' + money(record.amount, currency())}
       </p>
 
       <Show when={record.editableDescription}>
