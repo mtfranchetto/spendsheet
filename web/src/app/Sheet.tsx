@@ -73,13 +73,33 @@ export function CategoryPicker(props: {
   let search: HTMLInputElement | undefined;
   let current: HTMLButtonElement | undefined;
 
-  let restore: (() => void) | undefined;
+  /** Undoes what `show` did to the sheet; set only while the picker covers one. */
+  let release: (() => void) | undefined;
   const show = () => {
     const dialog = current?.closest('dialog');
     if (dialog) {
       const at = dialog.scrollTop;
+      // Escape, Android's back and a tap on the backdrop are all "not this", and here that means the picker, not the sheet.
+      const cancel = (event: Event) => {
+        event.preventDefault();
+        hide();
+      };
+      const backdrop = (event: MouseEvent) => {
+        if (event.target !== dialog) return;
+        event.stopPropagation();
+        hide();
+      };
+      dialog.addEventListener('cancel', cancel);
+      dialog.addEventListener('click', backdrop, true);
+      dialog.setAttribute('data-picking', '');
       dialog.scrollTop = 0;
-      restore = () => (dialog.scrollTop = at);
+      release = () => {
+        dialog.removeEventListener('cancel', cancel);
+        dialog.removeEventListener('click', backdrop, true);
+        dialog.removeAttribute('data-picking');
+        // After the panel is gone, or the scroll lands on a sheet still held to the picker's height.
+        requestAnimationFrame(() => (dialog.scrollTop = at));
+      };
     }
     setQuery('');
     setOpened(true);
@@ -87,14 +107,13 @@ export function CategoryPicker(props: {
   };
   const hide = () => {
     setOpened(false);
-    const back = restore;
-    restore = undefined;
-    // After the panel is gone, or the scroll lands on a sheet still held to the picker's height.
-    requestAnimationFrame(() => {
-      back?.();
-      current?.focus({ preventScroll: true });
-    });
+    const inSheet = !!release;
+    release?.();
+    release = undefined;
+    // In a sheet the scroll is restored above; on a page, focus is what brings the button back into view.
+    requestAnimationFrame(() => current?.focus({ preventScroll: inSheet }));
   };
+  onCleanup(() => release?.());
 
   const groups = createMemo(() => {
     const wanted = props.kinds ?? [];
@@ -152,7 +171,15 @@ export function CategoryPicker(props: {
       >
         {label()}
       </button>
-      <div class="catpick-panel" hidden={!opened()}>
+      <div
+        class="catpick-panel"
+        hidden={!opened()}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          hide();
+        }}
+      >
         <div class="catpick-head">
           <input
             class="field"
@@ -164,14 +191,10 @@ export function CategoryPicker(props: {
             value={query()}
             onInput={(event) => setQuery(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                const first = shown()[0]?.options[0];
-                if (first) pick(first.value);
-              } else if (event.key === 'Escape') {
-                event.preventDefault();
-                hide();
-              }
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              const first = shown()[0]?.options[0];
+              if (first) pick(first.value);
             }}
           />
           <button type="button" class="link" onClick={hide}>
