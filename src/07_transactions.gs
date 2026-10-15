@@ -65,7 +65,7 @@ function mapTransaction(raw, account, now) {
   return {
     account_id: account.uid,
     account_name: account.name || '',
-    booking_date: parseIsoDate(raw.booking_date),
+    booking_date: bookingDate(raw),
     value_date: parseIsoDate(raw.value_date),
     transaction_date: parseIsoDate(raw.transaction_date),
     amount: amount,
@@ -84,6 +84,28 @@ function mapTransaction(raw, account, now) {
     _amountReadable: amount !== null,
     _indicator: raw.credit_debit_indicator || ''
   };
+}
+
+/**
+ * The date every report, the import cutoff and cross-source matching select on.
+ *
+ * Not every bank sends `booking_date`. PayPal sends only `transaction_date`,
+ * and a blank here is the quiet kind of wrong: the row is in no period, the
+ * import cutoff has nothing to compare it with, and no imported row can ever
+ * match it. So the nearest date the bank did send stands in — `value_date`
+ * first, as the closer meaning, then `transaction_date`. The two source
+ * columns keep what the bank actually said.
+ *
+ * A row with no date at all stays blank. Today's date would be a guess that
+ * looks like a fact.
+ *
+ * This changes no uid where the bank sends an `entry_reference`, which then is
+ * the whole identity. Without one the date is part of the hash, so a bank that
+ * sends neither would see its rows re-keyed once.
+ */
+function bookingDate(raw) {
+  return parseIsoDate(raw.booking_date) || parseIsoDate(raw.value_date) ||
+    parseIsoDate(raw.transaction_date);
 }
 
 /**

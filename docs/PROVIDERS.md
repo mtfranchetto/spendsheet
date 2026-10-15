@@ -35,6 +35,7 @@ But it cannot tell you what **your** banks do. Sandbox proves the code paths; pr
 | Revolut | not yet probed | has an Enable Banking connector |
 | Fineco | probed 2026-08-01 | reachable as **FinecoBank**; four currency sub-accounts, see below |
 | illimity | not yet probed | see below |
+| PayPal (IT) | probed 2026-10-15 | no `booking_date`, see below |
 
 ## Mock ASPSP — sandbox, probed 2026-07-30
 
@@ -111,3 +112,13 @@ Two consequences worth knowing before you connect it:
 **Set `include_in_net_worth` FALSE on the non-EUR three.** `balance` is `balance_api` unconverted, so a CHF balance would be summed as though it were euros. Transactions are already safe — `amount_base` is deliberately blank for any row whose currency isn't the base one, so reports skip them rather than adding them up wrongly — but the balance column has no such guard.
 
 If the foreign-currency pockets are empty or unused, setting `active` FALSE as well stops syncing them entirely. That is three fewer accounts against a rate limit budgeted at roughly four unattended calls per account per day, where one full sync of one account is three.
+
+## PayPal (IT) — production restricted, probed 2026-10-15
+
+**No `booking_date`.** PayPal sends the date only as `transaction_date`. `value_date` is blank too. The first sync wrote every PayPal row with column D empty, and that column is the one everything selects on. Reports and the phone app put the rows in no period. The import cutoff found no oldest date for the account, so it would have staged the whole export. Cross-source matching keys on the date, so it could not match a single row.
+
+`bookingDate()` in `07_transactions.gs` now fills `booking_date` from `value_date`, then `transaction_date`. The two source columns still hold what the bank sent.
+
+**`entry_reference` is filled**, so dedup uses the strong key and the date is not part of a PayPal uid. The fix moved no uid.
+
+**Rows written before the fix keep the blank.** The sync never rewrites a row it holds. Copy `transaction_date` into `booking_date` for that account's rows, by hand, once the fix is deployed. Until then, each sync logs a `dup_entry_ref` anomaly per re-fetched row: same reference, different date. Nothing is written, and the anomalies stop once the column is filled.
