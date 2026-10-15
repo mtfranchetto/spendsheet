@@ -78,9 +78,9 @@ function txRange_(name) { return sheetRange_(TABS.TRANSACTIONS, TX_COLUMNS, name
 /**
  * The whole `transactions` block, for QUERY.
  *
- * QUERY names columns by their position **within the range given**, not by
- * their address on the sheet — so this has to start at column A or every letter
- * in every query shifts silently.
+ * A QUERY over a sheet range names columns by their sheet letters, so `q_`
+ * hands out the letter from `TX_COLUMNS`. The range starts at column A so that
+ * every letter `q_` can return lies inside it.
  */
 function txQueryRange_() {
   return TABS.TRANSACTIONS + '!$A$2:$' + colOf(TX_COLUMNS, TX_COLUMNS[TX_COLUMNS.length - 1]);
