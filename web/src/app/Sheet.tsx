@@ -46,11 +46,11 @@ export type Choice = { category: string; subcategory: string };
  * from — it is one you give up on, and `Transfer` was unfindable in it.
  * Searching matches a parent's name (all of it) or a child's.
  *
- * Opening it scrolls the sheet until the search field is at its top, and does
- * again whenever the keyboard changes the visible band: the list is then the
- * whole of what is visible, and — being one fixed height whatever the search
- * leaves in it — typing never moves anything. A list that shrank as you
- * typed would pull the sheet under your thumb with every letter.
+ * In a sheet, opening it covers the sheet: search at the top, the list down
+ * to the keyboard, Cancel back to the sheet where you left it. Its layout is
+ * the CSS's (`.catpick-panel`); what is here is the scroll — the sheet starts
+ * the picker at its top, because the panel is drawn from there, and gets its
+ * own position back afterwards.
  */
 export function CategoryPicker(props: {
   kinds?: string[];
@@ -73,19 +73,28 @@ export function CategoryPicker(props: {
   let search: HTMLInputElement | undefined;
   let current: HTMLButtonElement | undefined;
 
-  const align = () => {
-    const dialog = search?.closest('dialog');
-    // Only while the search has the keyboard: a resize for another field must not scroll that field away.
-    if (!search || !dialog || document.activeElement !== search) return;
-    dialog.scrollTop += search.getBoundingClientRect().top - dialog.getBoundingClientRect().top - 12;
+  let restore: (() => void) | undefined;
+  const show = () => {
+    const dialog = current?.closest('dialog');
+    if (dialog) {
+      const at = dialog.scrollTop;
+      dialog.scrollTop = 0;
+      restore = () => (dialog.scrollTop = at);
+    }
+    setQuery('');
+    setOpened(true);
+    queueMicrotask(() => search?.focus({ preventScroll: true }));
   };
-  const realign = () => requestAnimationFrame(align);
-  const show = (showing: boolean) => {
-    setOpened(showing);
-    if (showing) window.visualViewport?.addEventListener('resize', realign);
-    else window.visualViewport?.removeEventListener('resize', realign);
+  const hide = () => {
+    setOpened(false);
+    const back = restore;
+    restore = undefined;
+    // After the panel is gone, or the scroll lands on a sheet still held to the picker's height.
+    requestAnimationFrame(() => {
+      back?.();
+      current?.focus({ preventScroll: true });
+    });
   };
-  onCleanup(() => window.visualViewport?.removeEventListener('resize', realign));
 
   const groups = createMemo(() => {
     const wanted = props.kinds ?? [];
@@ -128,8 +137,7 @@ export function CategoryPicker(props: {
   };
   const pick = (picked: string) => {
     setValue(picked);
-    show(false);
-    current?.focus();
+    hide();
     props.onPick(chosen(picked));
   };
 
@@ -140,40 +148,36 @@ export function CategoryPicker(props: {
         class={['field', 'catpick-current', { unset: !value() }]}
         aria-expanded={opened() ? 'true' : 'false'}
         ref={(el) => (current = el)}
-        onClick={() => {
-          if (opened()) return show(false);
-          setQuery('');
-          show(true);
-          queueMicrotask(() => {
-            search?.focus({ preventScroll: true });
-            realign();
-          });
-        }}
+        onClick={() => (opened() ? hide() : show())}
       >
         {label()}
       </button>
       <div class="catpick-panel" hidden={!opened()}>
-        <input
-          class="field"
-          type="search"
-          placeholder="Search categories"
-          autocomplete="off"
-          aria-label="Search categories"
-          ref={(el) => (search = el)}
-          value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              const first = shown()[0]?.options[0];
-              if (first) pick(first.value);
-            } else if (event.key === 'Escape') {
-              event.preventDefault();
-              show(false);
-              current?.focus();
-            }
-          }}
-        />
+        <div class="catpick-head">
+          <input
+            class="field"
+            type="search"
+            placeholder="Search categories"
+            autocomplete="off"
+            aria-label="Search categories"
+            ref={(el) => (search = el)}
+            value={query()}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                const first = shown()[0]?.options[0];
+                if (first) pick(first.value);
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                hide();
+              }
+            }}
+          />
+          <button type="button" class="link" onClick={hide}>
+            Cancel
+          </button>
+        </div>
         <div class="catpick-list" role="listbox">
           <Show when={!query().trim()}>
             <button type="button" role="option" class="catpick-option first" aria-selected={value() === '' ? 'true' : 'false'} onClick={() => pick('')}>

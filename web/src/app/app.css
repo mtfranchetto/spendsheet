@@ -718,13 +718,27 @@ input[type="date"] { -webkit-appearance: none; appearance: none;
                  border: 1px solid var(--line); border-radius: var(--radius); }
 .catpick-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain;
                 margin-top: 6px; }
-/* In a sheet, one height whatever the search leaves in it: a list that
-   shrank as you typed would resize the sheet, and the sheet is anchored at
-   its bottom. As tall as the band above the keyboard allows once the search
-   field is at the top of the sheet, and never more than half the screen. */
-dialog .catpick-list { max-height: none; min-height: 96px;
-                       height: min(50dvh, calc(var(--vv-height, 100dvh) - 96px)); }
 .catpick-list > .muted { margin: 8px 4px 4px; }
+.catpick-head { display: flex; align-items: center; gap: 8px; }
+.catpick-head .field { flex: 1; min-width: 0; }
+.catpick-head button.link { flex: none; }
+/*
+  In a sheet, the open picker *is* the sheet: the sheet takes the whole band
+  above the keyboard, the panel covers it, the search sits at its top and the
+  list fills the rest. Every one of those sizes comes from the band and none
+  from the results — the sheet is anchored at its bottom, so anything sized
+  by what the search left would move the search field with every letter.
+*/
+dialog:modal:has(.catpick-panel:not([hidden])) {
+  height: calc(var(--vv-height, 100dvh) - 8px);
+  overflow: hidden;
+}
+dialog .catpick-panel:not([hidden]) {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; flex-direction: column;
+  margin: 0; padding: 16px; border: none; border-radius: inherit;
+}
+dialog .catpick-list { flex: 1; min-height: 0; max-height: none; }
 .catpick-group { position: sticky; top: 0; background: var(--bg); color: var(--muted);
                  font-size: 11px; font-weight: 600; text-transform: uppercase;
                  letter-spacing: .06em; padding: 10px 6px 4px; }

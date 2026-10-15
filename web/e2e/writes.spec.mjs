@@ -213,6 +213,9 @@ test('typing into the category search moves nothing on the sheet', async ({ page
   const search = sheet.getByRole('searchbox', { name: 'Search categories' });
   await expect(search).toBeFocused();
   const before = { list: await list.boundingBox(), sheet: await sheet.boundingBox(), search: await search.boundingBox() };
+  // The search is the top of the sheet, and the list is what is under it.
+  expect(before.search.y - before.sheet.y).toBeLessThan(24);
+  expect(before.list.y + before.list.height).toBeGreaterThan(before.sheet.y + before.sheet.height - 24);
 
   // A search that leaves a short list, then one that leaves nothing at all. No keyboard here:
   // this holds the list to one height, and the band above the keyboard is a check on the phone.
@@ -223,6 +226,12 @@ test('typing into the category search moves nothing on the sheet', async ({ page
     expect(await sheet.boundingBox()).toEqual(before.sheet);
     expect(await search.boundingBox()).toEqual(before.search);
   }
+
+  // Cancel is back to the sheet, with nothing picked.
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+  await expect(search).toBeHidden();
+  await expect(sheet.getByRole('button', { name: 'Confirm' })).toBeVisible();
+  await expect(sheet.locator('.catpick-current')).toBeFocused();
 });
 
 test('the sheet recategorises and confirms in one write', async ({ page }) => {
