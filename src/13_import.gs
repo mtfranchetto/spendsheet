@@ -177,20 +177,24 @@ function importDateExpr_(cell) {
  * nothing to keep up to date, and it stays correct when you connect a second
  * bank six months later.
  *
- * A `QUERY` grouped by account, so a VLOOKUP against it vectorises.
+ * A `QUERY` grouped by account, so a VLOOKUP against it vectorises. The range
+ * starts at `account_id` because VLOOKUP matches on the table's first column.
+ *
+ * **A QUERY over a sheet range names columns by their sheet letters**, wherever
+ * the range starts. Counting from the start of the range is the rule for an
+ * array, and there the names are `Col1`, `Col2`, not letters. A letter
+ * counted from the range makes the query error, and the `IFERROR` in
+ * `stagedIncludeFormula` reads that error as "no cutoff": every staged row
+ * comes through, including the ones the API already has.
  */
 function importCutoffTable_() {
   var tx = TABS.TRANSACTIONS;
-  var first = colIndex_(TX_COLUMNS, 'account_id');
+  var account = colOf(TX_COLUMNS, 'account_id');
+  var date = colOf(TX_COLUMNS, 'booking_date');
+  var source = colOf(TX_COLUMNS, 'source');
 
-  // QUERY numbers columns from the start of its range, not from column A.
-  var account = columnLetter(colIndex_(TX_COLUMNS, 'account_id') - first + 1);
-  var date = columnLetter(colIndex_(TX_COLUMNS, 'booking_date') - first + 1);
-  var source = columnLetter(colIndex_(TX_COLUMNS, 'source') - first + 1);
-
-  return 'QUERY(' + tx + '!$' + colOf(TX_COLUMNS, 'account_id') + '$2:$' +
-    colOf(TX_COLUMNS, 'source') + ',"select ' + account + ', min(' + date + ') where ' +
-    source + " = '" + TX_SOURCE_API + "' group by " + account +
+  return 'QUERY(' + tx + '!$' + account + '$2:$' + source + ',"select ' + account +
+    ', min(' + date + ') where ' + source +" = '" + TX_SOURCE_API + "' group by " + account +
     ' label min(' + date + ') \'\'",0)';
 }
 
