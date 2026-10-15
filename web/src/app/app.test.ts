@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatAmount, parseAmount } from './amount';
-import { agoWords, dayHeading, fullDate, money, percent, rangeTitle, shortDate, withIcon } from './format';
+import { agoWords, dayHeading, fullDate, money, percent, rangeTitle, rowDate, shortDate, withIcon } from './format';
 import {
   barGeometry, columnGeometry, donutSlices, lineGeometry, linesGeometry, pixelsOf, spacedMarks, MARK_GAP_PIXELS
 } from './geometry';
@@ -58,6 +58,13 @@ describe('format', () => {
     expect(dayHeading('2026-09-27', '2026-09-27')).toBe('Today');
     expect(dayHeading('2026-09-20', '2026-09-27')).toMatch(/^20 \S+$/);
     expect(dayHeading('2025-09-20', '2026-09-27')).toMatch(/^20 \S+ 2025$/);
+  });
+
+  it("dates a row with its year only when it is not the book's", () => {
+    expect(rowDate('2026-10-17', '2026-10-15')).toBe('17 Oct');
+    expect(rowDate('2024-10-17', '2026-10-15')).toBe('17 Oct 2024');
+    expect(rowDate('', '2026-10-15')).toBe('');
+    expect(rowDate('2026-10-17', '')).toBe('17 Oct');
   });
 
   it('puts no leading space before a name with no icon', () => {
