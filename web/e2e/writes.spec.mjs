@@ -203,6 +203,77 @@ test('a page older than the Worker reloads itself', async ({ page }) => {
   await expect.poll(() => fake.counts['/api/me']).toBe(2);
 });
 
+test('typing into the category search moves nothing on the sheet', async ({ page }) => {
+  await open(page);
+  await page.goto('/');
+  await esselunga(page).click();
+  const sheet = page.locator('dialog#sheet');
+  await sheet.locator('.catpick-current').click();
+  const list = sheet.locator('.catpick-list');
+  const search = sheet.getByRole('searchbox', { name: 'Search categories' });
+  await expect(search).toBeFocused();
+  const before = { list: await list.boundingBox(), sheet: await sheet.boundingBox(), search: await search.boundingBox() };
+  // The search is the top of the sheet, and the list is what is under it.
+  expect(before.search.y - before.sheet.y).toBeLessThan(24);
+  expect(before.list.y + before.list.height).toBeGreaterThan(before.sheet.y + before.sheet.height - 24);
+
+  // A search that leaves a short list, then one that leaves nothing at all. No keyboard here:
+  // this holds the list to one height, and the band above the keyboard is a check on the phone.
+  for (const typed of ['groc', 'zzzz']) {
+    await search.fill(typed);
+    await expect(sheet.locator('.catpick-option').first().or(sheet.getByText('No category matches that.'))).toBeVisible();
+    expect(await list.boundingBox()).toEqual(before.list);
+    expect(await sheet.boundingBox()).toEqual(before.sheet);
+    expect(await search.boundingBox()).toEqual(before.search);
+  }
+
+  // Cancel is back to the sheet, with nothing picked.
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+  await expect(search).toBeHidden();
+  await expect(sheet.getByRole('button', { name: 'Confirm' })).toBeVisible();
+  await expect(sheet.locator('.catpick-current')).toBeFocused();
+});
+
+test('the open picker is all of the sheet, and leaving it leaves only the picker', async ({ page }) => {
+  // Short enough that the sheet scrolls, so there is a position to lose.
+  await page.setViewportSize({ width: 390, height: 360 });
+  await open(page);
+  await page.goto('/');
+  await esselunga(page).click();
+  const sheet = page.locator('dialog#sheet');
+  const current = sheet.locator('.catpick-current');
+  const confirm = sheet.getByRole('button', { name: 'Confirm' });
+  const search = sheet.getByRole('searchbox', { name: 'Search categories' });
+  await current.evaluate((button) => button.scrollIntoView({ block: 'start' }));
+  const at = await sheet.evaluate((dialog) => dialog.scrollTop);
+  expect(at).toBeGreaterThan(0);
+
+  const leaves = [
+    // Escape from a list option, not only from the search.
+    async () => {
+      await sheet.locator('.catpick-option').nth(1).focus();
+      await page.keyboard.press('Escape');
+    },
+    // A tap on what is left of the backdrop, above the sheet.
+    async () => {
+      const box = await sheet.boundingBox();
+      await page.mouse.click(box.x + box.width / 2, Math.max(1, box.y - 3));
+    },
+    async () => sheet.getByRole('button', { name: 'Cancel' }).click()
+  ];
+  for (const leave of leaves) {
+    await current.click();
+    await expect(search).toBeFocused();
+    // What the picker covers is out of reach, not only out of sight.
+    await expect(confirm).toBeHidden();
+    await leave();
+    await expect(search).toBeHidden();
+    await expect(sheet).toBeVisible();
+    await expect(current).toBeFocused();
+    await expect.poll(() => sheet.evaluate((dialog) => dialog.scrollTop)).toBe(at);
+  }
+});
+
 test('the sheet recategorises and confirms in one write', async ({ page }) => {
   const { fake } = await open(page);
   await page.goto('/');

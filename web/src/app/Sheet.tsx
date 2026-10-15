@@ -20,6 +20,7 @@ import { recordForPage, transferPeers, type LedgerRow, type PageRecord } from '.
 import { TX_TYPE } from '../domain/schema';
 import { formatAmount, liveAmount, parseAmount } from './amount';
 import { money, shortDate, withIcon } from './format';
+import { followVisibleViewport } from './keyboard';
 import { categoryIcon, subcategoryIcon } from './Rows';
 import { book, closeSheet, currency, open, openSheet, overview, sheet, toast } from './state';
 import { addRule, deleteRecord, markTransfer, sendDecision, type DecisionFields } from './writes';
@@ -44,6 +45,12 @@ export type Choice = { category: string; subcategory: string };
  * grouped by parent. A `<select>` of seventy entries is not a list you pick
  * from — it is one you give up on, and `Transfer` was unfindable in it.
  * Searching matches a parent's name (all of it) or a child's.
+ *
+ * In a sheet, opening it covers the sheet: search at the top, the list down
+ * to the keyboard, Cancel back to the sheet where you left it. Its layout is
+ * the CSS's (`.catpick-panel`); what is here is the scroll — the sheet starts
+ * the picker at its top, because the panel is drawn from there, and gets its
+ * own position back afterwards.
  */
 export function CategoryPicker(props: {
   kinds?: string[];
@@ -65,6 +72,48 @@ export function CategoryPicker(props: {
   const [query, setQuery] = createSignal('');
   let search: HTMLInputElement | undefined;
   let current: HTMLButtonElement | undefined;
+
+  /** Undoes what `show` did to the sheet; set only while the picker covers one. */
+  let release: (() => void) | undefined;
+  const show = () => {
+    const dialog = current?.closest('dialog');
+    if (dialog) {
+      const at = dialog.scrollTop;
+      // Escape, Android's back and a tap on the backdrop are all "not this", and here that means the picker, not the sheet.
+      const cancel = (event: Event) => {
+        event.preventDefault();
+        hide();
+      };
+      const backdrop = (event: MouseEvent) => {
+        if (event.target !== dialog) return;
+        event.stopPropagation();
+        hide();
+      };
+      dialog.addEventListener('cancel', cancel);
+      dialog.addEventListener('click', backdrop, true);
+      dialog.setAttribute('data-picking', '');
+      dialog.scrollTop = 0;
+      release = () => {
+        dialog.removeEventListener('cancel', cancel);
+        dialog.removeEventListener('click', backdrop, true);
+        dialog.removeAttribute('data-picking');
+        // After the panel is gone, or the scroll lands on a sheet still held to the picker's height.
+        requestAnimationFrame(() => (dialog.scrollTop = at));
+      };
+    }
+    setQuery('');
+    setOpened(true);
+    queueMicrotask(() => search?.focus({ preventScroll: true }));
+  };
+  const hide = () => {
+    setOpened(false);
+    const inSheet = !!release;
+    release?.();
+    release = undefined;
+    // In a sheet the scroll is restored above; on a page, focus is what brings the button back into view.
+    requestAnimationFrame(() => current?.focus({ preventScroll: inSheet }));
+  };
+  onCleanup(() => release?.());
 
   const groups = createMemo(() => {
     const wanted = props.kinds ?? [];
@@ -107,8 +156,7 @@ export function CategoryPicker(props: {
   };
   const pick = (picked: string) => {
     setValue(picked);
-    setOpened(false);
-    current?.focus();
+    hide();
     props.onPick(chosen(picked));
   };
 
@@ -119,37 +167,40 @@ export function CategoryPicker(props: {
         class={['field', 'catpick-current', { unset: !value() }]}
         aria-expanded={opened() ? 'true' : 'false'}
         ref={(el) => (current = el)}
-        onClick={() => {
-          if (opened()) return setOpened(false);
-          setQuery('');
-          setOpened(true);
-          queueMicrotask(() => search?.focus());
-        }}
+        onClick={() => (opened() ? hide() : show())}
       >
         {label()}
       </button>
-      <div class="catpick-panel" hidden={!opened()}>
-        <input
-          class="field"
-          type="search"
-          placeholder="Search categories"
-          autocomplete="off"
-          aria-label="Search categories"
-          ref={(el) => (search = el)}
-          value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
+      <div
+        class="catpick-panel"
+        hidden={!opened()}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          hide();
+        }}
+      >
+        <div class="catpick-head">
+          <input
+            class="field"
+            type="search"
+            placeholder="Search categories"
+            autocomplete="off"
+            aria-label="Search categories"
+            ref={(el) => (search = el)}
+            value={query()}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
               event.preventDefault();
               const first = shown()[0]?.options[0];
               if (first) pick(first.value);
-            } else if (event.key === 'Escape') {
-              event.preventDefault();
-              setOpened(false);
-              current?.focus();
-            }
-          }}
-        />
+            }}
+          />
+          <button type="button" class="link" onClick={hide}>
+            Cancel
+          </button>
+        </div>
         <div class="catpick-list" role="listbox">
           <Show when={!query().trim()}>
             <button type="button" role="option" class="catpick-option first" aria-selected={value() === '' ? 'true' : 'false'} onClick={() => pick('')}>
@@ -176,10 +227,10 @@ export function CategoryPicker(props: {
               </>
             )}
           </For>
+          <Show when={!shown().length}>
+            <p class="muted">No category matches that.</p>
+          </Show>
         </div>
-        <Show when={!shown().length}>
-          <p class="muted">No category matches that.</p>
-        </Show>
       </div>
     </div>
   );
@@ -509,7 +560,8 @@ function RuleForm(props: { record: PageRecord }) {
 /**
  * `showModal` with the page held still behind it: iOS scrolls the document
  * to the focused field otherwise, and closing leaves you somewhere else in
- * the list than where you opened it.
+ * the list than where you opened it. While it is up the sheet follows the
+ * visible band, so the keyboard never covers it — see `keyboard.ts`.
  */
 function openWithoutMoving(dialog: HTMLDialogElement): () => void {
   const at = window.scrollY;
@@ -519,9 +571,11 @@ function openWithoutMoving(dialog: HTMLDialogElement): () => void {
   style.left = '0';
   style.right = '0';
   let held = true;
+  const unfollow = followVisibleViewport(dialog);
   const release = () => {
     if (!held) return;
     held = false;
+    unfollow();
     style.position = '';
     style.top = '';
     style.left = '';
