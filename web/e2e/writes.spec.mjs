@@ -214,7 +214,8 @@ test('typing into the category search moves nothing on the sheet', async ({ page
   await expect(search).toBeFocused();
   const before = { list: await list.boundingBox(), sheet: await sheet.boundingBox(), search: await search.boundingBox() };
 
-  // One letter that leaves a short list, then one that leaves nothing at all.
+  // A search that leaves a short list, then one that leaves nothing at all. No keyboard here:
+  // this holds the list to one height, and the band above the keyboard is a check on the phone.
   for (const typed of ['groc', 'zzzz']) {
     await search.fill(typed);
     await expect(sheet.locator('.catpick-option').first().or(sheet.getByText('No category matches that.'))).toBeVisible();

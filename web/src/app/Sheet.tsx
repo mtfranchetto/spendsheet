@@ -75,7 +75,8 @@ export function CategoryPicker(props: {
 
   const align = () => {
     const dialog = search?.closest('dialog');
-    if (!search || !dialog || search.offsetParent === null) return;
+    // Only while the search has the keyboard: a resize for another field must not scroll that field away.
+    if (!search || !dialog || document.activeElement !== search) return;
     dialog.scrollTop += search.getBoundingClientRect().top - dialog.getBoundingClientRect().top - 12;
   };
   const realign = () => requestAnimationFrame(align);

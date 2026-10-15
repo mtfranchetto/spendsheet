@@ -29,7 +29,7 @@ export function visibleBand(layoutHeight: number, viewport: { offsetTop: number;
  * function is called. A browser with no `visualViewport` gets none, and the
  * CSS falls back to the whole screen.
  */
-export function followVisibleViewport(el: HTMLElement, onChange?: () => void): () => void {
+export function followVisibleViewport(el: HTMLElement): () => void {
   const viewport = window.visualViewport;
   if (!viewport) return () => {};
   const place = () => {
@@ -38,7 +38,6 @@ export function followVisibleViewport(el: HTMLElement, onChange?: () => void): (
     el.style.setProperty('--vv-top', band.top + 'px');
     el.style.setProperty('--vv-bottom', band.bottom + 'px');
     el.style.setProperty('--vv-height', band.height + 'px');
-    onChange?.();
   };
   place();
   viewport.addEventListener('resize', place);
