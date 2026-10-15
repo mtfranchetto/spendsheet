@@ -716,9 +716,13 @@ input[type="date"] { -webkit-appearance: none; appearance: none;
 .catpick-current.unset { color: var(--muted); }
 .catpick-panel { margin-top: 6px; padding: 8px; background: var(--bg);
                  border: 1px solid var(--line); border-radius: var(--radius); }
-.catpick-panel > .muted { margin: 8px 4px 4px; }
-.catpick-list { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain;
-                margin-top: 6px; }
+/* One height, whatever the search leaves in it: a list that shrank as you
+   typed would resize the sheet, and the sheet is anchored at its bottom. As
+   tall as the band above the keyboard allows once the search field is at the
+   top of the sheet, and never more than half the screen. */
+.catpick-list { height: min(50vh, calc(var(--vv-height, 100vh) - 96px)); min-height: 160px;
+                overflow-y: auto; overscroll-behavior: contain; margin-top: 6px; }
+.catpick-list > .muted { margin: 8px 4px 4px; }
 .catpick-group { position: sticky; top: 0; background: var(--bg); color: var(--muted);
                  font-size: 11px; font-weight: 600; text-transform: uppercase;
                  letter-spacing: .06em; padding: 10px 6px 4px; }
@@ -852,6 +856,14 @@ dialog {
   width: 100%; max-width: 560px;
   margin: auto auto 0; /* a sheet from the bottom, which is where a thumb is */
   position: relative; /* the anchor for .sheet-close, which is absolute */
+}
+/* The bottom of the *visible* band, not of the layout viewport the keyboard
+   leaves where it was on iOS — `keyboard.ts` sets the three properties while
+   the sheet is up. Taller than the band, it scrolls inside itself. */
+dialog:modal {
+  top: var(--vv-top, 0px); bottom: var(--vv-bottom, 0px);
+  max-height: calc(var(--vv-height, 100dvh) - 8px);
+  overflow-y: auto; overscroll-behavior: contain;
 }
 dialog::backdrop { background: rgba(0,0,0,.45); }
 /* The button that ends a sheet of choices, clear of the last of them. */

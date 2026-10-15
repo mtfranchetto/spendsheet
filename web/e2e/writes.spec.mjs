@@ -203,6 +203,27 @@ test('a page older than the Worker reloads itself', async ({ page }) => {
   await expect.poll(() => fake.counts['/api/me']).toBe(2);
 });
 
+test('typing into the category search moves nothing on the sheet', async ({ page }) => {
+  await open(page);
+  await page.goto('/');
+  await esselunga(page).click();
+  const sheet = page.locator('dialog#sheet');
+  await sheet.locator('.catpick-current').click();
+  const list = sheet.locator('.catpick-list');
+  const search = sheet.getByRole('searchbox', { name: 'Search categories' });
+  await expect(search).toBeFocused();
+  const before = { list: await list.boundingBox(), sheet: await sheet.boundingBox(), search: await search.boundingBox() };
+
+  // One letter that leaves a short list, then one that leaves nothing at all.
+  for (const typed of ['groc', 'zzzz']) {
+    await search.fill(typed);
+    await expect(sheet.locator('.catpick-option').first().or(sheet.getByText('No category matches that.'))).toBeVisible();
+    expect(await list.boundingBox()).toEqual(before.list);
+    expect(await sheet.boundingBox()).toEqual(before.sheet);
+    expect(await search.boundingBox()).toEqual(before.search);
+  }
+});
+
 test('the sheet recategorises and confirms in one write', async ({ page }) => {
   const { fake } = await open(page);
   await page.goto('/');

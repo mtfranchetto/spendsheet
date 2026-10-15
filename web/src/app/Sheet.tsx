@@ -20,6 +20,7 @@ import { recordForPage, transferPeers, type LedgerRow, type PageRecord } from '.
 import { TX_TYPE } from '../domain/schema';
 import { formatAmount, liveAmount, parseAmount } from './amount';
 import { money, shortDate, withIcon } from './format';
+import { followVisibleViewport } from './keyboard';
 import { categoryIcon, subcategoryIcon } from './Rows';
 import { book, closeSheet, currency, open, openSheet, overview, sheet, toast } from './state';
 import { addRule, deleteRecord, markTransfer, sendDecision, type DecisionFields } from './writes';
@@ -44,6 +45,12 @@ export type Choice = { category: string; subcategory: string };
  * grouped by parent. A `<select>` of seventy entries is not a list you pick
  * from — it is one you give up on, and `Transfer` was unfindable in it.
  * Searching matches a parent's name (all of it) or a child's.
+ *
+ * Opening it scrolls the sheet until the search field is at its top, and does
+ * again whenever the keyboard changes the visible band: the list is then the
+ * whole of what is visible, and — being one fixed height whatever the search
+ * leaves in it — typing never moves anything. A list that shrank as you
+ * typed would pull the sheet under your thumb with every letter.
  */
 export function CategoryPicker(props: {
   kinds?: string[];
@@ -65,6 +72,19 @@ export function CategoryPicker(props: {
   const [query, setQuery] = createSignal('');
   let search: HTMLInputElement | undefined;
   let current: HTMLButtonElement | undefined;
+
+  const align = () => {
+    const dialog = search?.closest('dialog');
+    if (!search || !dialog || search.offsetParent === null) return;
+    dialog.scrollTop += search.getBoundingClientRect().top - dialog.getBoundingClientRect().top - 12;
+  };
+  const realign = () => requestAnimationFrame(align);
+  const show = (showing: boolean) => {
+    setOpened(showing);
+    if (showing) window.visualViewport?.addEventListener('resize', realign);
+    else window.visualViewport?.removeEventListener('resize', realign);
+  };
+  onCleanup(() => window.visualViewport?.removeEventListener('resize', realign));
 
   const groups = createMemo(() => {
     const wanted = props.kinds ?? [];
@@ -107,7 +127,7 @@ export function CategoryPicker(props: {
   };
   const pick = (picked: string) => {
     setValue(picked);
-    setOpened(false);
+    show(false);
     current?.focus();
     props.onPick(chosen(picked));
   };
@@ -120,10 +140,13 @@ export function CategoryPicker(props: {
         aria-expanded={opened() ? 'true' : 'false'}
         ref={(el) => (current = el)}
         onClick={() => {
-          if (opened()) return setOpened(false);
+          if (opened()) return show(false);
           setQuery('');
-          setOpened(true);
-          queueMicrotask(() => search?.focus());
+          show(true);
+          queueMicrotask(() => {
+            search?.focus({ preventScroll: true });
+            realign();
+          });
         }}
       >
         {label()}
@@ -145,7 +168,7 @@ export function CategoryPicker(props: {
               if (first) pick(first.value);
             } else if (event.key === 'Escape') {
               event.preventDefault();
-              setOpened(false);
+              show(false);
               current?.focus();
             }
           }}
@@ -176,10 +199,10 @@ export function CategoryPicker(props: {
               </>
             )}
           </For>
+          <Show when={!shown().length}>
+            <p class="muted">No category matches that.</p>
+          </Show>
         </div>
-        <Show when={!shown().length}>
-          <p class="muted">No category matches that.</p>
-        </Show>
       </div>
     </div>
   );
@@ -509,7 +532,8 @@ function RuleForm(props: { record: PageRecord }) {
 /**
  * `showModal` with the page held still behind it: iOS scrolls the document
  * to the focused field otherwise, and closing leaves you somewhere else in
- * the list than where you opened it.
+ * the list than where you opened it. While it is up the sheet follows the
+ * visible band, so the keyboard never covers it — see `keyboard.ts`.
  */
 function openWithoutMoving(dialog: HTMLDialogElement): () => void {
   const at = window.scrollY;
@@ -519,9 +543,11 @@ function openWithoutMoving(dialog: HTMLDialogElement): () => void {
   style.left = '0';
   style.right = '0';
   let held = true;
+  const unfollow = followVisibleViewport(dialog);
   const release = () => {
     if (!held) return;
     held = false;
+    unfollow();
     style.position = '';
     style.top = '';
     style.left = '';
