@@ -64,6 +64,7 @@ describe('format', () => {
     expect(rowDate('2026-10-17', '2026-10-15')).toBe('17 Oct');
     expect(rowDate('2024-10-17', '2026-10-15')).toBe('17 Oct 2024');
     expect(rowDate('', '2026-10-15')).toBe('');
+    expect(rowDate('2026-10-17', '')).toBe('17 Oct');
   });
 
   it('puts no leading space before a name with no icon', () => {

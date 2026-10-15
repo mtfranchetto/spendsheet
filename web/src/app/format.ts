@@ -54,7 +54,8 @@ export function shortDate(key: string | null | undefined): string {
  */
 export function rowDate(key: string | null | undefined, today: string): string {
   if (!key) return '';
-  return String(key).slice(0, 4) === today.slice(0, 4) ? shortDate(key) : fullDate(key);
+  // No today yet means no year to differ from; the year arrives with the book.
+  return !today || String(key).slice(0, 4) === today.slice(0, 4) ? shortDate(key) : fullDate(key);
 }
 
 /** `2024-08-06` as `6 Aug 2024`: across a whole ledger the year is the question. */
