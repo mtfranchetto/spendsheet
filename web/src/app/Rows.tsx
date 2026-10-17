@@ -10,6 +10,7 @@
 import { For, Show } from 'solid-js';
 import type { PageRecord, Period } from '../domain/query';
 import { TX_TYPE } from '../domain/schema';
+import { arrives } from '../domain/transfer';
 import { money, withIcon } from './format';
 import { categoryColor } from './geometry';
 import { currency, drillToRecords, expanded, openSheet, overview, toast, toggleExpanded } from './state';
@@ -36,15 +37,9 @@ export function subcategoryIcon(name: string): string {
   return found ? found.icon : '';
 }
 
-/**
- * Is this money arriving? The sign, except at zero, where a €0.00
- * pre-authorisation is a debit and `type` is the stored answer; and `null` —
- * no rate yet — is drawn as `—` and claims nothing arrived.
- */
+/** Is this money arriving? `arrives`; `null` — no rate yet — is drawn as `—` and claims nothing arrived. */
 export function moneyIn(record: Pick<PageRecord, 'amount' | 'type'>): boolean {
-  if (record.amount === null) return false;
-  if (record.amount === 0) return record.type === 'income';
-  return record.amount > 0;
+  return arrives(record.amount, record.type);
 }
 
 /** `Revolut`, or `Revolut → Fineco` when the money moved; the direction is the server's pairing, not the sign. */

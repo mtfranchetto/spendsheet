@@ -11,7 +11,6 @@
 import type { Row } from './book';
 import { isBlankCell, text } from './cells';
 import { dayOf } from './days';
-import type { PageRecord } from './query';
 import { TX_TYPE } from './schema';
 
 /** How far apart two bookings may be and still be one move, when `_config` does not say. */
@@ -74,14 +73,28 @@ export function findCounterLeg<R extends Leg>(
 }
 
 /**
- * Did the money arrive on this row's account, from the other one? The pairing
- * once there is one. Before there is, the row's own sign — `rawAmount` when no
- * rate has priced it, because a missing rate is not a direction — and at zero
- * `type`, as `moneyIn` in `Rows.tsx` decides it.
+ * Is this money arriving? The sign, except at zero, where a €0.00
+ * pre-authorisation is a debit and `type` is the stored answer; and `null` —
+ * no figure — claims nothing arrived. The row list, the transfer pane and the
+ * Worker's answer all ask it, so the question and the toast cannot disagree.
  */
-export function movedIn(record: Pick<PageRecord, 'amount' | 'rawAmount' | 'type' | 'peerDirection'>): boolean {
+export function arrives(amount: number | null, type: unknown): boolean {
+  if (amount === null || Number.isNaN(amount)) return false;
+  return amount === 0 ? String(type) === TX_TYPE.INCOME : amount > 0;
+}
+
+/**
+ * Did the money arrive on this row's account, from the other one? The pairing
+ * once there is one. Before there is, `arrives` on the row's own figure —
+ * `rawAmount` when no rate has priced it, because a missing rate is not a
+ * direction, though the row list draws it as `—`.
+ */
+export function movedIn(record: {
+  amount: number | null;
+  rawAmount: number | null;
+  type: string;
+  peerDirection: string;
+}): boolean {
   if (record.peerDirection) return record.peerDirection === 'from';
-  const amount = record.amount ?? record.rawAmount;
-  if (amount === null) return false;
-  return amount === 0 ? record.type === TX_TYPE.INCOME : amount > 0;
+  return arrives(record.amount ?? record.rawAmount, record.type);
 }
