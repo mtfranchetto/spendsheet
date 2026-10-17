@@ -18,6 +18,7 @@ import type { JSX } from '@solidjs/web';
 import { TRANSFER_OUTSIDE } from '../api/contract';
 import { recordForPage, transferPeers, type LedgerRow, type PageRecord } from '../domain/query';
 import { TX_TYPE } from '../domain/schema';
+import { movedIn } from '../domain/transfer';
 import { formatAmount, liveAmount, parseAmount } from './amount';
 import { money, rowDate, withIcon } from './format';
 import { followVisibleViewport } from './keyboard';
@@ -460,7 +461,7 @@ function TransferPane(props: { record: PageRecord; was: Kind } & Edits) {
   return (
     <>
       <p class="muted">Money between accounts you own. Not income, not spending, and counted in neither.</p>
-      <label>{record.peerDirection === 'from' ? 'Where did it come from?' : 'Where did it go?'}</label>
+      <label>{movedIn(record) ? 'Where did it come from?' : 'Where did it go?'}</label>
       <select class="field" onChange={(event) => setDestination(event.currentTarget.value)}>
         <option value={TRANSFER_OUTSIDE} selected={destination() === TRANSFER_OUTSIDE}>
           Somewhere outside Spendsheet

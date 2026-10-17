@@ -65,7 +65,7 @@ import {
   ACCOUNT_COLUMNS, ACCOUNT_KIND, CATEGORY_COLUMNS, CONFIG_COLUMNS, DEFAULT_CONFIG, TABS,
   TX_COLUMNS, TX_COLUMNS_CODE, TX_SOURCE_CASH, TX_TYPE
 } from '../src/domain/schema';
-import { counterLegProblem } from '../src/domain/transfer';
+import { arrives, counterLegProblem } from '../src/domain/transfer';
 import { ANY_COLUMN, records, type Cell } from '../src/sheets/records';
 
 /** A refusal about the request — shown to the person as it is, with a 422. */
@@ -508,7 +508,7 @@ export async function decide(google: Google, request: { decisions?: unknown }): 
 export async function transfer(google: Google, request: TransferRequest, now: Date): Promise<ActAnswer> {
   if (!isRowRef(request)) throw new Refusal('No transaction to mark.');
   const destination = String(request.destination ?? '');
-  if (!destination) throw new Refusal('Say where the money went.');
+  if (!destination) throw new Refusal('Say which account is the other side.');
   if (request.counter !== undefined && !isRowRef(request.counter)) throw new Refusal('That matching row is not one this can read.');
 
   const counterRow = request.counter?.row;
@@ -562,12 +562,14 @@ export async function transfer(google: Google, request: TransferRequest, now: Da
     return { message, rows: await fresh(google, touched), ...extra };
   };
 
-  if (!target) return finish('Marked as a transfer out of your tracked accounts.');
+  // The page asked its question with `arrives`; the answer says the same way round.
+  const arriving = arrives(amount, source.type);
+  if (!target) return finish(`Marked as a transfer ${arriving ? 'in from outside' : 'out of'} your tracked accounts.`);
   const targetName = text(target.name);
 
   if (text(target.kind) === ACCOUNT_KIND.BANK) {
     if (!request.counter) {
-      return finish(`Marked as a transfer to ${targetName}. Nothing on that account matches it yet — ` +
+      return finish(`Marked as a transfer ${arriving ? 'from' : 'to'} ${targetName}. Nothing on that account matches it yet — ` +
         'the pair is made automatically once it syncs.');
     }
     const counter = txRecord(read[5], request.counter.row);
