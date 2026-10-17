@@ -204,6 +204,13 @@ describe('transfer', () => {
     expect(google.cell('transactions', 3, col('transfer_group'))).toBe('');
   });
 
+  it('says where an arriving row came from, not where it went', async () => {
+    const paired = await transfer(google, { uid: 'fineco-in', row: 5, destination: 'Revolut' }, NOW);
+    expect(paired.message).toMatch(/^Marked as a transfer from Revolut\./);
+    const outside = await transfer(google, { uid: 'fineco-in', row: 5, destination: TRANSFER_OUTSIDE }, NOW);
+    expect(outside.message).toMatch(/in from outside your tracked accounts/);
+  });
+
   it('refuses a counter leg that is not one, and writes nothing', async () => {
     google.tabs.transactions.grid[4][col('amount') - 1] = 49.99;
     await expect(

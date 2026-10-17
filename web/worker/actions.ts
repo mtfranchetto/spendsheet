@@ -562,12 +562,14 @@ export async function transfer(google: Google, request: TransferRequest, now: Da
     return { message, rows: await fresh(google, touched), ...extra };
   };
 
-  if (!target) return finish('Marked as a transfer out of your tracked accounts.');
+  // The sign says which way, as it does for the pair id and the leg below: an arriving row names where it came from.
+  const arriving = amount > 0;
+  if (!target) return finish(`Marked as a transfer ${arriving ? 'in from outside' : 'out of'} your tracked accounts.`);
   const targetName = text(target.name);
 
   if (text(target.kind) === ACCOUNT_KIND.BANK) {
     if (!request.counter) {
-      return finish(`Marked as a transfer to ${targetName}. Nothing on that account matches it yet — ` +
+      return finish(`Marked as a transfer ${arriving ? 'from' : 'to'} ${targetName}. Nothing on that account matches it yet — ` +
         'the pair is made automatically once it syncs.');
     }
     const counter = txRecord(read[5], request.counter.row);
