@@ -82,7 +82,8 @@ function mapTransaction(raw, account, now) {
     // row without going back to the raw response.
     _status: raw.status || '',
     _amountReadable: amount !== null,
-    _indicator: raw.credit_debit_indicator || ''
+    _indicator: raw.credit_debit_indicator || '',
+    _bankBookingDate: parseIsoDate(raw.booking_date)
   };
 }
 
@@ -99,9 +100,9 @@ function mapTransaction(raw, account, now) {
  * A row with no date at all stays blank. Today's date would be a guess that
  * looks like a fact.
  *
- * This changes no uid where the bank sends an `entry_reference`, which then is
- * the whole identity. Without one the date is part of the hash, so a bank that
- * sends neither would see its rows re-keyed once.
+ * This changes no uid. With an `entry_reference` the date is not part of it;
+ * without one, the uid hashes `_bankBookingDate`, the date the bank sent, and
+ * never this one. See `identityDate` in 08_dedup.
  */
 function bookingDate(raw) {
   return parseIsoDate(raw.booking_date) || parseIsoDate(raw.value_date) ||

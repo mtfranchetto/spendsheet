@@ -119,6 +119,6 @@ If the foreign-currency pockets are empty or unused, setting `active` FALSE as w
 
 `bookingDate()` in `07_transactions.gs` now fills `booking_date` from `value_date`, then `transaction_date`. The two source columns still hold what the bank sent.
 
-**`entry_reference` is filled**, so dedup uses the strong key and the date is not part of a PayPal uid. The fix moved no uid.
+**`entry_reference` is filled on every row**, so dedup uses the strong key and the date is not part of a PayPal uid. The fix moved no uid. A bank that sent neither field would fall back to a uid that hashes the date, so that uid hashes the date the bank sent as `booking_date` and never the filled-in one (`identityDate()` in `08_dedup.gs`).
 
 **Rows written before the fix keep the blank.** The sync never rewrites a row it holds. Copy `transaction_date` into `booking_date` for that account's rows, by hand, once the fix is deployed. Until then, each sync logs a `dup_entry_ref` anomaly per re-fetched row: same reference, different date. Nothing is written, and the anomalies stop once the column is filled.
