@@ -35,6 +35,7 @@ But it cannot tell you what **your** banks do. Sandbox proves the code paths; pr
 | Revolut | not yet probed | has an Enable Banking connector |
 | Fineco | probed 2026-08-01 | reachable as **FinecoBank**; four currency sub-accounts, see below |
 | illimity | not yet probed | see below |
+| BBVA (IT) | probed 2026-10-19 | refuses a 90-day window, see below |
 
 ## Mock ASPSP — sandbox, probed 2026-07-30
 
@@ -111,3 +112,19 @@ Two consequences worth knowing before you connect it:
 **Set `include_in_net_worth` FALSE on the non-EUR three.** `balance` is `balance_api` unconverted, so a CHF balance would be summed as though it were euros. Transactions are already safe — `amount_base` is deliberately blank for any row whose currency isn't the base one, so reports skip them rather than adding them up wrongly — but the balance column has no such guard.
 
 If the foreign-currency pockets are empty or unused, setting `active` FALSE as well stops syncing them entirely. That is three fewer accounts against a rate limit budgeted at roughly four unattended calls per account per day, where one full sync of one account is three.
+
+## BBVA (IT) — production restricted, probed 2026-10-19
+
+**A 90-day window fails from the second day.** The sync on the day of consent worked, and so did the next one. From then on every sync was `PARTIAL`, with this on `/transactions`:
+
+```json
+{"code":422,"message":"Wrong transactions period requested",
+ "detail":{"message":"Timestamp no en periodo de tiempo aceptado."},
+ "error":"WRONG_TRANSACTIONS_PERIOD"}
+```
+
+The Spanish means "timestamp not in the accepted time period". `_status.last_error` says only "The API rejected the request parameters"; the bank's reason is in `_anomalies`.
+
+**Set `sync_window_days` to 89 in `_config`.** The next sync worked. The setting is shared by every bank, and one day less costs nothing when the sync runs daily. Setup sheet will list the key as differing from the seed. That is expected.
+
+**Why 90 fails is a guess.** A routine sync asks for `date_from` as a date, today minus `sync_window_days`, which the bank reads as midnight. If BBVA measures its 90 days back from the moment of the call, midnight falls a few hours outside them. The longer window that works right after consent would explain why the first days passed. What was observed is only this: 90 failed three days running, and 89 worked.
