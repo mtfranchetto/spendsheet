@@ -169,6 +169,33 @@ describe('mapTransaction', () => {
     ctx.TX_COLUMNS_DERIVED.forEach((column) => expect(record[column]).toBeUndefined());
   });
 
+  it('keeps the booking date when the bank sends one', () => {
+    const record = ctx.mapTransaction(booked(), ACCOUNT, NOW);
+    expect(record.booking_date).toEqual(new Date(2026, 6, 28));
+  });
+
+  it('borrows the value date, then the transaction date, when there is no booking date', () => {
+    // PayPal sends only transaction_date. A blank booking_date puts the row
+    // in no period, gives the import cutoff nothing to compare against, and
+    // keeps cross-source matching from ever finding it.
+    const valued = ctx.mapTransaction(booked({ booking_date: undefined }), ACCOUNT, NOW);
+    expect(valued.booking_date).toEqual(new Date(2026, 6, 29));
+
+    const paypal = ctx.mapTransaction(
+      booked({ booking_date: undefined, value_date: undefined, transaction_date: '2026-07-27' }),
+      ACCOUNT, NOW);
+    expect(paypal.booking_date).toEqual(new Date(2026, 6, 27));
+    expect(paypal.value_date).toBe('');
+    expect(paypal.transaction_date).toEqual(new Date(2026, 6, 27));
+  });
+
+  it('leaves the booking date blank when the bank sends no date at all', () => {
+    const record = ctx.mapTransaction(
+      booked({ booking_date: undefined, value_date: undefined, transaction_date: undefined }),
+      ACCOUNT, NOW);
+    expect(record.booking_date).toBe('');
+  });
+
   it('falls back to the account currency when the amount omits one', () => {
     const record = ctx.mapTransaction(booked({ transaction_amount: { amount: '5' } }), ACCOUNT, NOW);
     expect(record.currency).toBe('EUR');

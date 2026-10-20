@@ -89,18 +89,33 @@ function computeUid(record, ordinal) {
   }
   return sha256Hex([
     record.account_id,
-    dateKey(record.booking_date),
+    dateKey(identityDate(record)),
     amountKey(record.amount),
     normalizeDescription(record.description),
     ordinal
   ].join(UID_SEPARATOR));
 }
 
+/**
+ * The date a fallback uid hashes: the one the bank sent as `booking_date`.
+ *
+ * 07 fills a missing `booking_date` from another date, so reports and matching
+ * have one to select on. Identity must not follow it. A row first written with
+ * the blank would hash differently the next time it was fetched, and be
+ * written again. PayPal always sends an `entry_reference`, so it is safe; a
+ * bank that sends neither field would not be. `_bankBookingDate` is what the
+ * bank actually said; a record without it was never filled, so its own
+ * `booking_date` is that.
+ */
+function identityDate(record) {
+  return '_bankBookingDate' in record ? record._bankBookingDate : record.booking_date;
+}
+
 /** Everything about a record except which of its identical twins it is. */
 function fallbackGroupKey(record) {
   return [
     record.account_id,
-    dateKey(record.booking_date),
+    dateKey(identityDate(record)),
     amountKey(record.amount),
     normalizeDescription(record.description)
   ].join(UID_SEPARATOR);

@@ -137,6 +137,63 @@ describe('assignUids', () => {
   });
 });
 
+describe('a borrowed booking date', () => {
+  it('changes no uid when the bank sends an entry_reference', () => {
+    // PayPal's rows were first written with booking_date blank, because it
+    // sends only transaction_date. 07 now fills it in. Their uids must not
+    // move, or the next sync writes every one of them a second time.
+    const account = { uid: 'acc-1', name: 'PayPal', currency: 'EUR' };
+    const raw = {
+      entry_reference: 'PP-1',
+      transaction_amount: { currency: 'EUR', amount: '9.99' },
+      credit_debit_indicator: 'DBIT',
+      status: 'BOOK',
+      transaction_date: '2026-07-27',
+      remittance_information: ['SHOP']
+    };
+    const [now] = ctx.assignUids([ctx.mapTransaction(raw, account, new Date())]);
+    const before = record({ entry_reference: 'PP-1', booking_date: '' });
+
+    expect(now.booking_date).toEqual(new Date(2026, 6, 27));
+    expect(now.uid).toBe(ctx.computeUid(before, 0));
+  });
+
+  it('changes no uid when the bank sends no entry_reference either', () => {
+    // The case the one above misses. PayPal always sends a reference, but a
+    // bank that sends neither field gets a fallback uid that hashed the blank.
+    // Had it hashed the borrowed date, every row a sync fetched again would be
+    // written twice.
+    const account = { uid: 'acc-1', name: 'Bank', currency: 'EUR' };
+    const raw = {
+      transaction_amount: { currency: 'EUR', amount: '9.99' },
+      credit_debit_indicator: 'DBIT',
+      status: 'BOOK',
+      transaction_date: '2026-07-27',
+      remittance_information: ['SHOP']
+    };
+    const [now] = ctx.assignUids([ctx.mapTransaction(raw, account, new Date())]);
+    const before = record({ booking_date: '', amount: -9.99, description: now.description });
+
+    expect(now.booking_date).toEqual(new Date(2026, 6, 27));
+    expect(now.uid).toBe(ctx.computeUid(before, 0));
+  });
+
+  it('still hashes booking_date when the bank sends one', () => {
+    const account = { uid: 'acc-1', name: 'Bank', currency: 'EUR' };
+    const raw = {
+      transaction_amount: { currency: 'EUR', amount: '3.00' },
+      credit_debit_indicator: 'DBIT',
+      status: 'BOOK',
+      booking_date: '2026-07-28',
+      transaction_date: '2026-07-27',
+      remittance_information: ['BAR ROMA']
+    };
+    const [now] = ctx.assignUids([ctx.mapTransaction(raw, account, new Date())]);
+
+    expect(now.uid).toBe(ctx.computeUid(record(), 0));
+  });
+});
+
 describe('partitionByUid', () => {
   const held = {};
   const rows = ctx.assignUids([record({ entry_reference: 'A' }), record({ entry_reference: 'B' })]);
