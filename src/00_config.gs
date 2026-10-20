@@ -459,8 +459,8 @@ var RULE_MATCH_TYPES = ['contains', 'equals', 'starts_with', 'regex'];
  * Non-secret settings, seeded into _config. Secrets live in Script Properties.
  *
  * `sync_window_days` is 89, not 90. A routine sync only needs the last few
- * days, and 90 sits exactly on the edge some banks enforce — BBVA rejects it
- * from the second day after consent. See docs/PROVIDERS.md.
+ * days, and 90 sits exactly on the edge some banks enforce: BBVA rejected it
+ * with 422 WRONG_TRANSACTIONS_PERIOD from the second day after consent.
  */
 var DEFAULT_CONFIG = [
   ['base_currency', 'EUR', 'Reporting currency. Sets which rows get an amount_base, and every symbol shown.'],
