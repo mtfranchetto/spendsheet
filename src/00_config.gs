@@ -459,7 +459,7 @@ var RULE_MATCH_TYPES = ['contains', 'equals', 'starts_with', 'regex'];
 var DEFAULT_CONFIG = [
   ['base_currency', 'EUR', 'Reporting currency. Sets which rows get an amount_base, and every symbol shown.'],
   ['timezone', 'Europe/Rome', 'Used for date stamping.'],
-  ['sync_window_days', 90, 'Days of history requested on a routine sync.'],
+  ['sync_window_days', 89, 'Days of history requested on a routine sync.'],
   ['stale_threshold_days', 2, 'selfCheck alerts if the last success is older than this.'],
   ['empty_run_threshold_days', 3, 'Alert after this many consecutive days of 0 rows.'],
   ['consent_warning_days', 7, 'Warn when a bank consent has fewer days left than this.'],
