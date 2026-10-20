@@ -125,6 +125,6 @@ If the foreign-currency pockets are empty or unused, setting `active` FALSE as w
 
 The Spanish means "timestamp not in the accepted time period". `_status.last_error` says only "The API rejected the request parameters"; the bank's reason is in `_anomalies`.
 
-**Set `sync_window_days` to 89 in `_config`.** The next sync worked. The setting is shared by every bank, and one day less costs nothing when the sync runs daily. Setup sheet will list the key as differing from the seed. That is expected.
+**`sync_window_days` is 89 by default now.** With 89, the next sync worked. The setting is shared by every bank, and one day less costs nothing when the sync runs daily. A book set up before the change still says 90: Setup sheet lists the key as differing from the seed, and **Update mappings to defaults** brings it to 89.
 
 **Why 90 fails is a guess.** A routine sync asks for `date_from` as a date, today minus `sync_window_days`, which the bank reads as midnight. If BBVA measures its 90 days back from the moment of the call, midnight falls a few hours outside them. The longer window that works right after consent would explain why the first days passed. What was observed is only this: 90 failed three days running, and 89 worked.

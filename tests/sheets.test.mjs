@@ -217,7 +217,7 @@ describe('_config', () => {
     const row = c.readColumn_(config, 1).indexOf('sync_window_days') + 2;
     config.getRange(row, 2).clearContent();
 
-    expect(c.configNumber_(c.readConfig_(), 'sync_window_days')).toBe(90);
+    expect(c.configNumber_(c.readConfig_(), 'sync_window_days')).toBe(89);
   });
 
   it('accepts the several ways a person writes yes', () => {

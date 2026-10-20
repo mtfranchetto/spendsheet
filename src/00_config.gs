@@ -455,11 +455,17 @@ var RULE_FIELDS = ['description', 'counterparty', 'mcc', 'bank_transaction_code'
 /** How it looks. `contains` is the fallback, so it is listed first. */
 var RULE_MATCH_TYPES = ['contains', 'equals', 'starts_with', 'regex'];
 
-/** Non-secret settings, seeded into _config. Secrets live in Script Properties. */
+/**
+ * Non-secret settings, seeded into _config. Secrets live in Script Properties.
+ *
+ * `sync_window_days` is 89, not 90. A routine sync only needs the last few
+ * days, and 90 sits exactly on the edge some banks enforce — BBVA rejects it
+ * from the second day after consent. See docs/PROVIDERS.md.
+ */
 var DEFAULT_CONFIG = [
   ['base_currency', 'EUR', 'Reporting currency. Sets which rows get an amount_base, and every symbol shown.'],
   ['timezone', 'Europe/Rome', 'Used for date stamping.'],
-  ['sync_window_days', 90, 'Days of history requested on a routine sync.'],
+  ['sync_window_days', 89, 'Days of history requested on a routine sync.'],
   ['stale_threshold_days', 2, 'selfCheck alerts if the last success is older than this.'],
   ['empty_run_threshold_days', 3, 'Alert after this many consecutive days of 0 rows.'],
   ['consent_warning_days', 7, 'Warn when a bank consent has fewer days left than this.'],

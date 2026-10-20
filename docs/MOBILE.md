@@ -57,7 +57,7 @@ The sheet that opens asks **what the row is** before it asks what to file it und
 
 ### Deleting, and why only cash
 
-`transactions` is append-only everywhere else in this project. Deleting a row a bank sent would achieve nothing — `sync_window_days` is 90, so the next run fetches it again under the same id and it reappears overnight, with nothing anywhere reporting that it had gone. A leg this project wrote to balance a transfer has a partner row that would be left pointing at a group of one; the thing to undo there is the move, on the other leg. An imported row has its own route, *Remove synced duplicates*, which knows how to pair it against the synced copy and which of the two regenerates.
+`transactions` is append-only everywhere else in this project. Deleting a row a bank sent would achieve nothing — `sync_window_days` is 89, so the next run fetches it again under the same id and it reappears overnight, with nothing anywhere reporting that it had gone. A leg this project wrote to balance a transfer has a partner row that would be left pointing at a group of one; the thing to undo there is the move, on the other leg. An imported row has its own route, *Remove synced duplicates*, which knows how to pair it against the synced copy and which of the two regenerates.
 
 That leaves cash you typed: nothing fetches it, nothing pairs with it, and it is the only kind you can create by accident in two taps. So it is the only kind the delete is offered on, and the server refuses the rest a second time even if a page asks.
 

@@ -40,7 +40,7 @@ This is the part worth reading, because the obvious answer is the wrong one and 
 
 The two rows describe the same money, so neither is more true. The tie used to be broken by what was attached — the imported row carries the category you gave it in the tool it came from, the tick that says you meant it, and its labels, while the synced row carries an `entry_reference` nothing downstream reads. That reasoning is right about the rows and incomplete about time.
 
-**Only one of the two comes back.** `sync_window_days` is 90, so a synced row inside that window is fetched again on the very next run, under the same uid, and re-inserted — and for a pair the exact rule cannot see, nothing suppresses it. Delete the bank's copy on Tuesday and the duplicate is back on Wednesday morning, with nothing anywhere saying it ever went. An import is something you do by hand; it does not re-create itself.
+**Only one of the two comes back.** `sync_window_days` is 89, so a synced row inside that window is fetched again on the very next run, under the same uid, and re-inserted — and for a pair the exact rule cannot see, nothing suppresses it. Delete the bank's copy on Tuesday and the duplicate is back on Wednesday morning, with nothing anywhere saying it ever went. An import is something you do by hand; it does not re-create itself.
 
 So the survivor is the bank's row, and what the imported row was carrying is copied onto it first. **Blanks only** — if the survivor already has a category you set from the phone, that is newer information about the same money and it wins.
 
