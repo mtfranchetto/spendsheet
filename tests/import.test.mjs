@@ -263,6 +263,32 @@ function indexRowFromMatch(formula) {
   return hits;
 }
 
+/** 1-based position of a column letter: A is 1, Z is 26, AA is 27. */
+function letterIndex(letters) {
+  return [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+}
+
+/**
+ * Every `QUERY(tab!$X$2:$Y,"…")` in a formula: the range's first and last
+ * column, the query string, and the column letters it names.
+ *
+ * Only a literal query over a sheet range is read. A query string assembled
+ * from cells, as `reports` does, cannot be checked without evaluating it.
+ * Quoted values inside the query (`'enablebanking'`) are dropped before the
+ * letters are collected, and keywords are lowercase in this codebase, so an
+ * uppercase word of one or two letters is a column.
+ */
+function queryCalls(formula) {
+  const calls = [];
+  const pattern = /QUERY\([^,()"]*!\$([A-Z]+)\$\d+:\$([A-Z]+),"([^"]*)"/g;
+  for (const [, first, last, query] of formula.matchAll(pattern)) {
+    const bare = query.replace(/'[^']*'/g, "''");
+    const letters = bare.match(/\b[A-Z]{1,2}\b/g) || [];
+    calls.push({ first, last, query, letters });
+  }
+  return calls;
+}
+
 /**
  * Whether an expression evaluates to a boolean rather than a number.
  *
@@ -351,6 +377,37 @@ describe('the staged formulas', () => {
     const value = topLevelArgs(body)[2];
 
     expect(yieldsBoolean(value), `include yields a number: ${value.slice(-40)}`).toBe(true);
+  });
+
+  it('names only columns inside the range each QUERY reads', () => {
+    // A QUERY over a sheet range names columns by their sheet letters, so
+    // every letter in its query string has to fall inside that range. A
+    // letter counted from the start of the range lands outside it, the query
+    // errors, and an IFERROR around it can hide that as an empty answer.
+    formulas.forEach(({ column, formula }) => {
+      queryCalls(formula).forEach(({ first, last, letters }) => {
+        letters.forEach((letter) => {
+          expect(letterIndex(letter), `${column}: QUERY over ${first}:${last} names ${letter}`)
+            .toBeGreaterThanOrEqual(letterIndex(first));
+          expect(letterIndex(letter), `${column}: QUERY over ${first}:${last} names ${letter}`)
+            .toBeLessThanOrEqual(letterIndex(last));
+        });
+      });
+    });
+  });
+
+  it('asks the cutoff for account, date and source by their sheet letters', () => {
+    const include = formulas.filter((e) => e.column === 'include')[0].formula;
+    const calls = queryCalls(include);
+    const q = (name) => ctx.colOf(ctx.TX_COLUMNS, name);
+
+    expect(calls.length).toBeGreaterThan(0);
+    calls.forEach(({ first, query }) => {
+      expect(first).toBe(q('account_id'));
+      expect(query).toBe(
+        `select ${q('account_id')}, min(${q('booking_date')}) where ${q('source')} = ` +
+        `'${ctx.TX_SOURCE_API}' group by ${q('account_id')} label min(${q('booking_date')}) ''`);
+    });
   });
 
   it('has every consumer of include test it the same way', () => {
