@@ -50,7 +50,9 @@ test('a deep link opens the screen and filters it names', async ({ page }) => {
 
 test('a category opens onto its children, and a child drills into Records with a chip to undo it', async ({ page }) => {
   await worker(page, signedIn());
-  await page.goto('/?v=analytics');
+  // Not the default period: the preview's groceries are days old, so on the 1st
+  // "This month" holds none of them. Twelve months holds all of them on any day.
+  await page.goto('/?v=analytics&p=last_12');
   await page.locator('.catrow', { hasText: 'Food & Drink' }).last().click();
   await page.locator('.catkid', { hasText: 'Groceries' }).last().click();
   await expect(page.locator('h1')).toHaveText('Records');
