@@ -224,9 +224,12 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
   );
   if (!answer) return;
   toast(answer.message);
-  // Read from the answer, not guessed from the destination: the leg is a row it read back.
-  const source = TX_COLUMNS_CODE.indexOf('source');
-  const legWritten = Object.values(answer.rows).some((cells) => cells[source] === TX_SOURCE_TRANSFER_LEG);
+  // Read from the answer, not guessed from the destination: the leg is a row it read back,
+  // other than the marked one — which may itself be the leg of an earlier transfer.
+  const uidColumn = TX_COLUMNS_CODE.indexOf('uid');
+  const sourceColumn = TX_COLUMNS_CODE.indexOf('source');
+  const legWritten = Object.values(answer.rows).some((cells) =>
+    cells[uidColumn] !== record.uid && cells[sourceColumn] === TX_SOURCE_TRANSFER_LEG);
   // A new amount, or a leg written, moves a cash or asset account's balance, which only a read brings back.
   if (fields.amount !== undefined || legWritten) void refresh();
 }

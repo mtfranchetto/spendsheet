@@ -421,13 +421,19 @@ function transferAnswer(message, leg) {
 test('a transfer to an asset reads the book again, and the tile shows the half written for it', async ({ page }) => {
   const { book, fake } = await open(page, {
     '/api/act/transfer': () => {
-      // The Worker writes Degiro's half; its balance is the sheet's formula over it, as Google would recompute.
-      fake.answers['/api/read'] = () => withBalance(book, 'Degiro', 31475.92);
-      return transferAnswer('Took 24.08 from Degiro.', {
+      const answer = transferAnswer('Took 24.08 from Degiro.', {
         uid: 'leg-r-9', account_id: 'a-1', account_name: 'Degiro', amount: -24.08, amount_base: -24.08,
         currency: 'EUR', description: 'Transfer to Revolut', source: 'transfer-leg',
         category: 'Transfer', type: 'transfer', in_reports: false, confirmed: true
       });
+      // From here on a read is the book with both rows written and Degiro's balance as the sheet's formula now says.
+      fake.answers['/api/read'] = () => {
+        const [status, current] = withBalance(book, 'Degiro', 31475.92);
+        const tx = current.valueRanges.find((range) => /transactions/.test(range.range));
+        for (const [row, cells] of Object.entries(answer[1].rows)) tx.values[Number(row) - 1] = cells;
+        return [status, current];
+      };
+      return answer;
     }
   });
   await page.goto('/?v=records&p=last_12&q=amzn');
