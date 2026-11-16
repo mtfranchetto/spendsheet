@@ -407,3 +407,27 @@ test('"Update" sets the value of an asset, lands back on Home, and the tile show
   await expect(page.locator('.tile', { hasText: account })).toContainText('98,765.43');
   expect(fake.sent['/api/act/cash']).toHaveLength(1);
 });
+
+test('a transfer to an asset reads the book again, and the tile shows the half written for it', async ({ page }) => {
+  const { book, fake } = await open(page, {
+    '/api/act/transfer': () => {
+      // The Worker writes Degiro's half; its balance is the sheet's formula over it, as Google would recompute.
+      fake.answers['/api/read'] = () => withBalance(book, 'Degiro', 31475.92);
+      return [200, { message: 'Took 24.08 from Degiro.', rows: {} }];
+    }
+  });
+  await page.goto('/?v=records&p=last_12&q=amzn');
+  const row = page.locator('.tap').filter({ hasText: 'Refund from Amzn Mktp It' });
+  await expect(row).toHaveCount(1);
+  await row.click();
+
+  const sheet = page.locator('dialog#sheet');
+  await sheet.getByRole('button', { name: 'Transfer', exact: true }).click();
+  await sheet.locator('select.field').first().selectOption('Degiro');
+  await sheet.getByRole('button', { name: 'Mark as a transfer' }).click();
+  await expect(page.locator('#toast')).toHaveText('Took 24.08 from Degiro.');
+  expect(fake.sent['/api/act/transfer'][0].body).toMatchObject({ uid: 'r-9', destination: 'Degiro' });
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await expect(page.locator('.tile', { hasText: 'Degiro' })).toContainText('31,475.92');
+});

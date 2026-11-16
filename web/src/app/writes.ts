@@ -28,7 +28,7 @@ import {
 } from '../api/contract';
 import { configNumber } from '../domain/book';
 import type { PageRecord } from '../domain/query';
-import { TX_TYPE } from '../domain/schema';
+import { ACCOUNT_KIND, TX_TYPE } from '../domain/schema';
 import { findCounterLeg } from '../domain/transfer';
 import type { Cell } from '../sheets/records';
 import {
@@ -192,6 +192,13 @@ export type TransferFields = { destination: string; subcategory: string; amount?
  * Mark a transfer. For a bank destination the page finds the other half —
  * it holds the ledger — and the Worker checks that row again with the same
  * predicate before pairing.
+ *
+ * **A cash or asset destination is read again once it lands**, for the reason
+ * `addCash` is: the Worker writes that account's half, and its balance is the
+ * `accounts` tab's formula over it, which the answer does not carry. Without
+ * the read the net-worth figure keeps the money in both places — and the
+ * balance curve, walked back from that figure through the new leg, keeps the
+ * step the transfer was supposed to cancel.
  */
 export async function markTransfer(record: PageRecord, fields: TransferFields): Promise<void> {
   const answer = await one<ActAnswer>(
@@ -217,8 +224,10 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
   );
   if (!answer) return;
   toast(answer.message);
-  // A new amount moves a cash account's balance, which only a read brings back — see `addCash`.
-  if (fields.amount !== undefined) void refresh();
+  const target = book()?.accounts.find((account) => String(account.name) === fields.destination);
+  const legWritten = !!target && String(target.kind) !== ACCOUNT_KIND.BANK;
+  // A new amount, or a leg written, moves a cash account's balance, which only a read brings back.
+  if (fields.amount !== undefined || legWritten) void refresh();
 }
 
 export async function addRule(rule: RuleRequest): Promise<boolean> {
