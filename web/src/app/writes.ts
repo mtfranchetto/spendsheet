@@ -28,7 +28,7 @@ import {
 } from '../api/contract';
 import { configNumber } from '../domain/book';
 import type { PageRecord } from '../domain/query';
-import { TX_TYPE } from '../domain/schema';
+import { ACCOUNT_KIND, TX_COLUMNS_CODE, TX_SOURCE_TRANSFER_LEG, TX_TYPE } from '../domain/schema';
 import { findCounterLeg } from '../domain/transfer';
 import type { Cell } from '../sheets/records';
 import {
@@ -192,6 +192,13 @@ export type TransferFields = { destination: string; subcategory: string; amount?
  * Mark a transfer. For a bank destination the page finds the other half —
  * it holds the ledger — and the Worker checks that row again with the same
  * predicate before pairing.
+ *
+ * **A cash or asset destination is read again once it lands**, for the reason
+ * `addCash` is: the Worker writes that account's half, and its balance is the
+ * `accounts` tab's formula over it, which the answer does not carry. Without
+ * the read the net-worth figure keeps the money in both places — and the
+ * balance curve, walked back from that figure through the new leg, keeps the
+ * step the transfer was supposed to cancel.
  */
 export async function markTransfer(record: PageRecord, fields: TransferFields): Promise<void> {
   const answer = await one<ActAnswer>(
@@ -203,7 +210,7 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
       let counter: { uid: string; row: number } | undefined;
       if (fields.destination !== TRANSFER_OUTSIDE) {
         const target = b.accounts.find((account) => String(account.name) === fields.destination);
-        if (target && String(target.kind) === 'bank') {
+        if (target && String(target.kind) === ACCOUNT_KIND.BANK) {
           const window = configNumber(b.config, 'transfer_window_days');
           // Against the amount as it will be: an edited cash row pairs at its new figure, as the Worker checks it.
           const amount = fields.amount === undefined ? source.amount : Number(source.amount) < 0 ? -fields.amount : fields.amount;
@@ -217,8 +224,14 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
   );
   if (!answer) return;
   toast(answer.message);
-  // A new amount moves a cash account's balance, which only a read brings back — see `addCash`.
-  if (fields.amount !== undefined) void refresh();
+  // Read from the answer, not guessed from the destination: the leg is a row it read back,
+  // other than the marked one — which may itself be the leg of an earlier transfer.
+  const uidColumn = TX_COLUMNS_CODE.indexOf('uid');
+  const sourceColumn = TX_COLUMNS_CODE.indexOf('source');
+  const legWritten = Object.values(answer.rows).some((cells) =>
+    cells[uidColumn] !== record.uid && cells[sourceColumn] === TX_SOURCE_TRANSFER_LEG);
+  // A new amount, or a leg written, moves a cash or asset account's balance, which only a read brings back.
+  if (fields.amount !== undefined || legWritten) void refresh();
 }
 
 export async function addRule(rule: RuleRequest): Promise<boolean> {
