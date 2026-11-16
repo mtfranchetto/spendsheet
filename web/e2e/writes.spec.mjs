@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { batch, signedIn, worker } from './worker.mjs';
+import { batch, freshRows, rowOfUid, signedIn, worker } from './worker.mjs';
 
 function keeper() {
   const book = structuredClone(batch());
@@ -408,12 +408,26 @@ test('"Update" sets the value of an asset, lands back on Home, and the tile show
   expect(fake.sent['/api/act/cash']).toHaveLength(1);
 });
 
+/** The Worker's answer to a transfer: the marked row read back, and the leg it inserted below the last row, if any. */
+function transferAnswer(message, leg) {
+  const tx = batch().valueRanges.find((range) => /transactions/.test(range.range));
+  const header = tx.values[0];
+  const marked = rowOfUid('r-9');
+  const rows = freshRows({ [marked]: { category_override: 'Transfer', category: 'Transfer', type: 'transfer', in_reports: false, confirmed: true } });
+  if (leg) rows[tx.values.length + 1] = header.map((name) => leg[name] ?? '');
+  return [200, { message, rows }];
+}
+
 test('a transfer to an asset reads the book again, and the tile shows the half written for it', async ({ page }) => {
   const { book, fake } = await open(page, {
     '/api/act/transfer': () => {
       // The Worker writes Degiro's half; its balance is the sheet's formula over it, as Google would recompute.
       fake.answers['/api/read'] = () => withBalance(book, 'Degiro', 31475.92);
-      return [200, { message: 'Took 24.08 from Degiro.', rows: {} }];
+      return transferAnswer('Took 24.08 from Degiro.', {
+        uid: 'leg-r-9', account_id: 'a-1', account_name: 'Degiro', amount: -24.08, amount_base: -24.08,
+        currency: 'EUR', description: 'Transfer to Revolut', source: 'transfer-leg',
+        category: 'Transfer', type: 'transfer', in_reports: false, confirmed: true
+      });
     }
   });
   await page.goto('/?v=records&p=last_12&q=amzn');
@@ -430,4 +444,21 @@ test('a transfer to an asset reads the book again, and the tile shows the half w
 
   await page.getByRole('button', { name: 'Home' }).click();
   await expect(page.locator('.tile', { hasText: 'Degiro' })).toContainText('31,475.92');
+});
+
+test('a transfer whose half was already recorded writes no leg, and reads nothing again', async ({ page }) => {
+  const { fake } = await open(page, {
+    '/api/act/transfer': () => transferAnswer('That transfer was already recorded on Degiro.', null)
+  });
+  await page.goto('/?v=records&p=last_12&q=amzn');
+  await page.locator('.tap').filter({ hasText: 'Refund from Amzn Mktp It' }).click();
+  await expect.poll(() => fake.counts['/api/read']).toBe(1);
+
+  const sheet = page.locator('dialog#sheet');
+  await sheet.getByRole('button', { name: 'Transfer', exact: true }).click();
+  await sheet.locator('select.field').first().selectOption('Degiro');
+  await sheet.getByRole('button', { name: 'Mark as a transfer' }).click();
+  await expect(page.locator('#toast')).toHaveText('That transfer was already recorded on Degiro.');
+  await page.waitForTimeout(300);
+  expect(fake.counts['/api/read']).toBe(1);
 });

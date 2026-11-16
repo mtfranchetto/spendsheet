@@ -88,6 +88,8 @@ export const DEFAULT_CONFIG: Readonly<{ [key: string]: string | number }> = {
 
 export const TX_SOURCE_API = 'enablebanking';
 export const TX_SOURCE_CASH = 'manual';
+/** The other half of a transfer to cash or an asset, written by the Worker because nothing else will report it. */
+export const TX_SOURCE_TRANSFER_LEG = 'transfer-leg';
 
 export const CATEGORY_SOURCE = {
   OVERRIDE: 'override',

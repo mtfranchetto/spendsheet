@@ -63,7 +63,7 @@ import { clockAt, serialOf, SERIAL_EPOCH } from '../src/domain/days';
 import { amountIsEditable, descriptionIsEditable, recordIsDeletable, splitLabels } from '../src/domain/query';
 import {
   ACCOUNT_COLUMNS, ACCOUNT_KIND, CATEGORY_COLUMNS, CONFIG_COLUMNS, DEFAULT_CONFIG, TABS,
-  TX_COLUMNS, TX_COLUMNS_CODE, TX_SOURCE_CASH, TX_TYPE
+  TX_COLUMNS, TX_COLUMNS_CODE, TX_SOURCE_CASH, TX_SOURCE_TRANSFER_LEG, TX_TYPE
 } from '../src/domain/schema';
 import { arrives, counterLegProblem } from '../src/domain/transfer';
 import { ANY_COLUMN, records, type Cell } from '../src/sheets/records';
@@ -90,7 +90,6 @@ export type Google = {
 
 export type Sheets = { timeZone: string; tabs: { [title: string]: { sheetId: number; rows: number } } };
 
-export const TX_SOURCE_TRANSFER_LEG = 'transfer-leg';
 export const TRANSFER_CATEGORY_NAME = 'Transfer';
 const UID_SEPARATOR = '|';
 

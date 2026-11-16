@@ -28,7 +28,7 @@ import {
 } from '../api/contract';
 import { configNumber } from '../domain/book';
 import type { PageRecord } from '../domain/query';
-import { ACCOUNT_KIND, TX_TYPE } from '../domain/schema';
+import { ACCOUNT_KIND, TX_COLUMNS_CODE, TX_SOURCE_TRANSFER_LEG, TX_TYPE } from '../domain/schema';
 import { findCounterLeg } from '../domain/transfer';
 import type { Cell } from '../sheets/records';
 import {
@@ -210,7 +210,7 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
       let counter: { uid: string; row: number } | undefined;
       if (fields.destination !== TRANSFER_OUTSIDE) {
         const target = b.accounts.find((account) => String(account.name) === fields.destination);
-        if (target && String(target.kind) === 'bank') {
+        if (target && String(target.kind) === ACCOUNT_KIND.BANK) {
           const window = configNumber(b.config, 'transfer_window_days');
           // Against the amount as it will be: an edited cash row pairs at its new figure, as the Worker checks it.
           const amount = fields.amount === undefined ? source.amount : Number(source.amount) < 0 ? -fields.amount : fields.amount;
@@ -224,9 +224,10 @@ export async function markTransfer(record: PageRecord, fields: TransferFields): 
   );
   if (!answer) return;
   toast(answer.message);
-  const target = book()?.accounts.find((account) => String(account.name) === fields.destination);
-  const legWritten = !!target && String(target.kind) !== ACCOUNT_KIND.BANK;
-  // A new amount, or a leg written, moves a cash account's balance, which only a read brings back.
+  // Read from the answer, not guessed from the destination: the leg is a row it read back.
+  const source = TX_COLUMNS_CODE.indexOf('source');
+  const legWritten = Object.values(answer.rows).some((cells) => cells[source] === TX_SOURCE_TRANSFER_LEG);
+  // A new amount, or a leg written, moves a cash or asset account's balance, which only a read brings back.
   if (fields.amount !== undefined || legWritten) void refresh();
 }
 
