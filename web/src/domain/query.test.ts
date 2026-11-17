@@ -59,7 +59,7 @@ function row(over: { [column: string]: Cell } = {}): LedgerRow {
     ...over
   };
   const booked = values.booking_date;
-  return { ...values, _row: 2, _day: typeof booked === 'number' ? Math.floor(booked - SERIAL_EPOCH) : null } as LedgerRow;
+  return { _row: 2, ...values, _day: typeof booked === 'number' ? Math.floor(booked - SERIAL_EPOCH) : null } as LedgerRow;
 }
 
 const keys = (w: Window) => [dayKey(w.from), dayKey(w.to)];
@@ -430,8 +430,8 @@ describe('the balance trend', () => {
   it('books both halves of a paired transfer on the earlier day, so one bank reporting late draws no bump', () => {
     // Revolut books the money arriving on the 2nd; the slower bank books it leaving on the 4th.
     const series = balanceSeries([
-      row({ uid: 'in', account_name: 'Revolut', booking_date: serial(2026, 7, 2), amount_base: 300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' }),
-      row({ uid: 'out', account_name: 'Fineco', booking_date: serial(2026, 7, 4), amount_base: -300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' })
+      row({ _row: 10, uid: 'in', account_name: 'Revolut', booking_date: serial(2026, 7, 2), amount_base: 300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' }),
+      row({ _row: 11, uid: 'out', account_name: 'Fineco', booking_date: serial(2026, 7, 4), amount_base: -300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' })
     ], window, 1000, NOW);
 
     expect(series.map((p) => p.value)).toEqual([1000, 1000, 1000, 1000]);
@@ -446,11 +446,40 @@ describe('the balance trend', () => {
     expect(series.map((p) => p.value)).toEqual([700, 1000, 1000, 1000]);
   });
 
+  describe('moves only a pair that cancels', () => {
+    let next = 10;
+    const half = (uid: string, account: string, day: number, amount: Cell) =>
+      row({ _row: next++, uid, account_name: account, booking_date: serial(2026, 7, day), amount_base: amount, transfer_group: 'tr:out' });
+
+    it('not one whose other half cannot be converted', () => {
+      const series = balanceSeries([half('in', 'Swiss', 2, ''), half('out', 'Fineco', 4, -300)], window, 1000, NOW);
+      expect(series.map((p) => p.value)).toEqual([1300, 1300, 1300, 1000]);
+    });
+
+    it('not two rows going the same way', () => {
+      const series = balanceSeries([half('a', 'Revolut', 2, -300), half('b', 'Fineco', 4, -300)], window, 1000, NOW);
+      expect(series.map((p) => p.value)).toEqual([1600, 1300, 1300, 1000]);
+    });
+
+    it('not one with a half on an account the total does not count', () => {
+      const series = balanceSeries([half('in', 'Revolut', 2, 300), half('out', 'Old savings', 4, -300)], window, 1000, NOW,
+        ['Revolut', 'Fineco']);
+      expect(series.map((p) => p.value)).toEqual([1000, 1300, 1300, 1000]);
+    });
+
+    it('not one with a half booked after today', () => {
+      const now = at(2026, 7, 3);
+      const upToToday = resolveWindow({ kind: 'custom', from: '2026-07-01', to: '2026-07-03' }, now);
+      const series = balanceSeries([half('in', 'Revolut', 2, 300), half('out', 'Fineco', 5, -300)], upToToday, 1000, now);
+      expect(series.map((p) => p.value)).toEqual([700, 1000, 1000]);
+    });
+  });
+
   it('leaves a group that is not exactly a pair where each row was booked', () => {
     const series = balanceSeries([
-      row({ uid: 'a', booking_date: serial(2026, 7, 2), amount_base: 300, transfer_group: 'tr:x' }),
-      row({ uid: 'b', booking_date: serial(2026, 7, 3), amount_base: -150, transfer_group: 'tr:x' }),
-      row({ uid: 'c', booking_date: serial(2026, 7, 4), amount_base: -150, transfer_group: 'tr:x' })
+      row({ _row: 10, uid: 'a', booking_date: serial(2026, 7, 2), amount_base: 300, transfer_group: 'tr:x' }),
+      row({ _row: 11, uid: 'b', booking_date: serial(2026, 7, 3), amount_base: -150, transfer_group: 'tr:x' }),
+      row({ _row: 12, uid: 'c', booking_date: serial(2026, 7, 4), amount_base: -150, transfer_group: 'tr:x' })
     ], window, 1000, NOW);
 
     expect(series.map((p) => p.value)).toEqual([1000, 1300, 1150, 1000]);

@@ -16,7 +16,7 @@ import { appHealth } from './health';
 import { buildMemoryIndex, suggestCategory, suggestionIndex } from './merchant';
 import {
   aggregate, analytics, baseCurrency, isConfirmedRow, lastMonthToDate, matchesFilters,
-  netWorthNow, recentBalanceTrend, recordForPage, recordsPage, resolveWindow, transferPeers,
+  countedNames, netWorthNow, recentBalanceTrend, recordForPage, recordsPage, resolveWindow, transferPeers,
   type Filters, type LedgerRow
 } from './query';
 import { ACCOUNT_KIND, ACCOUNT_KINDS, CATEGORY_SOURCE, DASHBOARD_TREND_DAYS } from './schema';
@@ -156,7 +156,7 @@ export function appOverviewData(book: Book, ledger: readonly LedgerRow[], clock:
     },
     trend: {
       days: DASHBOARD_TREND_DAYS,
-      series: recentBalanceTrend(ledger, clock, netWorthNow(book, {}).total)
+      series: recentBalanceTrend(ledger, clock, netWorthNow(book, {}).total, countedNames(book, {}))
     },
     health: appHealth(book, clock, ledger.length),
     pending: records.pending,

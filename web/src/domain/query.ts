@@ -305,17 +305,24 @@ function filledBuckets(buckets: { [key: string]: Bucket }, window: Window | null
  * Two banks book the same move days apart, and walked on their own days the
  * pair would hold the money in both accounts in between — a bump the size of
  * the transfer that nothing happened to cause. Moving the later half onto the
- * earlier day keeps every total exact and changes only the days between. A
- * pair whose other half is not in `rows` (an account filter left it out) is
- * one account's money really arriving or leaving, and stays where it was
- * booked; a group that is not exactly a pair is left alone, as `transferPeers`
- * leaves it.
+ * earlier day keeps every total exact and changes only the days between.
+ *
+ * Only a pair that cancels is moved: both halves readable, one in and one
+ * out, neither booked after today (the walk never reaches those, and moving
+ * one back would subtract money `balanceNow` may not hold yet), and both on
+ * accounts in `counted`, the accounts `balanceNow` is the total of. A half
+ * whose partner is outside that, or not in `rows` at all because an account
+ * filter left it out, is one account's money really arriving or leaving, and
+ * stays where it was booked. `counted` omitted counts every account in `rows`.
  */
-export function balanceSeries(rows: readonly LedgerRow[], window: Window | null, balanceNow: number, clock: Clock) {
+export function balanceSeries(
+  rows: readonly LedgerRow[], window: Window | null, balanceNow: number, clock: Clock,
+  counted?: readonly string[]
+) {
   if (!window) return [];
 
   const after: { [day: number]: number } = {};
-  const pairDay = pairedTransferDays(rows || []);
+  const pairDay = pairedTransferDays(rows || [], clock, counted);
   for (const row of rows || []) {
     const amount = cellNumber(row.amount_base);
     if (amount === null) continue;
@@ -337,22 +344,16 @@ export function balanceSeries(rows: readonly LedgerRow[], window: Window | null,
   return series;
 }
 
-/** Each half of a transfer pair in `rows`, with both its rows dated, to the earlier of the two days. */
-function pairedTransferDays(rows: readonly LedgerRow[]): Map<LedgerRow, number> {
-  const groups = new Map<string, LedgerRow[]>();
-  for (const row of rows) {
-    const group = text(row.transfer_group);
-    if (!group) continue;
-    const members = groups.get(group);
-    if (members) members.push(row);
-    else groups.set(group, [row]);
-  }
-
+/** Each half of a cancelling transfer pair in `rows`, to the earlier of its two days. See `balanceSeries`. */
+function pairedTransferDays(rows: readonly LedgerRow[], clock: Clock, counted?: readonly string[]): Map<LedgerRow, number> {
+  const isCounted = (row: LedgerRow) => !counted || counted.indexOf(text(row.account_name)) !== -1;
   const days = new Map<LedgerRow, number>();
-  for (const members of groups.values()) {
-    if (members.length !== 2) continue;
-    const [a, b] = members;
-    if (a._day === null || b._day === null) continue;
+  for (const [a, b] of transferPairs(rows)) {
+    if (a._day === null || b._day === null || a._day > clock.today || b._day > clock.today) continue;
+    const x = cellNumber(a.amount_base);
+    const y = cellNumber(b.amount_base);
+    if (x === null || y === null || Math.sign(x) * Math.sign(y) !== -1) continue;
+    if (!isCounted(a) || !isCounted(b)) continue;
     const day = Math.min(a._day, b._day);
     days.set(a, day);
     days.set(b, day);
@@ -360,10 +361,10 @@ function pairedTransferDays(rows: readonly LedgerRow[]): Map<LedgerRow, number> 
   return days;
 }
 
-export function recentBalanceTrend(rows: readonly LedgerRow[], clock: Clock, balanceNow: number) {
+export function recentBalanceTrend(rows: readonly LedgerRow[], clock: Clock, balanceNow: number, counted?: readonly string[]) {
   return balanceSeries(rows,
     { kind: 'trend', from: clock.today - (DASHBOARD_TREND_DAYS - 1), to: clock.today },
-    balanceNow, clock);
+    balanceNow, clock, counted);
 }
 
 export function baseCurrency(book: Book): string {
@@ -404,6 +405,11 @@ export function netWorthNow(book: Book, filters: Scope) {
   return { total: round2(total), counted: counted.length, skipped, currency };
 }
 
+/** The names of the accounts `netWorthNow` totals: what a balance curve walked from that total may pair across. */
+export function countedNames(book: Book, filters: Scope): string[] {
+  return netWorthAccounts(book, filters).counted.map(({ account }) => text(account.name));
+}
+
 // ---------------------------------------------------------------------------
 // The two things a page asks for
 // ---------------------------------------------------------------------------
@@ -420,7 +426,7 @@ export function analytics(book: Book, ledger: readonly LedgerRow[], filters: Fil
   return {
     ...result,
     window: windowOut(window),
-    balance: balanceSeries(ledger.filter((row) => matchesAccount(row, scope)), window, worth.total, clock),
+    balance: balanceSeries(ledger.filter((row) => matchesAccount(row, scope)), window, worth.total, clock, countedNames(book, scope)),
     netWorth: worth,
     currency: worth.currency
   };
@@ -572,23 +578,40 @@ export function recordForPage(row: LedgerRow, peers: Peers | null, timeZone: str
 
 export type PageRecord = ReturnType<typeof recordForPage>;
 
-/** `transfer_group` → the other leg; a group that is not exactly a pair answers nothing. */
-export function transferPeers(ledger: readonly Row[]): Peers {
-  const groups: { [group: string]: Row[] } = {};
-  for (const row of ledger || []) {
+/**
+ * The rows sharing a `transfer_group`, two by two. A group that is not exactly
+ * a pair is no pair, and neither is one sheet row read twice. The one
+ * statement of what a pair is: the page's "from/to" and the balance curve
+ * both ask it.
+ */
+export function transferPairs<T extends Row>(rows: readonly T[]): [T, T][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows || []) {
     const group = text(row.transfer_group);
     if (!group) continue;
-    (groups[group] ||= []).push(row);
+    const members = groups.get(group);
+    if (members) members.push(row);
+    else groups.set(group, [row]);
+  }
+  const pairs: [T, T][] = [];
+  for (const members of groups.values()) {
+    if (members.length === 2 && members[0]._row !== members[1]._row) pairs.push([members[0], members[1]]);
+  }
+  return pairs;
+}
+
+/** `transfer_group` → the other leg; a group that is not exactly a pair answers nothing. */
+export function transferPeers(ledger: readonly Row[]): Peers {
+  const partner = new Map<number, Row>();
+  for (const [a, b] of transferPairs(ledger)) {
+    partner.set(a._row, b);
+    partner.set(b._row, a);
   }
 
   return {
     of(row) {
-      const group = text(row.transfer_group);
-      const members = group ? groups[group] : null;
-      if (!members || members.length !== 2) return null;
-
-      const other = members[0]._row === row._row ? members[1] : members[0];
-      if (other._row === row._row) return null;
+      const other = partner.get(row._row);
+      if (!other) return null;
 
       let amount = cellNumber(row.amount_base);
       if (amount === null) amount = cellNumber(row.amount);
