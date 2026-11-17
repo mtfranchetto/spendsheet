@@ -300,15 +300,26 @@ function filledBuckets(buckets: { [key: string]: Bucket }, window: Window | null
  * curve ends up disagreeing with the number above it. And it takes every row
  * rather than the windowed ones, because the first day of a past window needs
  * everything booked between that day and today — all of it outside the window.
+ *
+ * **Both halves of a paired transfer are walked on the earlier one's day.**
+ * Two banks book the same move days apart, and walked on their own days the
+ * pair would hold the money in both accounts in between — a bump the size of
+ * the transfer that nothing happened to cause. Moving the later half onto the
+ * earlier day keeps every total exact and changes only the days between. A
+ * pair whose other half is not in `rows` (an account filter left it out) is
+ * one account's money really arriving or leaving, and stays where it was
+ * booked; a group that is not exactly a pair is left alone, as `transferPeers`
+ * leaves it.
  */
 export function balanceSeries(rows: readonly LedgerRow[], window: Window | null, balanceNow: number, clock: Clock) {
   if (!window) return [];
 
   const after: { [day: number]: number } = {};
+  const pairDay = pairedTransferDays(rows || []);
   for (const row of rows || []) {
     const amount = cellNumber(row.amount_base);
     if (amount === null) continue;
-    const day = row._day;
+    const day = pairDay.get(row) ?? row._day;
     if (day === null) continue;
     after[day] = (after[day] || 0) + amount;
   }
@@ -324,6 +335,29 @@ export function balanceSeries(rows: readonly LedgerRow[], window: Window | null,
   const series: { key: string; value: number }[] = [];
   for (let d = window.from; d <= last; d++) series.push({ key: dayKey(d), value: round2(values[d]) });
   return series;
+}
+
+/** Each half of a transfer pair in `rows`, with both its rows dated, to the earlier of the two days. */
+function pairedTransferDays(rows: readonly LedgerRow[]): Map<LedgerRow, number> {
+  const groups = new Map<string, LedgerRow[]>();
+  for (const row of rows) {
+    const group = text(row.transfer_group);
+    if (!group) continue;
+    const members = groups.get(group);
+    if (members) members.push(row);
+    else groups.set(group, [row]);
+  }
+
+  const days = new Map<LedgerRow, number>();
+  for (const members of groups.values()) {
+    if (members.length !== 2) continue;
+    const [a, b] = members;
+    if (a._day === null || b._day === null) continue;
+    const day = Math.min(a._day, b._day);
+    days.set(a, day);
+    days.set(b, day);
+  }
+  return days;
 }
 
 export function recentBalanceTrend(rows: readonly LedgerRow[], clock: Clock, balanceNow: number) {

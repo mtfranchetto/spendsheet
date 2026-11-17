@@ -427,6 +427,35 @@ describe('the balance trend', () => {
     expect(series[3].value).toBe(500);
   });
 
+  it('books both halves of a paired transfer on the earlier day, so one bank reporting late draws no bump', () => {
+    // Revolut books the money arriving on the 2nd; the slower bank books it leaving on the 4th.
+    const series = balanceSeries([
+      row({ uid: 'in', account_name: 'Revolut', booking_date: serial(2026, 7, 2), amount_base: 300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' }),
+      row({ uid: 'out', account_name: 'Fineco', booking_date: serial(2026, 7, 4), amount_base: -300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' })
+    ], window, 1000, NOW);
+
+    expect(series.map((p) => p.value)).toEqual([1000, 1000, 1000, 1000]);
+  });
+
+  it('walks a half alone on its own day, when the other is not in the rows it was given', () => {
+    // An account filter keeps one side: for that account the money did arrive on the 2nd.
+    const series = balanceSeries([
+      row({ uid: 'in', booking_date: serial(2026, 7, 2), amount_base: 300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' })
+    ], window, 1000, NOW);
+
+    expect(series.map((p) => p.value)).toEqual([700, 1000, 1000, 1000]);
+  });
+
+  it('leaves a group that is not exactly a pair where each row was booked', () => {
+    const series = balanceSeries([
+      row({ uid: 'a', booking_date: serial(2026, 7, 2), amount_base: 300, transfer_group: 'tr:x' }),
+      row({ uid: 'b', booking_date: serial(2026, 7, 3), amount_base: -150, transfer_group: 'tr:x' }),
+      row({ uid: 'c', booking_date: serial(2026, 7, 4), amount_base: -150, transfer_group: 'tr:x' })
+    ], window, 1000, NOW);
+
+    expect(series.map((p) => p.value)).toEqual([1000, 1300, 1150, 1000]);
+  });
+
   it('skips a row it cannot convert rather than stepping the line by zero', () => {
     const series = balanceSeries([
       row({ booking_date: serial(2026, 7, 3), amount_base: '', currency: 'CHF' })
