@@ -61,7 +61,7 @@ import type { Book, Row } from './book';
 import { cellNumber, isTruthyCell, round2, text } from './cells';
 import { addMonths, dayKey, monthKey, startOfMonth, startOfMonthDay, type Clock } from './days';
 import {
-  aggregate, balanceSeries, groupKey, matchesAccount, matchesFilters, netWorthAccounts, netWorthNow,
+  aggregate, balanceSeries, groupKey, matchesAccount, matchesFilters, netWorthAccounts, netWorthNow, walkDays,
   type LedgerRow, type Window
 } from './query';
 import { ACCOUNT_KIND, TRANSFER_CATEGORY, VALUATION_SUBCATEGORY } from './schema';
@@ -133,11 +133,16 @@ function inWindow(row: LedgerRow, window: Window): boolean {
   return row._day !== null && row._day >= window.from && row._day <= window.to;
 }
 
-/** What these rows moved between them inside a window. A row with no base amount moves nothing it can state. */
-function moved(rows: readonly LedgerRow[], window: Window): number {
+/**
+ * What these rows moved between them inside a window, each counted on the day
+ * the worth line walks it (`walkDays`), so the line and the figures beside it
+ * agree. A row with no base amount moves nothing it can state.
+ */
+function moved(rows: readonly LedgerRow[], window: Window, days: ReadonlyMap<LedgerRow, number>): number {
   let total = 0;
   for (const row of rows) {
-    if (!inWindow(row, window)) continue;
+    const day = days.get(row) ?? row._day;
+    if (day === null || day < window.from || day > window.to) continue;
     const amount = cellNumber(row.amount_base);
     if (amount !== null) total += amount;
   }
@@ -263,6 +268,7 @@ export function longView(book: Book, ledger: readonly LedgerRow[], clock: Clock)
   const counted = accounts.length
     ? ledger.filter((row) => matchesAccount(row, { account: accounts.map((account) => account.name) }))
     : [];
+  const days = walkDays(counted, clock);
 
   const held = HELD_KINDS.flatMap((kind) => {
     const mine = accounts.filter((account) => account.kind === kind);
@@ -273,12 +279,12 @@ export function longView(book: Book, ledger: readonly LedgerRow[], clock: Clock)
       kind,
       balance,
       share: worth.total > 0 ? balance / worth.total : null,
-      change: round2(moved(rows, t12))
+      change: round2(moved(rows, t12, days))
     }];
   });
 
-  const change = round2(moved(counted, t12));
-  const revalued = round2(moved(counted.filter(isRevaluation), t12));
+  const change = round2(moved(counted, t12, days));
+  const revalued = round2(moved(counted.filter(isRevaluation), t12, days));
   const started = firstDay(counted, clock);
   // Where the ledger starts inside T12, the change is everything it holds: from
   // the day before its first row, which is the day `before` is the balance of.

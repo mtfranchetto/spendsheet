@@ -322,7 +322,7 @@ export function balanceSeries(
   if (!window) return [];
 
   const after: { [day: number]: number } = {};
-  const pairDay = pairedTransferDays(rows || [], clock, counted);
+  const pairDay = walkDays(rows || [], clock, counted);
   for (const row of rows || []) {
     const amount = cellNumber(row.amount_base);
     if (amount === null) continue;
@@ -344,9 +344,16 @@ export function balanceSeries(
   return series;
 }
 
-/** Each half of a cancelling transfer pair in `rows`, to the earlier of its two days. See `balanceSeries`. */
-function pairedTransferDays(rows: readonly LedgerRow[], clock: Clock, counted?: readonly string[]): Map<LedgerRow, number> {
-  const isCounted = (row: LedgerRow) => !counted || counted.indexOf(text(row.account_name)) !== -1;
+/**
+ * Each half of a cancelling transfer pair in `rows`, to the earlier of its two
+ * days; a row not in the map is walked on its own. See `balanceSeries`. Exported
+ * because anything stating how much net worth moved inside a window has to
+ * count a row on the day the curve beside it walks it, or the two disagree by
+ * the transfer when a window edge falls between the halves.
+ */
+export function walkDays(rows: readonly LedgerRow[], clock: Clock, counted?: readonly string[]): Map<LedgerRow, number> {
+  const names = counted ? new Set(counted) : null;
+  const isCounted = (row: LedgerRow) => !names || names.has(text(row.account_name));
   const days = new Map<LedgerRow, number>();
   for (const [a, b] of transferPairs(rows)) {
     if (a._day === null || b._day === null || a._day > clock.today || b._day > clock.today) continue;

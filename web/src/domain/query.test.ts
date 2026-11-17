@@ -446,10 +446,20 @@ describe('the balance trend', () => {
     expect(series.map((p) => p.value)).toEqual([700, 1000, 1000, 1000]);
   });
 
+  it('books a pair straddling the start of the window before it, so the window opens flat', () => {
+    // In on 29 June, before the window; out on 2 July, inside it.
+    const series = balanceSeries([
+      row({ _row: 10, uid: 'in', account_name: 'Revolut', booking_date: serial(2026, 6, 29), amount_base: 300, transfer_group: 'tr:out' }),
+      row({ _row: 11, uid: 'out', account_name: 'Fineco', booking_date: serial(2026, 7, 2), amount_base: -300, transfer_group: 'tr:out' })
+    ], window, 1000, NOW);
+
+    expect(series.map((p) => p.value)).toEqual([1000, 1000, 1000, 1000]);
+  });
+
   describe('moves only a pair that cancels', () => {
-    let next = 10;
+    // Each half on its own sheet row, numbered by its day: the two days of a pair differ.
     const half = (uid: string, account: string, day: number, amount: Cell) =>
-      row({ _row: next++, uid, account_name: account, booking_date: serial(2026, 7, day), amount_base: amount, transfer_group: 'tr:out' });
+      row({ _row: 100 + day, uid, account_name: account, booking_date: serial(2026, 7, day), amount_base: amount, transfer_group: 'tr:out' });
 
     it('not one whose other half cannot be converted', () => {
       const series = balanceSeries([half('in', 'Swiss', 2, ''), half('out', 'Fineco', 4, -300)], window, 1000, NOW);
