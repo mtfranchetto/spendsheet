@@ -24,10 +24,10 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from '../sheets/records';
 import { bookFromBatch } from './book';
 import { cellNumber } from './cells';
-import { dayKey, SERIAL_EPOCH } from './days';
+import { dayKey, SERIAL_EPOCH, type Clock } from './days';
 import { appAnalyticsData, appRecordsData } from './payloads';
 import {
-  aggregate, balanceSeries, ledgerOf, matchesAccount, matchesFilters, recentBalanceTrend, resolveWindow,
+  aggregate, balanceSeries, ledgerOf, matchesAccount, matchesFilters, recentBalanceTrend, resolveWindow, transferPeers, walkDays,
   type Filters, type LedgerRow, type Window
 } from './query';
 import {
@@ -401,9 +401,14 @@ describe('aggregating', () => {
 describe('the balance trend', () => {
   const window = resolveWindow({ kind: 'custom', from: '2026-07-01', to: '2026-07-04' }, NOW);
 
+  /** The curve as a page draws it: walked as `walkDays` says, every account in `rows` counted unless `counted` says, four days apart at most. */
+  const walked = (rows: LedgerRow[], w: Window, total: number, now: Clock, counted?: string[]) =>
+    balanceSeries(rows, w, total, now,
+      walkDays(rows, now, { counted: counted ?? rows.map((r) => String(r.account_name || '')), maxGap: 4 }));
+
   /** `balance_at(d) = balance_now − Σ amount_base booked after d`. */
   it('walks the current balance backwards through the ledger', () => {
-    const series = balanceSeries([
+    const series = walked([
       row({ booking_date: serial(2026, 7, 2), amount_base: -100 }),
       row({ booking_date: serial(2026, 7, 4), amount_base: -50 })
     ], window, 1000, NOW);
@@ -419,7 +424,7 @@ describe('the balance trend', () => {
   it('counts a transfer, because net worth is not a spending question', () => {
     // The one function here that does not filter in_reports. A transfer moves
     // a balance and an excluded row still left your account.
-    const series = balanceSeries([
+    const series = walked([
       row({ booking_date: serial(2026, 7, 3), amount_base: -200, in_reports: false, type: 'transfer' })
     ], window, 500, NOW);
 
@@ -429,7 +434,7 @@ describe('the balance trend', () => {
 
   it('books both halves of a paired transfer on the earlier day, so one bank reporting late draws no bump', () => {
     // Revolut books the money arriving on the 2nd; the slower bank books it leaving on the 4th.
-    const series = balanceSeries([
+    const series = walked([
       row({ _row: 10, uid: 'in', account_name: 'Revolut', booking_date: serial(2026, 7, 2), amount_base: 300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' }),
       row({ _row: 11, uid: 'out', account_name: 'Fineco', booking_date: serial(2026, 7, 4), amount_base: -300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' })
     ], window, 1000, NOW);
@@ -439,7 +444,7 @@ describe('the balance trend', () => {
 
   it('walks a half alone on its own day, when the other is not in the rows it was given', () => {
     // An account filter keeps one side: for that account the money did arrive on the 2nd.
-    const series = balanceSeries([
+    const series = walked([
       row({ uid: 'in', booking_date: serial(2026, 7, 2), amount_base: 300, in_reports: false, type: 'transfer', transfer_group: 'tr:out' })
     ], window, 1000, NOW);
 
@@ -448,7 +453,7 @@ describe('the balance trend', () => {
 
   it('books a pair straddling the start of the window before it, so the window opens flat', () => {
     // In on 29 June, before the window; out on 2 July, inside it.
-    const series = balanceSeries([
+    const series = walked([
       row({ _row: 10, uid: 'in', account_name: 'Revolut', booking_date: serial(2026, 6, 29), amount_base: 300, transfer_group: 'tr:out' }),
       row({ _row: 11, uid: 'out', account_name: 'Fineco', booking_date: serial(2026, 7, 2), amount_base: -300, transfer_group: 'tr:out' })
     ], window, 1000, NOW);
@@ -462,31 +467,42 @@ describe('the balance trend', () => {
       row({ _row: 100 + day, uid, account_name: account, booking_date: serial(2026, 7, day), amount_base: amount, transfer_group: 'tr:out' });
 
     it('not one whose other half cannot be converted', () => {
-      const series = balanceSeries([half('in', 'Swiss', 2, ''), half('out', 'Fineco', 4, -300)], window, 1000, NOW);
+      const series = walked([half('in', 'Swiss', 2, ''), half('out', 'Fineco', 4, -300)], window, 1000, NOW);
       expect(series.map((p) => p.value)).toEqual([1300, 1300, 1300, 1000]);
     });
 
     it('not two rows going the same way', () => {
-      const series = balanceSeries([half('a', 'Revolut', 2, -300), half('b', 'Fineco', 4, -300)], window, 1000, NOW);
+      const series = walked([half('a', 'Revolut', 2, -300), half('b', 'Fineco', 4, -300)], window, 1000, NOW);
       expect(series.map((p) => p.value)).toEqual([1600, 1300, 1300, 1000]);
     });
 
     it('not one with a half on an account the total does not count', () => {
-      const series = balanceSeries([half('in', 'Revolut', 2, 300), half('out', 'Old savings', 4, -300)], window, 1000, NOW,
+      const series = walked([half('in', 'Revolut', 2, 300), half('out', 'Old savings', 4, -300)], window, 1000, NOW,
         ['Revolut', 'Fineco']);
       expect(series.map((p) => p.value)).toEqual([1000, 1300, 1300, 1000]);
+    });
+
+    it('not two amounts that differ, as a fee or a second currency makes them', () => {
+      const series = walked([half('in', 'Revolut', 2, 300), half('out', 'Fineco', 4, -250)], window, 1000, NOW);
+      expect(series.map((p) => p.value)).toEqual([950, 1250, 1250, 1000]);
+    });
+
+    it('not two halves booked further apart than the transfer window', () => {
+      const wide = resolveWindow({ kind: 'custom', from: '2026-07-01', to: '2026-07-08' }, NOW);
+      const series = walked([half('in', 'Revolut', 2, 300), half('out', 'Fineco', 7, -300)], wide, 1000, NOW);
+      expect(series.map((p) => p.value)).toEqual([1000, 1300, 1300, 1300, 1300, 1300, 1000, 1000]);
     });
 
     it('not one with a half booked after today', () => {
       const now = at(2026, 7, 3);
       const upToToday = resolveWindow({ kind: 'custom', from: '2026-07-01', to: '2026-07-03' }, now);
-      const series = balanceSeries([half('in', 'Revolut', 2, 300), half('out', 'Fineco', 5, -300)], upToToday, 1000, now);
+      const series = walked([half('in', 'Revolut', 2, 300), half('out', 'Fineco', 5, -300)], upToToday, 1000, now);
       expect(series.map((p) => p.value)).toEqual([700, 1000, 1000]);
     });
   });
 
   it('leaves a group that is not exactly a pair where each row was booked', () => {
-    const series = balanceSeries([
+    const series = walked([
       row({ _row: 10, uid: 'a', booking_date: serial(2026, 7, 2), amount_base: 300, transfer_group: 'tr:x' }),
       row({ _row: 11, uid: 'b', booking_date: serial(2026, 7, 3), amount_base: -150, transfer_group: 'tr:x' }),
       row({ _row: 12, uid: 'c', booking_date: serial(2026, 7, 4), amount_base: -150, transfer_group: 'tr:x' })
@@ -496,7 +512,7 @@ describe('the balance trend', () => {
   });
 
   it('skips a row it cannot convert rather than stepping the line by zero', () => {
-    const series = balanceSeries([
+    const series = walked([
       row({ booking_date: serial(2026, 7, 3), amount_base: '', currency: 'CHF' })
     ], window, 400, NOW);
 
@@ -504,11 +520,11 @@ describe('the balance trend', () => {
   });
 
   it('emits a point for every day, so the line has no gaps', () => {
-    expect(balanceSeries([], window, 10, NOW)).toHaveLength(4);
+    expect(walked([], window, 10, NOW)).toHaveLength(4);
   });
 
   it('stops at today, whatever the window asks for', () => {
-    const series = balanceSeries([], resolveWindow({ kind: 'month', year: 2026, month: 8 }, at(2026, 8, 10)), 10, at(2026, 8, 10));
+    const series = walked([], resolveWindow({ kind: 'month', year: 2026, month: 8 }, at(2026, 8, 10)), 10, at(2026, 8, 10));
     expect(series.map((p) => p.key).at(-1)).toBe('2026-08-10');
   });
 });
@@ -519,8 +535,8 @@ describe('the thirty days under the dashboard total', () => {
   it('draws the same number of days whichever day of the month it is', () => {
     // Not month-to-date: that window is one day long on the 1st, so the card
     // would empty itself every time the month turned and refill over four weeks.
-    const first = recentBalanceTrend([], at(2026, 7, 1), 100);
-    const late = recentBalanceTrend([], at(2026, 7, 28), 100);
+    const first = recentBalanceTrend([], at(2026, 7, 1), 100, new Map());
+    const late = recentBalanceTrend([], at(2026, 7, 28), 100, new Map());
 
     expect(first).toHaveLength(DASHBOARD_TREND_DAYS);
     expect(late).toHaveLength(DASHBOARD_TREND_DAYS);
@@ -532,7 +548,7 @@ describe('the thirty days under the dashboard total', () => {
     // A point is the balance at the *end* of its day, so the row booked on the
     // 18th is already in the 18th's value and the step is between it and the
     // 17th. Reading it the other way puts every move a day late.
-    const series = recentBalanceTrend([row({ booking_date: serial(2026, 7, 18), amount_base: -40 })], now, 900);
+    const series = recentBalanceTrend([row({ booking_date: serial(2026, 7, 18), amount_base: -40 })], now, 900, new Map());
 
     expect(series.at(-1)).toEqual({ key: '2026-07-20', value: 900 });
     expect(series.at(-3)).toEqual({ key: '2026-07-18', value: 900 });
@@ -540,10 +556,26 @@ describe('the thirty days under the dashboard total', () => {
   });
 
   it('ignores a row older than the frame, which is already inside the total', () => {
-    const old = recentBalanceTrend([row({ booking_date: serial(2026, 5, 1), amount_base: -500 })], now, 900);
+    const old = recentBalanceTrend([row({ booking_date: serial(2026, 5, 1), amount_base: -500 })], now, 900, new Map());
 
     expect(old).toHaveLength(DASHBOARD_TREND_DAYS);
     expect(old.every((point) => point.value === 900)).toBe(true);
+  });
+});
+
+describe('the other half of a transfer', () => {
+  const pair = [
+    row({ _row: 10, uid: 'in', account_name: 'Revolut', amount_base: 300, transfer_group: 'tr:out' }),
+    row({ _row: 11, uid: 'out', account_name: 'Fineco', amount_base: -300, transfer_group: 'tr:out' })
+  ];
+
+  it('names the account the money came from', () => {
+    expect(transferPeers(pair).of(pair[0])).toEqual({ account: 'Fineco', direction: 'from' });
+  });
+
+  it('answers nothing for a row whose group no longer names the pair', () => {
+    // Asked with the row as it is now, against pairs read before it was unpaired.
+    expect(transferPeers(pair).of({ ...pair[0], transfer_group: '' })).toBeNull();
   });
 });
 
