@@ -16,7 +16,7 @@ import { appHealth } from './health';
 import { buildMemoryIndex, suggestCategory, suggestionIndex } from './merchant';
 import {
   aggregate, analytics, baseCurrency, isConfirmedRow, lastMonthToDate, matchesFilters,
-  netWorthNow, recentBalanceTrend, recordForPage, recordsPage, resolveWindow, transferPeers,
+  netWorthNow, netWorthWalk, recentBalanceTrend, recordForPage, recordsPage, resolveWindow, transferPeers,
   type Filters, type LedgerRow
 } from './query';
 import { ACCOUNT_KIND, ACCOUNT_KINDS, CATEGORY_SOURCE, DASHBOARD_TREND_DAYS } from './schema';
@@ -134,6 +134,12 @@ function assetAccountList(book: Book) {
 // The half that needs the ledger
 // ---------------------------------------------------------------------------
 
+/** The thirty days under the Home total, walked back from it. */
+function trendOf(book: Book, ledger: readonly LedgerRow[], clock: Clock) {
+  const { worth, days } = netWorthWalk(book, {}, ledger, clock);
+  return recentBalanceTrend(ledger, clock, worth.total, days);
+}
+
 export function appOverviewData(book: Book, ledger: readonly LedgerRow[], clock: Clock) {
   const window = resolveWindow({ kind: 'mtd' }, clock);
   const previous = lastMonthToDate(clock);
@@ -156,7 +162,7 @@ export function appOverviewData(book: Book, ledger: readonly LedgerRow[], clock:
     },
     trend: {
       days: DASHBOARD_TREND_DAYS,
-      series: recentBalanceTrend(ledger, clock, netWorthNow(book, {}).total)
+      series: trendOf(book, ledger, clock)
     },
     health: appHealth(book, clock, ledger.length),
     pending: records.pending,

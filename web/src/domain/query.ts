@@ -20,11 +20,13 @@
 
 import type { Cell } from '../sheets/records';
 import type { Book, Row } from './book';
+import { configNumber } from './book';
 import { cellNumber, isBlankCell, isTruthyCell, round2, text } from './cells';
 import {
   addMonths, dayKey, dayOf, monthKey, startOfMonth, startOfMonthDay, timeOfDay, type Clock
 } from './days';
 import { normalizeMerchant } from './merchant';
+import { DEFAULT_TRANSFER_WINDOW_DAYS } from './transfer';
 import {
   DASHBOARD_TREND_DAYS, QUERY_DAILY_MAX_DAYS, QUERY_GROUP_LIMIT, QUERY_PAGE_SIZE,
   TX_SOURCE_API, TX_SOURCE_CASH, TX_TYPE
@@ -166,7 +168,7 @@ export function matchesAccount(row: { readonly [column: string]: unknown }, filt
   const want = (filters || {}).account;
   if (!want || want === 'All') return true;
 
-  const name = String(row.account_name || '');
+  const name = accountName(row.account_name);
   if (!Array.isArray(want)) return name === String(want);
   if (!want.length || want.indexOf('All') !== -1) return true;
   return want.some((entry) => String(entry) === name);
@@ -300,15 +302,26 @@ function filledBuckets(buckets: { [key: string]: Bucket }, window: Window | null
  * curve ends up disagreeing with the number above it. And it takes every row
  * rather than the windowed ones, because the first day of a past window needs
  * everything booked between that day and today — all of it outside the window.
+ *
+ * **Both halves of a paired transfer are walked on the earlier one's day**,
+ * as `days` says (`walkDays`; a row not in it is walked on its own). Two
+ * banks book the same move days apart, and walked on their own days the pair
+ * would hold the money in both accounts in between — a bump the size of the
+ * transfer that nothing happened to cause. `days` is an argument, not worked
+ * out here, so whatever states a figure beside the curve counts each row on
+ * the same day the curve walks it.
  */
-export function balanceSeries(rows: readonly LedgerRow[], window: Window | null, balanceNow: number, clock: Clock) {
+export function balanceSeries(
+  rows: readonly LedgerRow[], window: Window | null, balanceNow: number, clock: Clock,
+  days: ReadonlyMap<LedgerRow, number>
+) {
   if (!window) return [];
 
   const after: { [day: number]: number } = {};
   for (const row of rows || []) {
     const amount = cellNumber(row.amount_base);
     if (amount === null) continue;
-    const day = row._day;
+    const day = days.get(row) ?? row._day;
     if (day === null) continue;
     after[day] = (after[day] || 0) + amount;
   }
@@ -326,14 +339,63 @@ export function balanceSeries(rows: readonly LedgerRow[], window: Window | null,
   return series;
 }
 
-export function recentBalanceTrend(rows: readonly LedgerRow[], clock: Clock, balanceNow: number) {
+export type WalkRules = {
+  /** The accounts the walked-from total counts, as `accountName` spells them. */
+  counted: readonly string[];
+  /** How many days apart two halves may be booked and still be walked together: `transfer_window_days`. */
+  maxGap: number;
+  /** When given, the two halves must give the same answer: a figure split by it keeps each part's own days. */
+  kindOf?: (row: LedgerRow) => string;
+};
+
+/**
+ * Each half of a transfer pair that cancels, to the earlier of its two days.
+ *
+ * Moving the later half keeps every total exact and changes only the days
+ * between, and only a pair that cancels may move: the two amounts the same
+ * to the cent, one in and one out; neither booked after today (the walk never
+ * reaches those, and moving one back would subtract money the total may not
+ * hold yet); no further apart than `maxGap`, the window every writer of
+ * `transfer_group` pairs within; and both on `counted` accounts. A half whose
+ * partner is outside that, or not in `rows` because an account filter left it
+ * out, is one account's money really arriving or leaving, and stays put.
+ * Anything else — a fee, two currencies, a group typed by hand across months
+ * — is walked as booked, where it shows as what it is.
+ */
+export function walkDays(rows: readonly LedgerRow[], clock: Clock, rules: WalkRules): Map<LedgerRow, number> {
+  const names = new Set(rules.counted);
+  const counted = (row: LedgerRow) => names.has(accountName(row.account_name));
+  const days = new Map<LedgerRow, number>();
+  for (const [a, b] of transferPairs(rows)) {
+    if (a._day === null || b._day === null || a._day > clock.today || b._day > clock.today) continue;
+    if (Math.abs(a._day - b._day) > rules.maxGap) continue;
+    const x = cellNumber(a.amount_base);
+    const y = cellNumber(b.amount_base);
+    if (x === null || y === null || x === 0 || round2(x + y) !== 0) continue;
+    if (!counted(a) || !counted(b)) continue;
+    if (rules.kindOf && rules.kindOf(a) !== rules.kindOf(b)) continue;
+    const day = Math.min(a._day, b._day);
+    days.set(a, day);
+    days.set(b, day);
+  }
+  return days;
+}
+
+export function recentBalanceTrend(
+  rows: readonly LedgerRow[], clock: Clock, balanceNow: number, days: ReadonlyMap<LedgerRow, number>
+) {
   return balanceSeries(rows,
     { kind: 'trend', from: clock.today - (DASHBOARD_TREND_DAYS - 1), to: clock.today },
-    balanceNow, clock);
+    balanceNow, clock, days);
 }
 
 export function baseCurrency(book: Book): string {
   return String(book.config.base_currency || 'EUR');
+}
+
+/** An account's name, spelled one way wherever an account is matched by it. */
+export function accountName(value: unknown): string {
+  return String(value || '');
 }
 
 /**
@@ -363,11 +425,37 @@ export function netWorthAccounts(book: Book, filters: Scope) {
   return { counted, skipped, currency };
 }
 
-/** Every included, active, base-currency account's balance; the rest are counted as skipped. */
-export function netWorthNow(book: Book, filters: Scope) {
-  const { counted, skipped, currency } = netWorthAccounts(book, filters);
+function worthOf({ counted, skipped, currency }: ReturnType<typeof netWorthAccounts>) {
   const total = counted.reduce((sum, entry) => sum + entry.balance, 0);
   return { total: round2(total), counted: counted.length, skipped, currency };
+}
+
+/** Every included, active, base-currency account's balance; the rest are counted as skipped. */
+export function netWorthNow(book: Book, filters: Scope) {
+  return worthOf(netWorthAccounts(book, filters));
+}
+
+/** `transfer_window_days`: how far apart two halves of one move may be booked. */
+export function transferWindow(book: Book): number {
+  const window = configNumber(book.config, 'transfer_window_days');
+  return window >= 0 ? window : DEFAULT_TRANSFER_WINDOW_DAYS;
+}
+
+/**
+ * Today's net worth, and the day a curve walked back from it takes each row
+ * on — from one reading of which accounts count, so the pairs the curve moves
+ * are between accounts the total holds.
+ */
+export function netWorthWalk(
+  book: Book, filters: Scope, rows: readonly LedgerRow[], clock: Clock, kindOf?: (row: LedgerRow) => string
+) {
+  const accounts = netWorthAccounts(book, filters);
+  const days = walkDays(rows, clock, {
+    counted: accounts.counted.map(({ account }) => accountName(account.name)),
+    maxGap: transferWindow(book),
+    kindOf
+  });
+  return { worth: worthOf(accounts), accounts, days };
 }
 
 // ---------------------------------------------------------------------------
@@ -381,12 +469,13 @@ export function analytics(book: Book, ledger: readonly LedgerRow[], filters: Fil
 
   const matched = ledger.filter((row) => matchesFilters(row, scope));
   const result = aggregate(matched, window);
-  const worth = netWorthNow(book, scope);
+  const inScope = ledger.filter((row) => matchesAccount(row, scope));
+  const { worth, days } = netWorthWalk(book, scope, inScope, clock);
 
   return {
     ...result,
     window: windowOut(window),
-    balance: balanceSeries(ledger.filter((row) => matchesAccount(row, scope)), window, worth.total, clock),
+    balance: balanceSeries(inScope, window, worth.total, clock, days),
     netWorth: worth,
     currency: worth.currency
   };
@@ -538,23 +627,40 @@ export function recordForPage(row: LedgerRow, peers: Peers | null, timeZone: str
 
 export type PageRecord = ReturnType<typeof recordForPage>;
 
-/** `transfer_group` → the other leg; a group that is not exactly a pair answers nothing. */
-export function transferPeers(ledger: readonly Row[]): Peers {
-  const groups: { [group: string]: Row[] } = {};
-  for (const row of ledger || []) {
+/**
+ * The rows sharing a `transfer_group`, two by two. A group that is not exactly
+ * a pair is no pair, and neither is one sheet row read twice. The one
+ * statement of what a pair is: the page's "from/to" and the balance curve
+ * both ask it.
+ */
+export function transferPairs<T extends Row>(rows: readonly T[]): [T, T][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows || []) {
     const group = text(row.transfer_group);
     if (!group) continue;
-    (groups[group] ||= []).push(row);
+    const members = groups.get(group);
+    if (members) members.push(row);
+    else groups.set(group, [row]);
+  }
+  const pairs: [T, T][] = [];
+  for (const members of groups.values()) {
+    if (members.length === 2 && members[0]._row !== members[1]._row) pairs.push([members[0], members[1]]);
+  }
+  return pairs;
+}
+
+/** `transfer_group` → the other leg; a group that is not exactly a pair answers nothing. */
+export function transferPeers(ledger: readonly Row[]): Peers {
+  const partner = new Map<number, Row>();
+  for (const [a, b] of transferPairs(ledger)) {
+    partner.set(a._row, b);
+    partner.set(b._row, a);
   }
 
   return {
     of(row) {
-      const group = text(row.transfer_group);
-      const members = group ? groups[group] : null;
-      if (!members || members.length !== 2) return null;
-
-      const other = members[0]._row === row._row ? members[1] : members[0];
-      if (other._row === row._row) return null;
+      const other = partner.get(row._row);
+      if (!other || text(other.transfer_group) !== text(row.transfer_group)) return null;
 
       let amount = cellNumber(row.amount_base);
       if (amount === null) amount = cellNumber(row.amount);

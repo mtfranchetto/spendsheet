@@ -401,3 +401,35 @@ describe('net worth', () => {
     expect(series.find((point) => point.key === '2026-03-31')!.value).toBe(59250);
   });
 });
+
+describe('a transfer whose halves straddle the start of T12', () => {
+  // T12 starts on 12 October 2025. The money arrives at Bank on the 10th; the
+  // slower bank books it leaving on the 13th. One move, before the year began.
+  const slow: Values = { account_id: 's', name: 'Slow', kind: 'bank', currency: 'EUR', balance: 4000, include_in_net_worth: true, active: true };
+  const pair = { category: 'Transfer', type: 'transfer', in_reports: false, transfer_group: 'tr:p' };
+  const data = view([
+    row(2025, 6, 1, 5000),
+    row(2025, 10, 10, 300, pair),
+    row(2025, 10, 13, -300, { ...pair, account_id: 's', account_name: 'Slow' })
+  ], NOW, [BANK, slow]);
+
+  it('moves no net worth inside the year, by the figures or by the line', () => {
+    expect(data.netWorth).toMatchObject({ now: 14000, change: 0, before: 14000 });
+    expect(data.held.map((entry) => entry.change)).toEqual([0]);
+    expect(data.netWorth.series.find((point) => point.key === '2025-10-31')!.value).toBe(14000);
+  });
+
+  it('keeps each half on its own day when the money changes kind, so each kind changes when its balance did', () => {
+    const fund: Values = { account_id: 'f', name: 'Fund', kind: 'asset', currency: 'EUR', balance: 4000, include_in_net_worth: true, active: true };
+    const across = view([
+      row(2025, 6, 1, 5000),
+      row(2025, 10, 10, -300, pair),
+      row(2025, 10, 13, 300, { ...pair, account_id: 'f', account_name: 'Fund' })
+    ], NOW, [BANK, fund]);
+
+    const change = (kind: string) => across.held.find((entry) => entry.kind === kind)!.change;
+    expect(change('bank')).toBe(0);
+    expect(change('asset')).toBe(300);
+    expect(across.held.reduce((sum, entry) => sum + entry.change, 0)).toBe(across.netWorth.change);
+  });
+});
