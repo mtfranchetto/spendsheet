@@ -11,6 +11,7 @@
 
 import type { Cell } from '../sheets/records';
 import type { Row } from './book';
+import { isBlankCell } from './cells';
 import { MERCHANT_KEY_MAX_TOKENS, MERCHANT_LETTER_FOLDS, MERCHANT_NOISE_WORDS } from './schema';
 
 function foldLetters(value: string): string {
@@ -52,33 +53,48 @@ export function normalizeMerchant(description: Cell | undefined, counterparty: C
   return tokens.slice(0, MERCHANT_KEY_MAX_TOKENS).join(' ');
 }
 
-export type MemoryEntry = { key: string; category: string; subcategory: string; hits: number };
+/** `in`, `out`, or `''` for an entry written before memory kept directions apart. */
+export type Direction = 'in' | 'out' | '';
+export type MemoryEntry = { key: string; direction: Direction; category: string; subcategory: string; hits: number };
 export type Suggestion = { category: string; subcategory: string; from: string };
 export type SuggestionIndex = {
   entries: { entry: MemoryEntry; words: string[] }[];
   spread: { [word: string]: number };
 };
 
-/** `_memory` as key → entry; an entry with no category offers nothing and is dropped. */
-export function buildMemoryIndex(rows: readonly Row[]): { [key: string]: MemoryEntry } {
-  const byKey: { [key: string]: MemoryEntry } = {};
+/** Which way a row's money went, as `directionOf_` answers it. */
+export function directionOf(amount: Cell | undefined): Direction {
+  if (isBlankCell(amount)) return '';
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value === 0) return '';
+  return value > 0 ? 'in' : 'out';
+}
+
+/**
+ * `_memory`'s entries; one with no category offers nothing and is dropped.
+ * A merchant can hold one each way — `buildMemoryIndex_` argues why.
+ */
+export function buildMemoryIndex(rows: readonly Row[]): MemoryEntry[] {
+  const entries: MemoryEntry[] = [];
   for (const row of rows) {
     const key = String(row.merchant_key).trim().toLowerCase();
     if (!key) continue;
     const category = String(row.category || '');
     if (!category) continue;
-    byKey[key] = {
+    const direction = String(row.direction || '').trim().toLowerCase();
+    entries.push({
       key,
+      direction: direction === 'in' || direction === 'out' ? direction : '',
       category,
       subcategory: String(row.subcategory || ''),
       hits: Number(row.hits) || 0
-    };
+    });
   }
-  return byKey;
+  return entries;
 }
 
-export function suggestionIndex(memory: { [key: string]: MemoryEntry }): SuggestionIndex {
-  const entries = Object.keys(memory || {}).map((key) => ({ entry: memory[key], words: key.split(' ') }));
+export function suggestionIndex(memory: readonly MemoryEntry[]): SuggestionIndex {
+  const entries = (memory || []).map((entry) => ({ entry, words: entry.key.split(' ') }));
   const spread: { [word: string]: number } = {};
   for (const item of entries) for (const word of item.words) spread[word] = (spread[word] || 0) + 1;
   return { entries, spread };
@@ -104,8 +120,12 @@ export function suggestionIndex(memory: { [key: string]: MemoryEntry }): Suggest
  * it appears in, so `rema kobenhavn` prefers `rema aarhus` to another shop in
  * Copenhagen. Ties go to the entry with more hits — the one you have confirmed
  * most.
+ *
+ * **An entry learned the other way is not a candidate.** What a shop sells you
+ * says nothing about what its refund is, so a credit is only offered what
+ * memory learned from credits.
  */
-export function suggestCategory(merchantKey: string, index: SuggestionIndex | null): Suggestion | null {
+export function suggestCategory(merchantKey: string, index: SuggestionIndex | null, direction: Direction = ''): Suggestion | null {
   const key = String(merchantKey || '').trim();
   if (!key || !index) return null;
 
@@ -117,6 +137,7 @@ export function suggestCategory(merchantKey: string, index: SuggestionIndex | nu
   let bestScore = 0;
   for (const item of index.entries) {
     if (item.entry.key === key || item.words[0] !== lead) continue;
+    if (direction && item.entry.direction && item.entry.direction !== direction) continue;
     let score = 0;
     for (const word of item.words) if (words[word]) score += 1 / index.spread[word];
     if (!best || score > bestScore || (score === bestScore && item.entry.hits > best.hits)) {

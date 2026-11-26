@@ -13,7 +13,7 @@ import { configNumber } from './book';
 import { cellNumber, isBlankCell, isTruthyCell, text } from './cells';
 import { dayKey, dayOf, serialOf, type Clock } from './days';
 import { appHealth } from './health';
-import { buildMemoryIndex, suggestCategory, suggestionIndex } from './merchant';
+import { buildMemoryIndex, directionOf, suggestCategory, suggestionIndex } from './merchant';
 import {
   aggregate, analytics, baseCurrency, isConfirmedRow, lastMonthToDate, matchesFilters,
   netWorthNow, netWorthWalk, recentBalanceTrend, recordForPage, recordsPage, resolveWindow, transferPeers,
@@ -237,7 +237,7 @@ export function appReviewQueue(book: Book, ledger: readonly LedgerRow[]) {
   return queue.map((row) => {
     const record: ReturnType<typeof recordForPage> & { suggestion?: ReturnType<typeof suggestCategory> } =
       recordForPage(row, peers, book.timeZone);
-    if (index && unclassified(row)) record.suggestion = suggestCategory(record.merchantKey, index);
+    if (index && unclassified(row)) record.suggestion = suggestCategory(record.merchantKey, index, directionOf(row.amount));
     return record;
   });
 }

@@ -26,6 +26,17 @@
  * you typed outranks any number of ticks, unless your corrections for that
  * merchant disagree; `deriveMemory_` argues both halves.
  *
+ * **A match has to agree with which way the money went.** A merchant key says
+ * who, never which way: Zalando sells you shoes and refunds them under the same
+ * key. A credit filed under an expense category reads as spending on every page
+ * that asks the row's `type`, while every total counts it as income by its
+ * sign — so a candidate whose category's `kind` contradicts the row's sign is
+ * passed over, rule or memory alike, and the row falls to the next one or to
+ * the review queue. And memory learns each direction on its own entry, because
+ * one merchant-wide entry would let a single refund you corrected to Income
+ * decide every purchase there — a correction decides its merchant outright.
+ * `kind` transfer and a row with no sign are never gated.
+ *
  * `category_source` names the *kind* of thing that decided — `memory`, `mcc`,
  * `rule` — rather than where it sat, because that is the question someone
  * reading a row is actually asking and a priority number does not answer it.
@@ -193,11 +204,13 @@ function readMemoryRecords_(ss) {
 }
 
 /**
- * Memory as a flat key → entry map.
+ * Memory as key → `{ in, out, any }`, one entry per direction.
  *
  * One exact lookup is the whole matching story, which is what lets memory sit
  * inside the rule loop at a priority without costing a scan: the entry either
- * exists under this row's key or there is nothing to offer.
+ * exists under this row's key and direction or there is nothing to offer.
+ * `any` holds an entry with no direction — one written before memory kept
+ * them apart, until the nightly rebuild replaces it.
  *
  * An entry with no category is dropped rather than stored — offering it would
  * categorise a row as blank while reporting `memory` as the reason.
@@ -212,7 +225,9 @@ function buildMemoryIndex_(records) {
     var category = String(row.category || '');
     if (!category) return;
 
-    byKey[key] = {
+    var direction = String(row.direction || '').trim().toLowerCase();
+    var slot = byKey[key] = byKey[key] || {};
+    slot[direction === 'in' || direction === 'out' ? direction : 'any'] = {
       key: key,
       category: category,
       subcategory: String(row.subcategory || ''),
@@ -221,6 +236,36 @@ function buildMemoryIndex_(records) {
   });
 
   return byKey;
+}
+
+/**
+ * The entry memory offers this key going this way. An entry learned the other
+ * way offers nothing; a row with no sign takes whatever there is.
+ */
+function rememberedFor_(memory, key, direction) {
+  var slot = key ? memory[key] : null;
+  if (!slot) return null;
+  if (!direction) return slot.any || slot.out || slot.in || null;
+  return slot[direction] || slot.any || null;
+}
+
+/**
+ * `in`, `out`, or `''` for a row with no sign. `amount` is stored signed — the
+ * sign is applied once, from `credit_debit_indicator`, when the row is built.
+ */
+function directionOf_(record) {
+  if (isBlankCell_(record.amount)) return '';
+  var amount = Number(record.amount);
+  if (!isFinite(amount) || amount === 0) return '';
+  return amount > 0 ? 'in' : 'out';
+}
+
+/** Whether `category` may be the answer for a row going `direction`. */
+function fitsDirection_(category, direction, context) {
+  var kind = (context.kindByCategory || {})[String(category || '')];
+  if (direction === 'in') return kind !== TX_TYPE.EXPENSE;
+  if (direction === 'out') return kind !== TX_TYPE.INCOME;
+  return true;
 }
 
 /**
@@ -310,7 +355,9 @@ function guessCategory_(record, context) {
   }
 
   var key = normalizeMerchant(record.description, record.counterparty);
-  var remembered = key ? context.memory[key] : null;
+  var direction = directionOf_(record);
+  var remembered = rememberedFor_(context.memory, key, direction);
+  if (remembered && !fitsDirection_(remembered.category, direction, context)) remembered = null;
   var winner = null;
 
   for (var i = 0; i < context.rules.length; i++) {
@@ -323,6 +370,7 @@ function guessCategory_(record, context) {
     }
 
     if (!ruleMatches_(record, rule)) continue;
+    if (!fitsDirection_(rule.category, direction, context)) continue;
     winner = adoptMatch_(winner, rule, ruleSource_(rule));
     if (matchIsComplete_(winner)) return winner;
   }
@@ -946,11 +994,12 @@ function memoryUnchanged_(current, entries) {
   current = current || [];
   if (current.length !== entries.length) return false;
 
+  var slot = function (row) { return cellText_(row.direction) + ' ' + cellText_(row.merchant_key); };
   var byKey = {};
-  current.forEach(function (row) { byKey[cellText_(row.merchant_key)] = row; });
+  current.forEach(function (row) { byKey[slot(row)] = row; });
 
   return entries.every(function (entry) {
-    var row = byKey[entry.merchant_key];
+    var row = byKey[slot(entry)];
     return Boolean(row) &&
       cellText_(row.category) === cellText_(entry.category) &&
       cellText_(row.subcategory) === cellText_(entry.subcategory) &&
@@ -1040,8 +1089,11 @@ function deriveMemory_(records, inherited) {
     considered++;
     var subcategory = effectiveSubcategory_(record);
     var date = record.booking_date instanceof Date ? record.booking_date : null;
-    var bucket = buckets[key] = buckets[key] ||
-      { key: key, categories: {}, lastSeen: null, corrections: [] };
+    // Each direction is its own merchant here — see the header.
+    var direction = directionOf_(record);
+    var slot = direction + ' ' + key;
+    var bucket = buckets[slot] = buckets[slot] ||
+      { key: key, direction: direction, categories: {}, lastSeen: null, corrections: [] };
 
     if (correctionYouTyped_(record, inherited)) {
       bucket.corrections.push({ category: category, subcategory: subcategory, date: date });
@@ -1072,7 +1124,8 @@ function deriveMemory_(records, inherited) {
 
   entries.sort(function (a, b) {
     if (b.hits !== a.hits) return b.hits - a.hits;
-    return a.merchant_key < b.merchant_key ? -1 : 1;
+    if (a.merchant_key !== b.merchant_key) return a.merchant_key < b.merchant_key ? -1 : 1;
+    return a.direction < b.direction ? -1 : 1;
   });
 
   return { entries: entries, considered: considered };
@@ -1081,7 +1134,7 @@ function deriveMemory_(records, inherited) {
 /** One merchant's tallies → its entry. The rules are argued on `deriveMemory_`. */
 function memoryEntry_(bucket) {
   var corrections = bucket.corrections;
-  var entry = { merchant_key: bucket.key, last_seen: bucket.lastSeen || '' };
+  var entry = { merchant_key: bucket.key, direction: bucket.direction, last_seen: bucket.lastSeen || '' };
 
   if (corrections.length && correctionsAgree_(corrections)) {
     var counts = {};
@@ -1252,7 +1305,7 @@ function effectiveSubcategory_(record) {
 
 function describeMemoryPlan_(derived) {
   var top = derived.entries.slice(0, 8).map(function (entry) {
-    return '  ' + entry.merchant_key + ' → ' + entry.category +
+    return '  ' + entry.merchant_key + (entry.direction === 'in' ? ' (money in)' : '') + ' → ' + entry.category +
       (entry.subcategory ? ' / ' + entry.subcategory : '') + '  (' + entry.hits + ')';
   });
 

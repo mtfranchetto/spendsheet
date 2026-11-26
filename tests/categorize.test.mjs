@@ -113,8 +113,28 @@ describe('memory lookup', () => {
     const memory = index([
       { merchant_key: 'esselunga', category: 'Food & Drink', subcategory: 'Groceries', hits: 40 }
     ]);
-    expect(memory.esselunga.category).toBe('Food & Drink');
-    expect(memory.esselunga.subcategory).toBe('Groceries');
+    expect(memory.esselunga.any.category).toBe('Food & Drink');
+    expect(memory.esselunga.any.subcategory).toBe('Groceries');
+  });
+
+  it('keeps one entry each way, and offers a row only the entry going its way', () => {
+    // What a shop sells you and what it refunds are two answers under one key.
+    const memory = index([
+      { merchant_key: 'zalando', category: 'Shopping', subcategory: 'Clothes', hits: 12, direction: 'out' },
+      { merchant_key: 'zalando', category: 'Income', subcategory: 'Refund', hits: 2, direction: 'in' }
+    ]);
+    expect(ctx.rememberedFor_(memory, 'zalando', 'out').category).toBe('Shopping');
+    expect(ctx.rememberedFor_(memory, 'zalando', 'in').category).toBe('Income');
+  });
+
+  it('offers nothing a direction never taught, and an undirected entry to both', () => {
+    const memory = index([
+      { merchant_key: 'zalando', category: 'Shopping', subcategory: '', hits: 12, direction: 'out' },
+      { merchant_key: 'esselunga', category: 'Food & Drink', subcategory: '', hits: 4 }
+    ]);
+    expect(ctx.rememberedFor_(memory, 'zalando', 'in')).toBeNull();
+    expect(ctx.rememberedFor_(memory, 'esselunga', 'in').category).toBe('Food & Drink');
+    expect(ctx.rememberedFor_(memory, 'esselunga', 'out').category).toBe('Food & Drink');
   });
 
   it('matches a key whole, so a longer key is a different merchant', () => {
@@ -131,7 +151,7 @@ describe('memory lookup', () => {
     const memory = index([
       { merchant_key: '  Q8 Rivoli ', category: 'Transport', subcategory: 'Fuel', hits: 9 }
     ]);
-    expect(memory['q8 rivoli'].category).toBe('Transport');
+    expect(memory['q8 rivoli'].any.category).toBe('Transport');
   });
 
   it('skips an entry with no category, which would categorise a row as blank', () => {
@@ -385,6 +405,62 @@ describe('the cascade order', () => {
   });
 });
 
+describe('a match agrees with which way the money went', () => {
+  const context = (memory) => ({
+    memory: ctx.buildMemoryIndex_(memory),
+    memoryPriority: 5,
+    rules: [
+      { priority: 100, field: 'description', match_type: 'contains', pattern: 'ZALANDO',
+        category: 'Shopping', subcategory: 'Clothes', enabled: true },
+      { priority: 110, field: 'description', match_type: 'contains', pattern: 'STIPENDIO',
+        category: 'Income', subcategory: 'Salary', enabled: true }
+    ],
+    kindByCategory: { Shopping: 'expense', Income: 'income', Transfer: 'transfer' },
+    transferWindowDays: 4
+  });
+  const record = (over) => Object.assign({
+    description: '', counterparty: '', mcc: '', account_id: 'a', account_name: 'A',
+    category_override: '', bank_transaction_code: '', _transferGroup: ''
+  }, over);
+  const purchases = [{ merchant_key: 'zalando', category: 'Shopping', subcategory: 'Clothes', hits: 12, direction: 'out' }];
+
+  it('does not file a refund under the category of what was bought', () => {
+    // The bug: memory knew Zalando as Shopping, so its refund arrived as an
+    // expense — green on every total, `expense` on the row.
+    const verdict = ctx.categorizeOne_(record({ counterparty: 'Zalando', amount: 39.9 }), context(purchases));
+    expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.UNCLASSIFIED);
+  });
+
+  it('passes over an undirected entry and a rule that contradict the sign', () => {
+    const legacy = [{ merchant_key: 'zalando', category: 'Shopping', subcategory: 'Clothes', hits: 12 }];
+    const verdict = ctx.categorizeOne_(
+      record({ counterparty: 'Zalando', description: 'ZALANDO RIMBORSO', amount: 39.9 }), context(legacy));
+    expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.UNCLASSIFIED);
+  });
+
+  it('files a refund the way you corrected refunds there, and purchases as before', () => {
+    const memory = purchases.concat([
+      { merchant_key: 'zalando', category: 'Income', subcategory: 'Refund', hits: 1, direction: 'in' }
+    ]);
+    expect(ctx.categorizeOne_(record({ counterparty: 'Zalando', amount: 39.9 }), context(memory)).category)
+      .toBe('Income');
+    expect(ctx.categorizeOne_(record({ counterparty: 'Zalando', amount: -39.9 }), context(memory)).category)
+      .toBe('Shopping');
+  });
+
+  it('does not file money out under an income category', () => {
+    const verdict = ctx.categorizeOne_(record({ description: 'STIPENDIO STORNO', amount: -100 }), context([]));
+    expect(verdict.source).toBe(ctx.CATEGORY_SOURCE.UNCLASSIFIED);
+  });
+
+  it('gates nothing on a row with no sign, nor a category it has no kind for', () => {
+    expect(ctx.categorizeOne_(record({ counterparty: 'Zalando', amount: '' }), context(purchases)).category)
+      .toBe('Shopping');
+    const unknown = context([{ merchant_key: 'zalando', category: 'Mystery', subcategory: '', hits: 1, direction: 'in' }]);
+    expect(ctx.categorizeOne_(record({ counterparty: 'Zalando', amount: 5 }), unknown).category).toBe('Mystery');
+  });
+});
+
 describe('where memory sits in the list', () => {
   it('defaults to 5, which is below the lowest seed rule', () => {
     const lowest = Math.min(...ctx.DEFAULT_RULES.map((row) => row[0]));
@@ -418,6 +494,20 @@ describe('deriveMemory_', () => {
     // output, and one wrong guess about a frequent merchant reinforces itself.
     const derived = ctx.deriveMemory_([row({ confirmed: false })]);
     expect(derived.entries).toHaveLength(0);
+  });
+
+  it('learns each direction on its own entry, so one corrected refund leaves purchases alone', () => {
+    // A correction decides its merchant outright. One merchant-wide entry would
+    // hand every Zalando purchase to the refund you filed as Income.
+    const derived = ctx.deriveMemory_([
+      row({ description: 'ZALANDO', amount: -50, category: 'Shopping', subcategory: 'Clothes' }),
+      row({ description: 'ZALANDO', amount: -20, category: 'Shopping', subcategory: 'Clothes' }),
+      row({ description: 'ZALANDO', amount: 50, category: '', category_override: 'Income', subcategory: 'Refund' })
+    ]);
+    const by = Object.fromEntries(derived.entries.map((e) => [e.direction, e]));
+    expect(derived.entries).toHaveLength(2);
+    expect(by.out).toMatchObject({ merchant_key: 'zalando', category: 'Shopping', hits: 2, decidedBy: 'vote' });
+    expect(by.in).toMatchObject({ merchant_key: 'zalando', category: 'Income', decidedBy: 'correction' });
   });
 
   it('counts an override as confirmation without the tick', () => {
@@ -755,6 +845,14 @@ describe('memoryUnchanged_', () => {
     expect(ctx.memoryUnchanged_([entry()], [entry({ hits: 4 })])).toBe(false);
     expect(ctx.memoryUnchanged_([entry()], [entry(), entry({ merchant_key: 'conad' })])).toBe(false);
     expect(ctx.memoryUnchanged_([entry(), entry({ merchant_key: 'conad' })], [entry()])).toBe(false);
+  });
+
+  it('tells the two directions of one merchant apart', () => {
+    // A tab written before memory kept directions has none, so the first
+    // rebuild after it rewrites rather than calling it current.
+    expect(ctx.memoryUnchanged_([entry()], [entry({ direction: 'out' })])).toBe(false);
+    const both = [entry({ direction: 'out' }), entry({ direction: 'in', category: 'Income' })];
+    expect(ctx.memoryUnchanged_(both.slice().reverse(), both)).toBe(true);
   });
 });
 

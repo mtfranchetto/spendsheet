@@ -46,7 +46,7 @@ describe('a batchGet, as a book', () => {
 
   it('keeps only memory rows that have a key', () => {
     const book = bookFromBatch({
-      valueRanges: [{ range: "'_memory'!A1:E", values: [['merchant_key'], ['coop', 'Food'], ['  ', 'Food'], ['esselunga', 'Food']] }]
+      valueRanges: [{ range: "'_memory'!A1:F", values: [['merchant_key'], ['coop', 'Food'], ['  ', 'Food'], ['esselunga', 'Food']] }]
     }, 'Europe/Rome');
     expect(book.memory.map((row) => row.merchant_key)).toEqual(['coop', 'esselunga']);
   });
