@@ -43,15 +43,17 @@ describe('suggesting a category for a merchant memory has never seen', () => {
     ])?.from).toBe('amazon eu');
   });
 
-  it('offers a credit only what memory learned from credits', () => {
+  it('offers a credit no expense category, and a debit no income one', () => {
+    const kinds: Record<string, string> = { Shopping: 'expense', Income: 'income' };
     const entries = [
-      { _row: 0, merchant_key: 'zalando de', category: 'Shopping', subcategory: 'Clothes', hits: 30, direction: 'out' },
-      { _row: 0, merchant_key: 'zalando lounge', category: 'Income', subcategory: 'Refund', hits: 1, direction: 'in' }
+      entry('zalando de', 'Shopping', 'Clothes', 30),
+      entry('zalando lounge', 'Income', 'Refund', 1)
     ];
     const index = suggestionIndex(buildMemoryIndex(entries));
-    expect(suggestCategory('zalando it', index, 'in')?.from).toBe('zalando lounge');
-    expect(suggestCategory('zalando it', index, 'out')?.from).toBe('zalando de');
-    expect(suggestCategory('zalando it', suggestionIndex(buildMemoryIndex(entries.slice(0, 1))), 'in')).toBeNull();
+    const kindOf = (category: string) => kinds[category];
+    expect(suggestCategory('zalando it', index, 'in', kindOf)?.from).toBe('zalando lounge');
+    expect(suggestCategory('zalando it', index, 'out', kindOf)?.from).toBe('zalando de');
+    expect(suggestCategory('zalando it', suggestionIndex(buildMemoryIndex(entries.slice(0, 1))), 'in', kindOf)).toBeNull();
   });
 
   it('reads the direction off the amount, and none off a blank or zero', () => {

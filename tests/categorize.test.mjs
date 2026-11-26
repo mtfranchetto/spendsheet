@@ -510,6 +510,18 @@ describe('deriveMemory_', () => {
     expect(by.in).toMatchObject({ merchant_key: 'zalando', category: 'Income', decidedBy: 'correction' });
   });
 
+  it('does not learn a row filed against its sign, which the cascade would refuse', () => {
+    // Years of refunds imported as Shopping would otherwise rebuild an entry
+    // every night that no refund could ever be answered from.
+    const kinds = { Shopping: 'expense', Income: 'income' };
+    const derived = ctx.deriveMemory_([
+      row({ description: 'ZALANDO', amount: 50, category: 'Shopping' }),
+      row({ description: 'ZALANDO', amount: 30, category: 'Shopping' }),
+      row({ description: 'ZALANDO', amount: -20, category: 'Shopping' })
+    ], {}, kinds);
+    expect(derived.entries.map((e) => [e.direction, e.category])).toEqual([['out', 'Shopping']]);
+  });
+
   it('counts an override as confirmation without the tick', () => {
     const derived = ctx.deriveMemory_([
       row({ confirmed: false, category: '', category_override: 'Housing' })
@@ -984,6 +996,23 @@ describe('running the cascade over the sheet', () => {
     c.recategorizeAll();
     // The refund has no entry learned its way, so it waits for you.
     expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[1].category_source).toBe('unclassified');
+  });
+
+  it('moves a column of yours aside rather than writing direction over it', () => {
+    const { c } = book([row(1, { description: 'ZALANDO', amount: -40, category_override: 'Shopping' })]);
+    const memory = c.__spreadsheet.getSheetByName('_memory');
+    memory.deleteColumns(6, memory.getMaxColumns() - 5);
+    memory.getRange(1, 1, 1, 6).setValues([c.MEMORY_COLUMNS.slice(0, 5).concat(['note'])]);
+    memory.getRange(2, 1, 1, 6).setValues([['zalando', 'Shopping', '', 3, '', 'mine']]);
+
+    c.learnScheduled();
+
+    expect(memory.getRange(1, 1, 1, 7).getValues()[0]).toEqual(c.MEMORY_COLUMNS.concat(['note']));
+    expect(memory.getRange(2, 7).getValue()).toBe('mine');
+    // And a second night finds the slot ours and inserts nothing more.
+    memory.getRange(2, 1).setValue('stale');
+    c.learnScheduled();
+    expect(memory.getRange(1, 7).getValue()).toBe('note');
   });
 
   it('does not rewrite memory from the menu while a sync is running', () => {

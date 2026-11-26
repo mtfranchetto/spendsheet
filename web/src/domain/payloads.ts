@@ -233,11 +233,19 @@ export function appReviewQueue(book: Book, ledger: readonly LedgerRow[]) {
 
   const unclassified = (row: Row) => String(row.category_source) === CATEGORY_SOURCE.UNCLASSIFIED;
   const index = queue.some(unclassified) ? suggestionIndex(buildMemoryIndex(book.memory)) : null;
+  const kinds = new Map<string, string>();
+  for (const row of book.categories) {
+    const name = String(row.category || '');
+    if (name && !kinds.has(name)) kinds.set(name, String(row.kind || ''));
+  }
+  const kindOf = (category: string) => kinds.get(category);
 
   return queue.map((row) => {
     const record: ReturnType<typeof recordForPage> & { suggestion?: ReturnType<typeof suggestCategory> } =
       recordForPage(row, peers, book.timeZone);
-    if (index && unclassified(row)) record.suggestion = suggestCategory(record.merchantKey, index, directionOf(row.amount));
+    if (index && unclassified(row)) {
+      record.suggestion = suggestCategory(record.merchantKey, index, directionOf(row.amount), kindOf);
+    }
     return record;
   });
 }

@@ -276,7 +276,10 @@ describe('the schema, copied into schema.ts', () => {
     const widths = {
       transactions: c.TX_COLUMNS, accounts: c.ACCOUNT_COLUMNS, categories: c.CATEGORY_COLUMNS,
       labels: c.LABEL_COLUMNS, pending: c.PENDING_COLUMNS, _status: c.STATUS_COLUMNS,
-      _runs: c.RUN_COLUMNS, _config: ['key', 'value'], _memory: c.MEMORY_COLUMNS,
+      _runs: c.RUN_COLUMNS, _config: ['key', 'value'],
+      // Everything before `direction`, the column a book gains only at its
+      // next rebuild — see READ_RANGES.
+      _memory: c.MEMORY_COLUMNS.slice(0, c.MEMORY_COLUMNS.indexOf('direction')),
       _monitor: c.MONITOR_COLUMNS, _removed: ['uid']
     };
     expect(Object.keys(READ_RANGES).sort()).toEqual(Object.keys(widths).sort());

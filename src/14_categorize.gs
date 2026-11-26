@@ -874,7 +874,7 @@ function learnFromCorrections() {
       'Try again when it has finished.', ui.ButtonSet.OK);
     return null;
   }
-  ss.toast(plan.derived.entries.length + ' merchants learned from ' + plan.derived.considered +
+  ss.toast(merchantCount_(plan.derived.entries) + ' merchants learned from ' + plan.derived.considered +
     ' confirmed rows.', 'Memory rebuilt', 10);
   return plan.derived;
 }
@@ -975,7 +975,7 @@ function planMemory_() {
   var inherited = inheritedOverrides_(records, removed,
     configNumber_(readConfig_(), 'duplicate_window_days'));
 
-  var derived = deriveMemory_(records, inherited);
+  var derived = deriveMemory_(records, inherited, readCategoryKinds_(ss));
   if (!derived.entries.length) {
     return {
       error: 'Nothing to learn from yet.\n\n' + derived.considered + ' rows were confirmed, and none ' +
@@ -1072,9 +1072,11 @@ function sameMoment_(a, b) {
  * built from forty consistent rows. `decidedBy` says which rule applied, for
  * the preview; it is not a column, so it never reaches the tab.
  *
- * Pure: takes records, returns entries. No sheet, so it is tested directly.
+ * Pure: takes records, and the category → kind map `readCategoryKinds_` reads,
+ * and returns entries. No sheet, so it is tested directly.
  */
-function deriveMemory_(records, inherited) {
+function deriveMemory_(records, inherited, kindByCategory) {
+  var kinds = { kindByCategory: kindByCategory || {} };
   var buckets = {};
   var considered = 0;
 
@@ -1098,8 +1100,12 @@ function deriveMemory_(records, inherited) {
     considered++;
     var subcategory = effectiveSubcategory_(record);
     var date = record.booking_date instanceof Date ? record.booking_date : null;
-    // Each direction is its own merchant here — see the header.
+    // Each direction is its own merchant here — see the header. A row filed
+    // against its sign (a refund ticked as Shopping, or imported that way)
+    // would teach an entry the cascade must refuse every time, so a refund
+    // there could never be answered from memory. It is left out instead.
     var direction = directionOf_(record);
+    if (!fitsDirection_(category, direction, kinds)) return;
     var slot = direction + ' ' + key;
     var bucket = buckets[slot] = buckets[slot] ||
       { key: key, direction: direction, categories: {}, lastSeen: null, corrections: [] };
@@ -1312,6 +1318,13 @@ function effectiveSubcategory_(record) {
   return isBlankCell_(record.subcategory_auto) ? '' : String(record.subcategory_auto);
 }
 
+/** One merchant can hold an entry each way, so entries over-count merchants. */
+function merchantCount_(entries) {
+  var seen = {};
+  entries.forEach(function (entry) { seen[entry.merchant_key] = true; });
+  return Object.keys(seen).length;
+}
+
 function describeMemoryPlan_(derived) {
   var top = derived.entries.slice(0, 8).map(function (entry) {
     return '  ' + entry.merchant_key + (entry.direction === 'in' ? ' (money in)' : '') + ' → ' + entry.category +
@@ -1330,7 +1343,7 @@ function describeMemoryPlan_(derived) {
 
   var lines = [
     'Rebuild ' + TABS.MEMORY + ' from ' + derived.considered + ' confirmed rows.',
-    derived.entries.length + ' merchants, most frequent first:',
+    merchantCount_(derived.entries) + ' merchants, most frequent first:',
     ''
   ].concat(top);
 
@@ -1352,15 +1365,14 @@ function describeMemoryPlan_(derived) {
 }
 
 /**
- * Replaces the tab's rows, widening it first if the schema has outgrown it.
+ * Replaces the tab's rows, first making room for any column the schema has
+ * grown since the tab was built.
  *
- * The header is written too, because the phone reads `_memory` at the full
- * schema width and a range past the grid fails its whole read. Widening here
- * rather than waiting for Setup means the nightly rebuild is enough.
+ * Here rather than waiting for Setup, so the nightly rebuild is enough to
+ * bring a book's memory up to the schema it is categorised by.
  */
 function writeMemory_(sheet, entries) {
-  var missing = MEMORY_COLUMNS.length - sheet.getMaxColumns();
-  if (missing > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), missing);
+  makeRoomInMemory_(sheet);
   sheet.getRange(1, 1, 1, MEMORY_COLUMNS.length).setValues([MEMORY_COLUMNS]);
 
   clearDataRows_(sheet, colIndex_(MEMORY_COLUMNS, 'merchant_key'), MEMORY_COLUMNS.length);
@@ -1369,6 +1381,36 @@ function writeMemory_(sheet, entries) {
   var rows = entries.map(function (entry) { return toRow_(MEMORY_COLUMNS, entry); });
   sheet.getRange(2, 1, rows.length, MEMORY_COLUMNS.length).setValues(rows);
   return rows.length;
+}
+
+/**
+ * Widens `_memory` to the schema, moving aside a column of yours in the way.
+ *
+ * Setup trims a new tab to its header, so a book built before a column joined
+ * the schema has a tab one short, and a column you added beside it sits in
+ * the slot the schema grows into. A slot with anything in it that is not
+ * already ours gets a fresh column inserted before it, as
+ * `makeRoomForNewColumns_` does for Setup; only the slots past the header the
+ * tab already has are considered, since an earlier one is ours by position.
+ */
+function makeRoomInMemory_(sheet) {
+  var width = Math.min(sheet.getMaxColumns(), MEMORY_COLUMNS.length);
+  var header = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var have = 0;
+  while (have < width && String(header[have]) === MEMORY_COLUMNS[have]) have++;
+
+  for (var c = have; c < MEMORY_COLUMNS.length; c++) {
+    if (c + 1 > sheet.getMaxColumns()) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), MEMORY_COLUMNS.length - c);
+      return;
+    }
+    var label = sheet.getRange(1, c + 1).getValue();
+    if (String(label) === MEMORY_COLUMNS[c]) continue;
+    var occupied = !isBlankCell_(label) || readColumn_(sheet, c + 1).some(function (value) {
+      return !isBlankCell_(value);
+    });
+    if (occupied) sheet.insertColumnBefore(c + 1);
+  }
 }
 
 // ---------------------------------------------------------------------------
