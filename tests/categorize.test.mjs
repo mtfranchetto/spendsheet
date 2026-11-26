@@ -961,6 +961,31 @@ describe('running the cascade over the sheet', () => {
     expect(second.category_source).toBe('memory');
   });
 
+  it('reads and then widens a memory tab built before it had a direction', () => {
+    // Setup trims a new tab to its header, so a book from before `direction`
+    // holds a five-column tab. The sync reads it every day, and the phone
+    // reads it at the full width — past the grid, which fails the whole read.
+    const { c, tx } = book([
+      row(1, { description: 'ZALANDO', amount: -40, category_override: 'Shopping' }),
+      row(2, { description: 'ZALANDO', amount: 40 })
+    ]);
+    const memory = c.__spreadsheet.getSheetByName('_memory');
+    memory.deleteColumns(6, memory.getMaxColumns() - 5);
+    memory.getRange(1, 1, 1, 5).setValues([c.MEMORY_COLUMNS.slice(0, 5)]);
+    memory.getRange(2, 1, 1, 5).setValues([['zalando', 'Shopping', '', 3, '']]);
+
+    expect(c.readMemoryRecords_(c.__spreadsheet)).toHaveLength(1);
+    c.learnScheduled();
+
+    expect(memory.getMaxColumns()).toBeGreaterThanOrEqual(c.MEMORY_COLUMNS.length);
+    expect(memory.getRange(1, 1, 1, c.MEMORY_COLUMNS.length).getValues()[0]).toEqual(c.MEMORY_COLUMNS);
+    expect(c.readMemoryRecords_(c.__spreadsheet).map((r) => r.direction)).toEqual(['out']);
+
+    c.recategorizeAll();
+    // The refund has no entry learned its way, so it waits for you.
+    expect(c.readRecords_(tx, c.TX_COLUMNS, 1)[1].category_source).toBe('unclassified');
+  });
+
   it('does not rewrite memory from the menu while a sync is running', () => {
     const { c } = book([row(1, { description: 'BAR DA GINO', category_override: 'Food & Drink' })]);
     c.__setLockHeld(true);

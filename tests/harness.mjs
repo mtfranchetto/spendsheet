@@ -409,6 +409,15 @@ class FakeSheet {
     return this;
   }
 
+  /** Sheets requires `afterPosition` to be a column the sheet has. */
+  insertColumnsAfter(afterPosition, howMany) {
+    if (afterPosition < 1 || afterPosition > this.maxColumns) {
+      throw new Error('Those columns are out of bounds.');
+    }
+    for (let i = 0; i < howMany; i++) this.insertColumnBefore(afterPosition + 1);
+    return this;
+  }
+
   /**
    * Shifts values, formulas and notes right, the way `makeRoomForNewColumns_`
    * needs: it inserts a slot for a column the schema has grown into, and a

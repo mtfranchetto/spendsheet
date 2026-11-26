@@ -196,10 +196,19 @@ function buildCascadeContext_(config) {
   };
 }
 
+/**
+ * `_memory`'s rows, read no wider than the tab is.
+ *
+ * Setup trims a new tab to its header, so a book built before a column joined
+ * `MEMORY_COLUMNS` holds a tab one column short until something widens it —
+ * `writeMemory_` does, on the next rebuild. Reading past the edge of the grid
+ * is refused, and this runs inside every sync.
+ */
 function readMemoryRecords_(ss) {
   var sheet = ss.getSheetByName(TABS.MEMORY);
   if (!sheet) return [];
-  return readRecords_(sheet, MEMORY_COLUMNS, colIndex_(MEMORY_COLUMNS, 'merchant_key'))
+  var columns = MEMORY_COLUMNS.slice(0, Math.min(MEMORY_COLUMNS.length, sheet.getMaxColumns()));
+  return readRecords_(sheet, columns, colIndex_(MEMORY_COLUMNS, 'merchant_key'))
     .filter(function (row) { return String(row.merchant_key || '').trim(); });
 }
 
@@ -1342,7 +1351,18 @@ function describeMemoryPlan_(derived) {
   return lines.join('\n');
 }
 
+/**
+ * Replaces the tab's rows, widening it first if the schema has outgrown it.
+ *
+ * The header is written too, because the phone reads `_memory` at the full
+ * schema width and a range past the grid fails its whole read. Widening here
+ * rather than waiting for Setup means the nightly rebuild is enough.
+ */
 function writeMemory_(sheet, entries) {
+  var missing = MEMORY_COLUMNS.length - sheet.getMaxColumns();
+  if (missing > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), missing);
+  sheet.getRange(1, 1, 1, MEMORY_COLUMNS.length).setValues([MEMORY_COLUMNS]);
+
   clearDataRows_(sheet, colIndex_(MEMORY_COLUMNS, 'merchant_key'), MEMORY_COLUMNS.length);
   if (!entries.length) return 0;
 
