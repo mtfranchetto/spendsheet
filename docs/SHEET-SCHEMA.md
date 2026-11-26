@@ -265,9 +265,9 @@ There is deliberately **no dropdown** on `transactions.labels`. A list rule woul
 
 One caveat, because the report matches by wildcard: **a label that is a substring of another counts both.** `kids` would include `kids-school`. Keep label names distinct — the phone's label filter matches whole names and so disagrees with this tab, with the tab over-counting. Adding a label is [CATEGORIES.md](CATEGORIES.md#adding-a-label).
 
-**`_memory`** — `merchant_key` · `category` · `subcategory` · `hits` · `last_seen`. The learned table, and the workhorse of the cascade. Built from your confirmed history every night at `learn_hour`, and on demand by **Learn from corrections**. A night on which nothing changed writes nothing.
+**`_memory`** — `merchant_key` · `category` · `subcategory` · `hits` · `last_seen` · `direction`. The learned table, and the workhorse of the cascade. Built from your confirmed history every night at `learn_hour`, and on demand by **Learn from corrections**. A night on which nothing changed writes nothing.
 
-`_memory` is **derived and replaced wholesale**, not merged. A categorisation you want to *impose* belongs in `rules`, which is yours and is never rewritten. `hits` is the count behind the answer given, not the number of times the merchant was seen — twenty rows split 11/9 is not a twenty-row certainty, and the column says so. For a merchant filed by a correction you typed, `hits` counts your corrections, which is usually a small number standing in for a deliberate one. [How memory decides](CATEGORIES.md#how-memory-decides).
+`_memory` is **derived and replaced wholesale**, not merged. A categorisation you want to *impose* belongs in `rules`, which is yours and is never rewritten. `hits` is the count behind the answer given, not the number of times the merchant was seen — twenty rows split 11/9 is not a twenty-row certainty, and the column says so. For a merchant filed by a correction you typed, `hits` counts your corrections, which is usually a small number standing in for a deliberate one. `direction` is `in` or `out`: a merchant you both buy from and get refunds from has one entry each way. [How memory decides](CATEGORIES.md#how-memory-decides).
 
 See **[CATEGORIES.md](CATEGORIES.md)** for the cascade itself.
 

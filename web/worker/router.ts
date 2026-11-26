@@ -105,6 +105,8 @@ export const READ_RANGES: Record<string, string> = {
   _runs: "'_runs'!A1:K",
   // Key and value; the description is prose nothing reads.
   _config: "'_config'!A1:B",
+  // Not `direction`: nothing here reads it, and a book gains it only at its
+  // next memory rebuild — a range past the grid fails the whole read.
   _memory: "'_memory'!A1:E",
   _monitor: "'_monitor'!A1:B",
   // The uid column only: the row-loss check is the one reader, and it asks

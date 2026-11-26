@@ -26,6 +26,17 @@
  * you typed outranks any number of ticks, unless your corrections for that
  * merchant disagree; `deriveMemory_` argues both halves.
  *
+ * **A match has to agree with which way the money went.** A merchant key says
+ * who, never which way: Zalando sells you shoes and refunds them under the same
+ * key. A credit filed under an expense category reads as spending on every page
+ * that asks the row's `type`, while every total counts it as income by its
+ * sign — so a candidate whose category's `kind` contradicts the row's sign is
+ * passed over, rule or memory alike, and the row falls to the next one or to
+ * the review queue. And memory learns each direction on its own entry, because
+ * one merchant-wide entry would let a single refund you corrected to Income
+ * decide every purchase there — a correction decides its merchant outright.
+ * `kind` transfer and a row with no sign are never gated.
+ *
  * `category_source` names the *kind* of thing that decided — `memory`, `mcc`,
  * `rule` — rather than where it sat, because that is the question someone
  * reading a row is actually asking and a priority number does not answer it.
@@ -185,19 +196,30 @@ function buildCascadeContext_(config) {
   };
 }
 
+/**
+ * `_memory`'s rows, read no wider than the tab is.
+ *
+ * Setup trims a new tab to its header, so a book built before a column joined
+ * `MEMORY_COLUMNS` holds a tab one column short until something widens it —
+ * `writeMemory_` does, on the next rebuild. Reading past the edge of the grid
+ * is refused, and this runs inside every sync.
+ */
 function readMemoryRecords_(ss) {
   var sheet = ss.getSheetByName(TABS.MEMORY);
   if (!sheet) return [];
-  return readRecords_(sheet, MEMORY_COLUMNS, colIndex_(MEMORY_COLUMNS, 'merchant_key'))
+  var columns = MEMORY_COLUMNS.slice(0, Math.min(MEMORY_COLUMNS.length, sheet.getMaxColumns()));
+  return readRecords_(sheet, columns, colIndex_(MEMORY_COLUMNS, 'merchant_key'))
     .filter(function (row) { return String(row.merchant_key || '').trim(); });
 }
 
 /**
- * Memory as a flat key → entry map.
+ * Memory as key → `{ in, out, any }`, one entry per direction.
  *
  * One exact lookup is the whole matching story, which is what lets memory sit
  * inside the rule loop at a priority without costing a scan: the entry either
- * exists under this row's key or there is nothing to offer.
+ * exists under this row's key and direction or there is nothing to offer.
+ * `any` holds an entry with no direction — one written before memory kept
+ * them apart, until the nightly rebuild replaces it.
  *
  * An entry with no category is dropped rather than stored — offering it would
  * categorise a row as blank while reporting `memory` as the reason.
@@ -212,7 +234,9 @@ function buildMemoryIndex_(records) {
     var category = String(row.category || '');
     if (!category) return;
 
-    byKey[key] = {
+    var direction = String(row.direction || '').trim().toLowerCase();
+    var slot = byKey[key] = byKey[key] || {};
+    slot[direction === 'in' || direction === 'out' ? direction : 'any'] = {
       key: key,
       category: category,
       subcategory: String(row.subcategory || ''),
@@ -221,6 +245,36 @@ function buildMemoryIndex_(records) {
   });
 
   return byKey;
+}
+
+/**
+ * The entry memory offers this key going this way. An entry learned the other
+ * way offers nothing; a row with no sign takes whatever there is.
+ */
+function rememberedFor_(memory, key, direction) {
+  var slot = key ? memory[key] : null;
+  if (!slot) return null;
+  if (!direction) return slot.any || slot.out || slot.in || null;
+  return slot[direction] || slot.any || null;
+}
+
+/**
+ * `in`, `out`, or `''` for a row with no sign. `amount` is stored signed — the
+ * sign is applied once, from `credit_debit_indicator`, when the row is built.
+ */
+function directionOf_(record) {
+  if (isBlankCell_(record.amount)) return '';
+  var amount = Number(record.amount);
+  if (!isFinite(amount) || amount === 0) return '';
+  return amount > 0 ? 'in' : 'out';
+}
+
+/** Whether `category` may be the answer for a row going `direction`. */
+function fitsDirection_(category, direction, context) {
+  var kind = (context.kindByCategory || {})[String(category || '')];
+  if (direction === 'in') return kind !== TX_TYPE.EXPENSE;
+  if (direction === 'out') return kind !== TX_TYPE.INCOME;
+  return true;
 }
 
 /**
@@ -310,7 +364,9 @@ function guessCategory_(record, context) {
   }
 
   var key = normalizeMerchant(record.description, record.counterparty);
-  var remembered = key ? context.memory[key] : null;
+  var direction = directionOf_(record);
+  var remembered = rememberedFor_(context.memory, key, direction);
+  if (remembered && !fitsDirection_(remembered.category, direction, context)) remembered = null;
   var winner = null;
 
   for (var i = 0; i < context.rules.length; i++) {
@@ -323,6 +379,7 @@ function guessCategory_(record, context) {
     }
 
     if (!ruleMatches_(record, rule)) continue;
+    if (!fitsDirection_(rule.category, direction, context)) continue;
     winner = adoptMatch_(winner, rule, ruleSource_(rule));
     if (matchIsComplete_(winner)) return winner;
   }
@@ -817,7 +874,7 @@ function learnFromCorrections() {
       'Try again when it has finished.', ui.ButtonSet.OK);
     return null;
   }
-  ss.toast(plan.derived.entries.length + ' merchants learned from ' + plan.derived.considered +
+  ss.toast(merchantCount_(plan.derived.entries) + ' merchants learned from ' + plan.derived.considered +
     ' confirmed rows.', 'Memory rebuilt', 10);
   return plan.derived;
 }
@@ -918,7 +975,7 @@ function planMemory_() {
   var inherited = inheritedOverrides_(records, removed,
     configNumber_(readConfig_(), 'duplicate_window_days'));
 
-  var derived = deriveMemory_(records, inherited);
+  var derived = deriveMemory_(records, inherited, readCategoryKinds_(ss));
   if (!derived.entries.length) {
     return {
       error: 'Nothing to learn from yet.\n\n' + derived.considered + ' rows were confirmed, and none ' +
@@ -946,11 +1003,12 @@ function memoryUnchanged_(current, entries) {
   current = current || [];
   if (current.length !== entries.length) return false;
 
+  var slot = function (row) { return cellText_(row.direction) + ' ' + cellText_(row.merchant_key); };
   var byKey = {};
-  current.forEach(function (row) { byKey[cellText_(row.merchant_key)] = row; });
+  current.forEach(function (row) { byKey[slot(row)] = row; });
 
   return entries.every(function (entry) {
-    var row = byKey[entry.merchant_key];
+    var row = byKey[slot(entry)];
     return Boolean(row) &&
       cellText_(row.category) === cellText_(entry.category) &&
       cellText_(row.subcategory) === cellText_(entry.subcategory) &&
@@ -1014,9 +1072,11 @@ function sameMoment_(a, b) {
  * built from forty consistent rows. `decidedBy` says which rule applied, for
  * the preview; it is not a column, so it never reaches the tab.
  *
- * Pure: takes records, returns entries. No sheet, so it is tested directly.
+ * Pure: takes records, and the category → kind map `readCategoryKinds_` reads,
+ * and returns entries. No sheet, so it is tested directly.
  */
-function deriveMemory_(records, inherited) {
+function deriveMemory_(records, inherited, kindByCategory) {
+  var kinds = { kindByCategory: kindByCategory || {} };
   var buckets = {};
   var considered = 0;
 
@@ -1040,8 +1100,15 @@ function deriveMemory_(records, inherited) {
     considered++;
     var subcategory = effectiveSubcategory_(record);
     var date = record.booking_date instanceof Date ? record.booking_date : null;
-    var bucket = buckets[key] = buckets[key] ||
-      { key: key, categories: {}, lastSeen: null, corrections: [] };
+    // Each direction is its own merchant here — see the header. A row filed
+    // against its sign (a refund ticked as Shopping, or imported that way)
+    // would teach an entry the cascade must refuse every time, so a refund
+    // there could never be answered from memory. It is left out instead.
+    var direction = directionOf_(record);
+    if (!fitsDirection_(category, direction, kinds)) return;
+    var slot = direction + ' ' + key;
+    var bucket = buckets[slot] = buckets[slot] ||
+      { key: key, direction: direction, categories: {}, lastSeen: null, corrections: [] };
 
     if (correctionYouTyped_(record, inherited)) {
       bucket.corrections.push({ category: category, subcategory: subcategory, date: date });
@@ -1072,7 +1139,8 @@ function deriveMemory_(records, inherited) {
 
   entries.sort(function (a, b) {
     if (b.hits !== a.hits) return b.hits - a.hits;
-    return a.merchant_key < b.merchant_key ? -1 : 1;
+    if (a.merchant_key !== b.merchant_key) return a.merchant_key < b.merchant_key ? -1 : 1;
+    return a.direction < b.direction ? -1 : 1;
   });
 
   return { entries: entries, considered: considered };
@@ -1081,7 +1149,7 @@ function deriveMemory_(records, inherited) {
 /** One merchant's tallies → its entry. The rules are argued on `deriveMemory_`. */
 function memoryEntry_(bucket) {
   var corrections = bucket.corrections;
-  var entry = { merchant_key: bucket.key, last_seen: bucket.lastSeen || '' };
+  var entry = { merchant_key: bucket.key, direction: bucket.direction, last_seen: bucket.lastSeen || '' };
 
   if (corrections.length && correctionsAgree_(corrections)) {
     var counts = {};
@@ -1250,9 +1318,16 @@ function effectiveSubcategory_(record) {
   return isBlankCell_(record.subcategory_auto) ? '' : String(record.subcategory_auto);
 }
 
+/** One merchant can hold an entry each way, so entries over-count merchants. */
+function merchantCount_(entries) {
+  var seen = {};
+  entries.forEach(function (entry) { seen[entry.merchant_key] = true; });
+  return Object.keys(seen).length;
+}
+
 function describeMemoryPlan_(derived) {
   var top = derived.entries.slice(0, 8).map(function (entry) {
-    return '  ' + entry.merchant_key + ' → ' + entry.category +
+    return '  ' + entry.merchant_key + (entry.direction === 'in' ? ' (money in)' : '') + ' → ' + entry.category +
       (entry.subcategory ? ' / ' + entry.subcategory : '') + '  (' + entry.hits + ')';
   });
 
@@ -1268,7 +1343,7 @@ function describeMemoryPlan_(derived) {
 
   var lines = [
     'Rebuild ' + TABS.MEMORY + ' from ' + derived.considered + ' confirmed rows.',
-    derived.entries.length + ' merchants, most frequent first:',
+    merchantCount_(derived.entries) + ' merchants, most frequent first:',
     ''
   ].concat(top);
 
@@ -1289,13 +1364,53 @@ function describeMemoryPlan_(derived) {
   return lines.join('\n');
 }
 
+/**
+ * Replaces the tab's rows, first making room for any column the schema has
+ * grown since the tab was built.
+ *
+ * Here rather than waiting for Setup, so the nightly rebuild is enough to
+ * bring a book's memory up to the schema it is categorised by.
+ */
 function writeMemory_(sheet, entries) {
+  makeRoomInMemory_(sheet);
+  sheet.getRange(1, 1, 1, MEMORY_COLUMNS.length).setValues([MEMORY_COLUMNS]);
+
   clearDataRows_(sheet, colIndex_(MEMORY_COLUMNS, 'merchant_key'), MEMORY_COLUMNS.length);
   if (!entries.length) return 0;
 
   var rows = entries.map(function (entry) { return toRow_(MEMORY_COLUMNS, entry); });
   sheet.getRange(2, 1, rows.length, MEMORY_COLUMNS.length).setValues(rows);
   return rows.length;
+}
+
+/**
+ * Widens `_memory` to the schema, moving aside a column of yours in the way.
+ *
+ * Setup trims a new tab to its header, so a book built before a column joined
+ * the schema has a tab one short, and a column you added beside it sits in
+ * the slot the schema grows into. A slot with anything in it that is not
+ * already ours gets a fresh column inserted before it, as
+ * `makeRoomForNewColumns_` does for Setup; only the slots past the header the
+ * tab already has are considered, since an earlier one is ours by position.
+ */
+function makeRoomInMemory_(sheet) {
+  var width = Math.min(sheet.getMaxColumns(), MEMORY_COLUMNS.length);
+  var header = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var have = 0;
+  while (have < width && String(header[have]) === MEMORY_COLUMNS[have]) have++;
+
+  for (var c = have; c < MEMORY_COLUMNS.length; c++) {
+    if (c + 1 > sheet.getMaxColumns()) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), MEMORY_COLUMNS.length - c);
+      return;
+    }
+    var label = sheet.getRange(1, c + 1).getValue();
+    if (String(label) === MEMORY_COLUMNS[c]) continue;
+    var occupied = !isBlankCell_(label) || readColumn_(sheet, c + 1).some(function (value) {
+      return !isBlankCell_(value);
+    });
+    if (occupied) sheet.insertColumnBefore(c + 1);
+  }
 }
 
 // ---------------------------------------------------------------------------

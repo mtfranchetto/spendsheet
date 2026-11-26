@@ -67,7 +67,7 @@ export const RUN_COLUMNS = [
 ] as const;
 
 export const CONFIG_COLUMNS = ['key', 'value', 'description'] as const;
-export const MEMORY_COLUMNS = ['merchant_key', 'category', 'subcategory', 'hits', 'last_seen'] as const;
+export const MEMORY_COLUMNS = ['merchant_key', 'category', 'subcategory', 'hits', 'last_seen', 'direction'] as const;
 export const MONITOR_COLUMNS = ['transactions_rows', 'removed_rows'] as const;
 
 /**

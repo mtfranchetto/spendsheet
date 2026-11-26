@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildMemoryIndex, suggestCategory, suggestionIndex } from './merchant';
+import { buildMemoryIndex, directionOf, suggestCategory, suggestionIndex } from './merchant';
 
 describe('suggesting a category for a merchant memory has never seen', () => {
   const entry = (merchant_key: string, category: string, subcategory: string, hits = 1) => ({ _row: 0, merchant_key, category, subcategory, hits });
@@ -41,6 +41,24 @@ describe('suggesting a category for a merchant memory has never seen', () => {
       entry('amazon prime', 'Life & Entertainment', 'Streaming', 2),
       entry('amazon eu', 'Shopping', 'Online', 40)
     ])?.from).toBe('amazon eu');
+  });
+
+  it('offers a credit no expense category, and a debit no income one', () => {
+    const kinds: Record<string, string> = { Shopping: 'expense', Income: 'income' };
+    const entries = [
+      entry('zalando de', 'Shopping', 'Clothes', 30),
+      entry('zalando lounge', 'Income', 'Refund', 1)
+    ];
+    const index = suggestionIndex(buildMemoryIndex(entries));
+    const kindOf = (category: string) => kinds[category];
+    expect(suggestCategory('zalando it', index, 'in', kindOf)?.from).toBe('zalando lounge');
+    expect(suggestCategory('zalando it', index, 'out', kindOf)?.from).toBe('zalando de');
+    expect(suggestCategory('zalando it', suggestionIndex(buildMemoryIndex(entries.slice(0, 1))), 'in', kindOf)).toBeNull();
+  });
+
+  it('reads the direction off the amount, and none off a blank or zero', () => {
+    expect([directionOf(12), directionOf(-3), directionOf(''), directionOf(0), directionOf(null)])
+      .toEqual(['in', 'out', '', '', '']);
   });
 
   it('offers nothing when nothing is shared, or there is no key', () => {

@@ -348,7 +348,10 @@ var RUN_COLUMNS = [
 var CONFIG_COLUMNS = ['key', 'value', 'description'];
 var IMPORT_MAP_COLUMNS = ['preset', 'source_header', 'target_column'];
 var CATEGORY_MAP_COLUMNS = ['preset', 'source_category', 'category', 'subcategory'];
-var MEMORY_COLUMNS = ['merchant_key', 'category', 'subcategory', 'hits', 'last_seen'];
+// `direction` is last because a column is only ever added to the right. One
+// merchant can hold an entry each way: what you buy at Zalando and what it
+// refunds are two answers. See `directionOf_` in 14_categorize.gs.
+var MEMORY_COLUMNS = ['merchant_key', 'category', 'subcategory', 'hits', 'last_seen', 'direction'];
 var TEST_COLUMNS = ['run_at', 'suite', 'name', 'result', 'detail'];
 var MONITOR_COLUMNS = ['transactions_rows', 'removed_rows'];
 

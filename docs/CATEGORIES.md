@@ -43,6 +43,10 @@ Two things follow that are easy to miss. A rule you add **cannot** correct a mer
 - **With no corrections, the most common category wins**, ties going to the most recent.
 - **Imported categories vote; they are never corrections.** The import keeps each row's category in `category_override`, but that is your old tool's filing, not a correction you made here. Counted as corrections, the latest imported row would decide every merchant in the history. The same holds after **Remove synced duplicates**: the category it copies onto the synced row it keeps still votes as the imported row did. It is recognised by pairing that row again with the imported copy kept in `_removed`.
 
+**Money in and money out are learned apart.** A key says who, not which way: Zalando sells you shoes and refunds them under the same name. So each merchant keeps one entry for what goes out and one for what comes in, and correcting a refund to Income › Refund files the next refund there without touching the purchases.
+
+**A match has to agree with the sign.** A rule or memory entry naming an expense category is passed over for money in, and one naming an income category for money out. The row goes to the next match, or to the review queue. Transfers, and rows with no sign, are never held back.
+
 Nothing marks a merchant as mixed, and nothing needs to: it is mixed while its corrections name two or more categories (or two or more subcategories). Either way, a guessed row still arrives unconfirmed in the review queue — a guess only saves a tap when it is right.
 
 ### What a merchant key is
